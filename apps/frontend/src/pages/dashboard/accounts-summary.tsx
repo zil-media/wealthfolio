@@ -4,7 +4,11 @@ import { calculatePerformanceSummaries, performanceSummaryScopeKey } from "@/ada
 import { useAccounts } from "@/hooks/use-accounts";
 import { useCurrentAccountValuations } from "@/hooks/use-current-account-valuations";
 import { AccountPurpose } from "@/lib/constants";
-import { performanceSummaryReturn, performancePeriodPnl } from "@/lib/performance";
+import {
+  performanceSummaryReturn,
+  performancePeriodPnl,
+  simpleReturnFromNetContribution,
+} from "@/lib/performance";
 import { QueryKeys } from "@/lib/query-keys";
 import { useSettingsContext } from "@/lib/settings-provider";
 import type {
@@ -467,7 +471,12 @@ export const AccountsSummary = React.memo(
         const totalValueBaseCurrency = valuation.totalValueBase;
 
         const gainLossBaseCurrency = performancePeriodPnl(perf);
-        const gainPercent = performanceSummaryReturn(perf);
+        // summary.percent carries TWR, which has a different base than the P&L amount
+        // shown beside it, so the row read as -2048 / -30.98%. Express the percentage
+        // against net contributions so both halves describe the same thing.
+        const gainPercent =
+          simpleReturnFromNetContribution(gainLossBaseCurrency, perf?.attribution?.contributions) ??
+          performanceSummaryReturn(perf);
 
         return {
           accountName: acc.name,
