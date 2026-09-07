@@ -539,6 +539,7 @@ impl AiProviderServiceTrait for AiProviderService {
             "groq" => "https://api.groq.com/openai",
             "openrouter" => "https://openrouter.ai/api",
             "google" => "https://generativelanguage.googleapis.com",
+            "deepseek" => "https://api.deepseek.com",
             "ollama" => "http://localhost:11434",
             _ => "https://api.openai.com",
         });

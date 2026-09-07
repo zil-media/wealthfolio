@@ -137,8 +137,8 @@
           "capabilities": { "tools": true, "thinking": true, "vision": true }
         }
       },
-      "defaultModel": "gemini-2.5-flash",
-      "titleModelId": "gemini-2.5-flash",
+      "defaultModel": "gemini-3-flash-preview",
+      "titleModelId": "gemini-3-flash-preview",
       "documentationUrl": "https://ai.google.dev/docs",
       "tuning": {
         "temperature": 0.2,
@@ -240,6 +240,52 @@
       "defaultModel": "gpt-5.4-mini",
       "titleModelId": "gpt-5.4-nano",
       "documentationUrl": "https://platform.openai.com/docs/introduction",
+      "tuning": {
+        "temperature": 0.2,
+        "maxTokens": 16384
+      }
+    },
+    "deepseek": {
+      "name": "DeepSeek",
+      "type": "api",
+      "icon": "LogoDeepSeek",
+      "description": "DeepSeek models via the OpenAI-compatible API",
+      "envKey": "DEEPSEEK_API_KEY",
+      "defaultConfig": {
+        "enabled": false,
+        "priority": 40
+      },
+      "connectionFields": [
+        {
+          "key": "apiKey",
+          "label": "API Key",
+          "type": "password",
+          "placeholder": "Enter your DeepSeek API key",
+          "required": true,
+          "helpUrl": "https://platform.deepseek.com/api_keys"
+        },
+        {
+          "key": "baseUrl",
+          "label": "Custom Endpoint",
+          "type": "text",
+          "placeholder": "Leave empty to use default",
+          "required": false
+        }
+      ],
+      "models": {
+        "deepseek-v4-pro": {
+          "capabilities": { "tools": true, "thinking": false, "vision": false }
+        },
+        "deepseek-v4-flash": {
+          "capabilities": { "tools": true, "thinking": false, "vision": false }
+        },
+        "deepseek-v4-flash-vision-exp": {
+          "capabilities": { "tools": true, "thinking": false, "vision": true }
+        }
+      },
+      "defaultModel": "deepseek-v4-flash",
+      "titleModelId": "deepseek-v4-flash",
+      "documentationUrl": "https://api-docs.deepseek.com/",
       "tuning": {
         "temperature": 0.2,
         "maxTokens": 16384
