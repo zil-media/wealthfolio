@@ -108,6 +108,7 @@ const ActivityManagerPage = () => {
       activity.currency = assetProfile.quoteCcy;
       activity.exchangeMic = assetProfile.instrumentExchangeMic ?? undefined;
       activity.assetQuoteMode = assetProfile.quoteMode;
+      activity.instrumentType = assetProfile.instrumentType ?? undefined;
     }
 
     return activity;

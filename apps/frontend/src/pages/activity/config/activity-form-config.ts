@@ -131,6 +131,7 @@ export const ACTIVITY_FORM_CONFIG: Record<
       const base = {
         ...getBaseDefaults(activity, accounts),
         assetId: activity?.assetSymbol ?? activity?.assetId ?? "",
+        existingAssetId: activity?.assetId ?? undefined,
         quantity: absNum(activity?.quantity),
         unitPrice: absNum(activity?.unitPrice),
         amount: absNum(activity?.amount),
@@ -228,6 +229,7 @@ export const ACTIVITY_FORM_CONFIG: Record<
       const base = {
         ...getBaseDefaults(activity, accounts),
         assetId: activity?.assetSymbol ?? activity?.assetId ?? "",
+        existingAssetId: activity?.assetId ?? undefined,
         quantity: absNum(activity?.quantity),
         unitPrice: absNum(activity?.unitPrice),
         amount: absNum(activity?.amount),
@@ -370,6 +372,7 @@ export const ACTIVITY_FORM_CONFIG: Record<
     getDefaults: (activity, accounts) => ({
       ...getBaseDefaults(activity, accounts),
       symbol: activity?.assetSymbol ?? activity?.assetId ?? "",
+      existingAssetId: activity?.assetId ?? undefined,
       amount: absNum(activity?.amount),
       tax: absNum(activity?.tax) ?? 0,
       unitPrice: absNum(activity?.unitPrice),
@@ -456,6 +459,7 @@ export const ACTIVITY_FORM_CONFIG: Record<
         sourceCurrency,
         destinationCurrency,
         assetId: transferIsSecurity ? (activity?.assetSymbol ?? activity?.assetId ?? null) : null,
+        existingAssetId: transferIsSecurity ? (activity?.assetId ?? undefined) : undefined,
         quantity: transferIsSecurity ? (absNum(activity?.quantity) ?? null) : null,
         unitPrice: transferIsSecurity ? (absNum(activity?.unitPrice) ?? null) : null,
         comment: activity?.comment ?? null,
@@ -511,6 +515,7 @@ export const ACTIVITY_FORM_CONFIG: Record<
     getDefaults: (activity, accounts) => ({
       ...getBaseDefaults(activity, accounts),
       symbol: activity?.assetSymbol ?? activity?.assetId ?? "",
+      existingAssetId: activity?.assetId ?? undefined,
       splitRatio: absNum(activity?.amount),
       // Advanced options
       currency: activity?.currency,
@@ -570,6 +575,7 @@ export const ACTIVITY_FORM_CONFIG: Record<
     getDefaults: (activity, accounts) => ({
       ...getBaseDefaults(activity, accounts),
       symbol: activity?.assetSymbol ?? activity?.assetId ?? null,
+      existingAssetId: activity?.assetId ?? undefined,
       amount: absNum(activity?.amount),
       tax: absNum(activity?.tax) ?? 0,
       unitPrice: absNum(activity?.unitPrice),
@@ -637,6 +643,7 @@ export const ACTIVITY_FORM_CONFIG: Record<
         adjustmentMode: isSecurity ? "securities" : "cash",
         amount: absNum(activity?.amount),
         assetId: isSecurity ? (activity?.assetSymbol ?? activity?.assetId ?? null) : null,
+        existingAssetId: isSecurity ? (activity?.assetId ?? undefined) : undefined,
         quantity: isSecurity ? (absNum(activity?.quantity) ?? null) : null,
         unitPrice: isSecurity ? (absNum(activity?.unitPrice) ?? null) : null,
         currency: activity?.currency,

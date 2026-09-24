@@ -2253,27 +2253,8 @@ impl ActivityService {
         asset_kind_input: Option<&str>,
     ) -> (AssetKind, Option<InstrumentType>) {
         // 1. If explicit input is provided, use it
-        if let Some(asset_kind_value) = asset_kind_input {
-            match asset_kind_value.to_uppercase().as_str() {
-                "SECURITY" | "INVESTMENT" | "EQUITY" => {
-                    return (AssetKind::Investment, Some(InstrumentType::Equity))
-                }
-                "CRYPTO" => return (AssetKind::Investment, Some(InstrumentType::Crypto)),
-                "FX_RATE" | "FX" => return (AssetKind::Fx, Some(InstrumentType::Fx)),
-                "OPTION" | "OPT" => return (AssetKind::Investment, Some(InstrumentType::Option)),
-                "BOND" => return (AssetKind::Investment, Some(InstrumentType::Bond)),
-                "COMMODITY" | "CMDTY" | "METAL" => {
-                    return (AssetKind::Investment, Some(InstrumentType::Metal))
-                }
-                "PROPERTY" | "PROP" => return (AssetKind::Property, None),
-                "VEHICLE" | "VEH" => return (AssetKind::Vehicle, None),
-                "COLLECTIBLE" | "COLL" => return (AssetKind::Collectible, None),
-                "PRECIOUS_METAL" | "PREC" => return (AssetKind::PreciousMetal, None),
-                "PRIVATE_EQUITY" | "PEQ" => return (AssetKind::PrivateEquity, None),
-                "LIABILITY" | "LIAB" => return (AssetKind::Liability, None),
-                "OTHER" | "ALT" => return (AssetKind::Other, None),
-                _ => {} // Fall through to inference
-            }
+        if let Some(explicit) = asset_kind_input.and_then(Self::explicit_asset_kind) {
+            return explicit;
         }
 
         // 2. Crypto pair pattern (e.g., BTC-USD, ETH-CAD) — checked before
@@ -2316,6 +2297,72 @@ impl ActivityService {
 
         // 6. Default to equity (most common case)
         (AssetKind::Investment, Some(InstrumentType::Equity))
+    }
+
+    /// Maps a recognized asset kind input to its kind and instrument type.
+    /// Returns `None` for unrecognized values so callers fall back to inference.
+    fn explicit_asset_kind(asset_kind_value: &str) -> Option<(AssetKind, Option<InstrumentType>)> {
+        let explicit = match asset_kind_value.to_uppercase().as_str() {
+            "SECURITY" | "INVESTMENT" | "EQUITY" => {
+                (AssetKind::Investment, Some(InstrumentType::Equity))
+            }
+            "CRYPTO" => (AssetKind::Investment, Some(InstrumentType::Crypto)),
+            "FX_RATE" | "FX" => (AssetKind::Fx, Some(InstrumentType::Fx)),
+            "OPTION" | "OPT" => (AssetKind::Investment, Some(InstrumentType::Option)),
+            "BOND" => (AssetKind::Investment, Some(InstrumentType::Bond)),
+            "COMMODITY" | "CMDTY" | "METAL" => (AssetKind::Investment, Some(InstrumentType::Metal)),
+            "PROPERTY" | "PROP" => (AssetKind::Property, None),
+            "VEHICLE" | "VEH" => (AssetKind::Vehicle, None),
+            "COLLECTIBLE" | "COLL" => (AssetKind::Collectible, None),
+            "PRECIOUS_METAL" | "PREC" => (AssetKind::PreciousMetal, None),
+            "PRIVATE_EQUITY" | "PEQ" => (AssetKind::PrivateEquity, None),
+            "LIABILITY" | "LIAB" => (AssetKind::Liability, None),
+            "OTHER" | "ALT" => (AssetKind::Other, None),
+            _ => return None,
+        };
+        Some(explicit)
+    }
+
+    /// Instrument type of the submitted existing asset, used in place of the
+    /// symbol heuristic when the caller asserted no instrument type or kind.
+    /// The heuristic defaults bare symbols to EQUITY, which would reject a
+    /// valid BOND/OPTION asset id as mismatched and mint a duplicate asset.
+    fn submitted_asset_instrument_type(
+        &self,
+        submitted_asset_id: Option<&str>,
+        instrument_type_input: Option<&InstrumentType>,
+        asset_kind_input: Option<&str>,
+    ) -> Option<InstrumentType> {
+        if instrument_type_input.is_some()
+            || asset_kind_input
+                .and_then(Self::explicit_asset_kind)
+                .is_some()
+        {
+            return None;
+        }
+        let asset_id = submitted_asset_id
+            .map(str::trim)
+            .filter(|id| !id.is_empty())?;
+        self.asset_service
+            .get_asset_by_id(asset_id)
+            .ok()?
+            .instrument_type
+    }
+
+    /// Error for a submitted existing asset id that contradicts the submitted
+    /// identity with no other asset matching it. Creating a new asset here
+    /// would silently fork the position into a duplicate.
+    fn contradicted_asset_id_error(&self, requested_asset_id: Option<&str>) -> Option<Error> {
+        let asset_id = requested_asset_id
+            .map(str::trim)
+            .filter(|id| !id.is_empty())?;
+        self.asset_service.get_asset_by_id(asset_id).ok()?;
+        Some(
+            ActivityError::InvalidData(format!(
+                "Asset {asset_id} does not match the submitted symbol, exchange, instrument type or quote currency. Re-select the symbol or omit the conflicting fields."
+            ))
+            .into(),
+        )
     }
 
     fn is_asset_not_found_error(err: &Error) -> bool {
@@ -2597,10 +2644,16 @@ impl ActivityService {
             self.infer_asset_kind(s, exchange_mic.as_deref(), asset_kind_input.as_deref())
         });
         let inferred_instrument_type = inferred.as_ref().and_then(|(_, it)| it.clone());
-        let effective_instrument_type = instrument_type_input
+        let submitted_asset_type = self.submitted_asset_instrument_type(
+            activity.get_symbol_id(),
+            instrument_type_input.as_ref(),
+            asset_kind_input.as_deref(),
+        );
+        let asserted_instrument_type = instrument_type_input.clone().or(submitted_asset_type);
+        let effective_instrument_type = asserted_instrument_type
             .clone()
             .or(inferred_instrument_type.clone());
-        let effective_kind = instrument_type_input
+        let effective_kind = asserted_instrument_type
             .as_ref()
             .map(Self::kind_from_instrument_type)
             .or_else(|| inferred.as_ref().map(|(kind, _)| kind.clone()));
@@ -2642,6 +2695,7 @@ impl ActivityService {
         } else {
             Some(base_symbol.to_string())
         };
+        let requested_asset_id = activity.get_symbol_id().map(str::to_string);
         let submitted_asset_id = self.resolved_submitted_asset_id(
             activity.get_symbol_id(),
             normalized_symbol_for_lookup.as_deref(),
@@ -2745,18 +2799,23 @@ impl ActivityService {
         // 3. Cash activities: no asset
         let resolved_asset_id = if let Some(ref normalized_symbol) = normalized_symbol_for_lookup {
             // Look up existing asset by instrument fields
-            let existing_id = self
-                .find_existing_asset_id(
+            // A submitted id that survived identity validation wins: when two
+            // assets share a symbol, the symbol lookup could pick the other one.
+            let existing_id = submitted_asset_id.clone().or_else(|| {
+                self.find_existing_asset_id(
                     normalized_symbol,
                     exchange_mic.as_deref(),
                     effective_instrument_type.as_ref(),
                     Some(&asset_currency),
                 )
-                .or_else(|| submitted_asset_id.clone());
+            });
 
             if let Some(id) = existing_id {
                 Some(id)
             } else {
+                if let Some(err) = self.contradicted_asset_id_error(requested_asset_id.as_deref()) {
+                    return Err(err);
+                }
                 // Create new asset with generated UUID
                 let new_id = Uuid::new_v4().to_string();
 
@@ -3078,10 +3137,16 @@ impl ActivityService {
             self.infer_asset_kind(s, exchange_mic.as_deref(), asset_kind_input.as_deref())
         });
         let inferred_instrument_type = inferred.as_ref().and_then(|(_, it)| it.clone());
-        let effective_instrument_type = instrument_type_input
+        let submitted_asset_type = self.submitted_asset_instrument_type(
+            activity.get_symbol_id(),
+            instrument_type_input.as_ref(),
+            asset_kind_input.as_deref(),
+        );
+        let asserted_instrument_type = instrument_type_input.clone().or(submitted_asset_type);
+        let effective_instrument_type = asserted_instrument_type
             .clone()
             .or(inferred_instrument_type.clone());
-        let effective_kind = instrument_type_input
+        let effective_kind = asserted_instrument_type
             .as_ref()
             .map(Self::kind_from_instrument_type)
             .or_else(|| inferred.as_ref().map(|(kind, _)| kind.clone()));
@@ -3121,6 +3186,7 @@ impl ActivityService {
         } else {
             Some(base_symbol.to_string())
         };
+        let requested_asset_id = activity.get_symbol_id().map(str::to_string);
         let submitted_asset_id = self.resolved_submitted_asset_id(
             activity.get_symbol_id(),
             normalized_symbol_for_lookup.as_deref(),
@@ -3217,18 +3283,23 @@ impl ActivityService {
 
         // Resolve asset_id (same logic as prepare_new_activity)
         let resolved_asset_id = if let Some(ref normalized_symbol) = normalized_symbol_for_lookup {
-            let existing_id = self
-                .find_existing_asset_id(
+            // A submitted id that survived identity validation wins: when two
+            // assets share a symbol, the symbol lookup could pick the other one.
+            let existing_id = submitted_asset_id.clone().or_else(|| {
+                self.find_existing_asset_id(
                     normalized_symbol,
                     exchange_mic.as_deref(),
                     effective_instrument_type.as_ref(),
                     Some(&asset_currency),
                 )
-                .or_else(|| submitted_asset_id.clone());
+            });
 
             if let Some(id) = existing_id {
                 Some(id)
             } else {
+                if let Some(err) = self.contradicted_asset_id_error(requested_asset_id.as_deref()) {
+                    return Err(err);
+                }
                 let new_id = Uuid::new_v4().to_string();
                 let structured_metadata = if let Some(mult) =
                     Self::custom_option_multiplier(activity.metadata.as_deref())
@@ -3570,8 +3641,17 @@ impl ActivityService {
         // Infer asset kind and instrument type using base symbol
         let (inferred_kind, inferred_instrument_type) =
             self.infer_asset_kind(base_symbol, exchange_mic.as_deref(), activity.get_kind());
-        let instrument_type = instrument_type_input.clone().or(inferred_instrument_type);
-        let kind = instrument_type_input
+        let asserted_instrument_type = instrument_type_input.clone().or_else(|| {
+            self.submitted_asset_instrument_type(
+                activity.get_symbol_id(),
+                None,
+                activity.get_kind(),
+            )
+        });
+        let instrument_type = asserted_instrument_type
+            .clone()
+            .or(inferred_instrument_type);
+        let kind = asserted_instrument_type
             .as_ref()
             .map(Self::kind_from_instrument_type)
             .unwrap_or(inferred_kind);
@@ -3682,15 +3762,16 @@ impl ActivityService {
             resolved_quote_ccy
         };
 
-        // Look up existing asset by instrument fields to get its UUID
-        let existing_id = self
-            .find_existing_asset_id(
+        // Look up existing asset by instrument fields to get its UUID. A submitted
+        // id that survived identity validation wins over the symbol lookup.
+        let existing_id = submitted_asset_id.or_else(|| {
+            self.find_existing_asset_id(
                 &normalized_symbol,
                 exchange_mic.as_deref(),
                 instrument_type.as_ref(),
                 Some(&asset_currency),
             )
-            .or(submitted_asset_id);
+        });
         let asset_metadata = if is_option {
             Self::custom_option_multiplier(activity.metadata.as_deref()).and_then(|multiplier| {
                 crate::assets::build_option_metadata(&normalized_symbol, multiplier)

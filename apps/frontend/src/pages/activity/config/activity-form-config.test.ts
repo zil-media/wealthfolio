@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { ActivityType } from "@/lib/constants";
 import { mapActivityTypeToPicker } from "../utils/activity-form-utils";
-import { hasActivityForm } from "./activity-form-config";
+import { ACTIVITY_FORM_CONFIG, hasActivityForm } from "./activity-form-config";
 
 describe("hasActivityForm", () => {
   it("accepts every type the picker can offer", () => {
@@ -44,5 +44,24 @@ describe("hasActivityForm", () => {
     expect(hasActivityForm(ActivityType.TRANSFER_IN)).toBe(false);
     expect(hasActivityForm(mapActivityTypeToPicker(ActivityType.TRANSFER_IN))).toBe(true);
     expect(hasActivityForm(mapActivityTypeToPicker(ActivityType.TRANSFER_OUT))).toBe(true);
+  });
+});
+
+describe("prefilled asset", () => {
+  // Opening the form from an asset page (?assetId=…) must keep that exact asset:
+  // with only the symbol, two assets sharing it made the save land on the other.
+  it.each([ActivityType.BUY, ActivityType.SELL])("%s submits the prefilled asset id", (type) => {
+    const config = ACTIVITY_FORM_CONFIG[type];
+    const defaults = config.getDefaults(
+      { assetId: "bond-orig", assetSymbol: "BYMA-CAC5O", instrumentType: "BOND" },
+      [],
+    );
+
+    expect(defaults).toMatchObject({ existingAssetId: "bond-orig" });
+    expect(config.toPayload(defaults as never)).toMatchObject({
+      assetId: "BYMA-CAC5O",
+      existingAssetId: "bond-orig",
+      symbolInstrumentType: "BOND",
+    });
   });
 });

@@ -6886,6 +6886,137 @@ mod tests {
         assert_eq!(updated.asset_id.as_deref(), Some("CRYPTO:BTC:EUR"));
     }
 
+    /// Custom manually-priced bond, like a BYMA corporate bond (ON) created by hand.
+    fn manual_bond_asset(id: &str, symbol: &str) -> Asset {
+        Asset {
+            quote_mode: QuoteMode::Manual,
+            ..create_test_asset_with_instrument(id, symbol, None, Some(InstrumentType::Bond), "USD")
+        }
+    }
+
+    fn sell_with_asset(asset: AssetResolutionInput) -> NewActivity {
+        NewActivity {
+            id: None,
+            account_id: "acc-1".to_string(),
+            asset: Some(asset),
+            activity_type: "SELL".to_string(),
+            subtype: None,
+            activity_date: "2024-01-15".to_string(),
+            quantity: Some(dec!(19650)),
+            unit_price: Some(dec!(1)),
+            currency: "USD".to_string(),
+            fee: Some(dec!(0)),
+            tax: None,
+            amount: Some(dec!(19650)),
+            status: None,
+            notes: None,
+            fx_rate: None,
+            metadata: None,
+            needs_review: None,
+            source_system: None,
+            source_record_id: None,
+            source_group_id: None,
+            idempotency_key: None,
+            import_run_id: None,
+        }
+    }
+
+    fn service_with_assets(assets: Vec<Asset>) -> (ActivityService, Arc<MockAssetService>) {
+        let account_service = Arc::new(MockAccountService::new());
+        account_service.add_account(create_test_account("acc-1", "USD"));
+        let asset_service = Arc::new(MockAssetService::new());
+        for asset in assets {
+            asset_service.add_asset(asset);
+        }
+        let activity_service = ActivityService::new(
+            Arc::new(MockActivityRepository::new()),
+            account_service,
+            asset_service.clone(),
+            Arc::new(MockFxService::new()),
+            Arc::new(MockQuoteService),
+        );
+        (activity_service, asset_service)
+    }
+
+    #[tokio::test]
+    async fn test_create_with_bond_asset_id_and_no_kind_uses_that_asset() {
+        // The symbol heuristic defaults a bare symbol to EQUITY; that guess must
+        // not reject the submitted BOND asset id (it used to fail with
+        // "Quote currency is required").
+        let (activity_service, asset_service) =
+            service_with_assets(vec![manual_bond_asset("bond-orig", "BYMA-CAC5O")]);
+
+        let created = activity_service
+            .create_activity(sell_with_asset(AssetResolutionInput {
+                id: Some("bond-orig".to_string()),
+                symbol: Some("BYMA-CAC5O".to_string()),
+                quote_mode: Some("MARKET".to_string()),
+                ..Default::default()
+            }))
+            .await
+            .expect("sell against the submitted bond asset should succeed");
+
+        assert_eq!(created.asset_id.as_deref(), Some("bond-orig"));
+        assert_eq!(asset_service.get_assets().unwrap().len(), 1);
+    }
+
+    #[tokio::test]
+    async fn test_create_with_existing_asset_id_and_conflicting_kind_errors_instead_of_duplicating()
+    {
+        let (activity_service, asset_service) =
+            service_with_assets(vec![manual_bond_asset("bond-orig", "BYMA-CAC5O")]);
+
+        let result = activity_service
+            .create_activity(sell_with_asset(AssetResolutionInput {
+                id: Some("bond-orig".to_string()),
+                symbol: Some("BYMA-CAC5O".to_string()),
+                kind: Some("EQUITY".to_string()),
+                quote_mode: Some("MANUAL".to_string()),
+                ..Default::default()
+            }))
+            .await;
+
+        let err = result.expect_err("conflicting kind must not mint a duplicate asset");
+        assert!(err.to_string().contains("bond-orig"), "{err}");
+        assert_eq!(asset_service.get_assets().unwrap().len(), 1);
+    }
+
+    #[tokio::test]
+    async fn test_create_with_asset_id_prefers_it_over_same_symbol_duplicate() {
+        let duplicate = Asset {
+            quote_mode: QuoteMode::Manual,
+            ..create_test_asset_with_instrument(
+                "equity-dup",
+                "BYMA-CAC5O",
+                None,
+                Some(InstrumentType::Equity),
+                "USD",
+            )
+        };
+        let (activity_service, _) = service_with_assets(vec![
+            manual_bond_asset("bond-orig", "BYMA-CAC5O"),
+            duplicate,
+        ]);
+
+        for kind in [None, Some("BOND".to_string())] {
+            let sell = NewActivity {
+                notes: kind.clone(), // distinct content so the second sell isn't deduped
+                ..sell_with_asset(AssetResolutionInput {
+                    id: Some("bond-orig".to_string()),
+                    symbol: Some("BYMA-CAC5O".to_string()),
+                    kind,
+                    quote_mode: Some("MANUAL".to_string()),
+                    ..Default::default()
+                })
+            };
+            let created = activity_service
+                .create_activity(sell)
+                .await
+                .expect("sell should land on the submitted asset");
+            assert_eq!(created.asset_id.as_deref(), Some("bond-orig"));
+        }
+    }
+
     #[tokio::test]
     async fn test_create_id_only_missing_asset_errors() {
         let account_service = Arc::new(MockAccountService::new());
