@@ -403,6 +403,9 @@ pub trait ActivityServiceTrait: Send + Sync {
     async fn create_activity(&self, activity: NewActivity) -> Result<Activity>;
     async fn update_activity(&self, activity: ActivityUpdate) -> Result<Activity>;
     async fn delete_activity(&self, activity_id: String) -> Result<Activity>;
+    /// Moves every activity of `source_asset_id` onto `target_asset_id` and
+    /// deletes the source asset. See `AssetServiceTrait::merge_assets`.
+    async fn merge_assets(&self, source_asset_id: &str, target_asset_id: &str) -> Result<u32>;
     fn get_transfer_pair_for_activity(
         &self,
         activity_id: String,

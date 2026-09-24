@@ -234,6 +234,15 @@ mod tests {
             Ok(0)
         }
 
+        async fn merge_assets(
+            &self,
+            _source_asset_id: &str,
+            _target_asset_id: &str,
+            _activity_repository: &dyn crate::activities::ActivityRepositoryTrait,
+        ) -> Result<u32> {
+            unimplemented!()
+        }
+
         async fn ensure_assets(
             &self,
             specs: Vec<crate::assets::AssetSpec>,

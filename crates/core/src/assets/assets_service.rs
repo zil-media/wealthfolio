@@ -23,7 +23,7 @@ use super::{
     asset_provider_alias_symbols, parse_crypto_pair_symbol, parse_symbol_with_known_exchange,
     AssetResolutionInput, AssetResolutionOutput,
 };
-use crate::errors::{DatabaseError, Error, Result};
+use crate::errors::{DatabaseError, Error, Result, ValidationError};
 
 // Import mic_to_currency for resolving exchange trading currencies
 use wealthfolio_market_data::{
@@ -1403,6 +1403,63 @@ impl AssetService {
             multiplier_changed,
         })
     }
+
+    /// Moves every activity from `source_id` onto `target_id`. Returns the
+    /// migrated count plus the affected accounts/currencies (loaded before the
+    /// move) for the follow-up `activities_changed` event.
+    async fn reassign_asset_activities(
+        &self,
+        source_id: &str,
+        target_id: &str,
+        activity_repository: &dyn crate::activities::ActivityRepositoryTrait,
+    ) -> Result<(u32, Vec<String>, Vec<String>)> {
+        let (account_ids, currencies) = match activity_repository
+            .get_activity_accounts_and_currencies_by_asset_id(source_id)
+            .await
+        {
+            Ok(data) => data,
+            Err(e) => {
+                warn!(
+                    "Failed to load account_ids/currencies for asset {}: {}",
+                    source_id, e
+                );
+                (Vec::new(), Vec::new())
+            }
+        };
+
+        let activities_migrated = activity_repository
+            .reassign_asset(source_id, target_id)
+            .await?;
+
+        Ok((activities_migrated, account_ids, currencies))
+    }
+
+    /// Emits `assets_merged`, plus `activities_changed` to trigger
+    /// recalculation for the affected accounts when any activity moved.
+    fn emit_asset_merge_events(
+        &self,
+        source_id: &str,
+        target_id: &str,
+        activities_migrated: u32,
+        account_ids: Vec<String>,
+        currencies: Vec<String>,
+    ) {
+        self.event_sink.emit(DomainEvent::assets_merged(
+            source_id.to_string(),
+            target_id.to_string(),
+            activities_migrated,
+        ));
+
+        if activities_migrated > 0 {
+            let asset_ids = vec![source_id.to_string(), target_id.to_string()];
+            self.event_sink.emit(DomainEvent::activities_changed(
+                account_ids,
+                asset_ids,
+                currencies,
+                None,
+            ));
+        }
+    }
 }
 
 // Implement the service trait
@@ -2392,20 +2449,6 @@ impl AssetServiceTrait for AssetService {
             unknown_asset_id, resolved_asset_id
         );
 
-        let (account_ids, currencies) = match activity_repository
-            .get_activity_accounts_and_currencies_by_asset_id(unknown_asset_id)
-            .await
-        {
-            Ok(data) => data,
-            Err(e) => {
-                warn!(
-                    "Failed to load account_ids/currencies for UNKNOWN asset {}: {}",
-                    unknown_asset_id, e
-                );
-                (Vec::new(), Vec::new())
-            }
-        };
-
         // 1. Copy user metadata (notes) from UNKNOWN to resolved
         if let Err(e) = self
             .asset_repository
@@ -2419,8 +2462,8 @@ impl AssetServiceTrait for AssetService {
         }
 
         // 2. Reassign all activities from UNKNOWN to resolved
-        let activities_migrated = activity_repository
-            .reassign_asset(unknown_asset_id, resolved_asset_id)
+        let (activities_migrated, account_ids, currencies) = self
+            .reassign_asset_activities(unknown_asset_id, resolved_asset_id, activity_repository)
             .await?;
 
         // 3. Deactivate the UNKNOWN asset
@@ -2431,27 +2474,67 @@ impl AssetServiceTrait for AssetService {
             );
         }
 
-        // 4. Emit assets_merged domain event
-        self.event_sink.emit(DomainEvent::assets_merged(
-            unknown_asset_id.to_string(),
-            resolved_asset_id.to_string(),
+        // 4. Emit assets_merged + activities_changed (recalculation)
+        self.emit_asset_merge_events(
+            unknown_asset_id,
+            resolved_asset_id,
             activities_migrated,
-        ));
-
-        // 5. Emit activities_changed to trigger recalculation for affected accounts
-        if activities_migrated > 0 {
-            let asset_ids = vec![unknown_asset_id.to_string(), resolved_asset_id.to_string()];
-            self.event_sink.emit(DomainEvent::activities_changed(
-                account_ids,
-                asset_ids,
-                currencies,
-                None,
-            ));
-        }
+            account_ids,
+            currencies,
+        );
 
         info!(
             "Merged UNKNOWN asset {} into {}: {} activities migrated",
             unknown_asset_id, resolved_asset_id, activities_migrated
+        );
+
+        Ok(activities_migrated)
+    }
+
+    async fn merge_assets(
+        &self,
+        source_asset_id: &str,
+        target_asset_id: &str,
+        activity_repository: &dyn crate::activities::ActivityRepositoryTrait,
+    ) -> Result<u32> {
+        let source_id = source_asset_id.trim();
+        let target_id = target_asset_id.trim();
+        if source_id.is_empty() || target_id.is_empty() {
+            return Err(Error::Validation(ValidationError::InvalidInput(
+                "Both source and target asset ids are required".to_string(),
+            )));
+        }
+        if source_id == target_id {
+            return Err(Error::Validation(ValidationError::InvalidInput(
+                "Cannot merge an asset into itself".to_string(),
+            )));
+        }
+        // Both must exist: never merge into (or from) a missing asset.
+        self.asset_repository.get_by_id(source_id)?;
+        self.asset_repository.get_by_id(target_id)?;
+
+        info!("Merging asset {} into {}", source_id, target_id);
+
+        let (activities_migrated, account_ids, currencies) = self
+            .reassign_asset_activities(source_id, target_id, activity_repository)
+            .await?;
+
+        // The source now has no activities, so the regular delete path applies
+        // (it drops quotes and sync state; taxonomy assignments and logos
+        // cascade). Events go out even if the delete fails: activities moved.
+        let delete_result = self.delete_asset(source_id).await;
+        self.emit_asset_merge_events(
+            source_id,
+            target_id,
+            activities_migrated,
+            account_ids,
+            currencies,
+        );
+        delete_result?;
+
+        info!(
+            "Merged asset {} into {}: {} activities migrated",
+            source_id, target_id, activities_migrated
         );
 
         Ok(activities_migrated)
@@ -2845,8 +2928,12 @@ mod tests {
                 .collect())
         }
 
-        async fn delete(&self, _asset_id: &str) -> Result<()> {
-            unimplemented!()
+        async fn delete(&self, asset_id: &str) -> Result<()> {
+            self.assets
+                .lock()
+                .unwrap()
+                .retain(|asset| asset.id != asset_id);
+            Ok(())
         }
 
         fn search_by_symbol(&self, query: &str) -> Result<Vec<Asset>> {
@@ -4664,6 +4751,385 @@ mod tests {
             instrument_type: Some(InstrumentType::Equity),
             instrument_symbol: Some("AAPL".to_string()),
             ..Default::default()
+        }
+    }
+
+    mod merge_assets {
+        use super::*;
+        use crate::activities::{
+            Activity, ActivityBulkMutationResult, ActivityRepositoryTrait, ActivityUpdate,
+            ImportMapping, IncomeData, NewActivity, Sort,
+        };
+        use crate::limits::ContributionActivity;
+        use async_trait::async_trait;
+
+        #[derive(Default)]
+        struct MergeActivityRepository {
+            /// (activity id, asset id, account id, currency)
+            rows: Mutex<Vec<(String, String, String, String)>>,
+        }
+
+        #[async_trait]
+        impl ActivityRepositoryTrait for MergeActivityRepository {
+            fn get_activity(&self, _activity_id: &str) -> Result<Activity> {
+                unimplemented!("unused in this test")
+            }
+
+            fn find_transfer_counterpart(
+                &self,
+                _group_id: &str,
+                _exclude_id: &str,
+            ) -> Result<Option<Activity>> {
+                Ok(None)
+            }
+
+            fn get_activities(&self) -> Result<Vec<Activity>> {
+                unimplemented!("unused in this test")
+            }
+
+            fn get_activities_by_account_id(&self, _account_id: &str) -> Result<Vec<Activity>> {
+                unimplemented!("unused in this test")
+            }
+
+            fn get_activities_by_account_ids(
+                &self,
+                _account_ids: &[String],
+            ) -> Result<Vec<Activity>> {
+                unimplemented!("unused in this test")
+            }
+
+            fn get_trading_activities(&self) -> Result<Vec<Activity>> {
+                unimplemented!("unused in this test")
+            }
+
+            fn get_income_activities(&self) -> Result<Vec<Activity>> {
+                unimplemented!("unused in this test")
+            }
+
+            fn get_contribution_activities(
+                &self,
+                _account_ids: &[String],
+                _start_date: chrono::DateTime<chrono::Utc>,
+                _end_date: chrono::DateTime<chrono::Utc>,
+            ) -> Result<Vec<ContributionActivity>> {
+                unimplemented!("unused in this test")
+            }
+
+            fn search_activities(
+                &self,
+                _page: i64,
+                _page_size: i64,
+                _account_id_filter: Option<Vec<String>>,
+                _activity_type_filter: Option<Vec<String>>,
+                _asset_id_keyword: Option<String>,
+                _sort: Option<Sort>,
+                _needs_review_filter: Option<bool>,
+                _date_from: Option<NaiveDate>,
+                _date_to: Option<NaiveDate>,
+                _instrument_type_filter: Option<Vec<String>>,
+                _activity_id_filter: Option<Vec<String>>,
+            ) -> Result<crate::activities::ActivitySearchResponse> {
+                unimplemented!("unused in this test")
+            }
+
+            async fn create_activity(&self, _new_activity: NewActivity) -> Result<Activity> {
+                unimplemented!("unused in this test")
+            }
+
+            async fn update_activity(&self, _activity_update: ActivityUpdate) -> Result<Activity> {
+                unimplemented!("unused in this test")
+            }
+
+            async fn delete_activity(&self, _activity_id: String) -> Result<Activity> {
+                unimplemented!("unused in this test")
+            }
+
+            async fn link_transfer_activities(
+                &self,
+                _activity_a_id: String,
+                _activity_b_id: String,
+            ) -> Result<(Activity, Activity)> {
+                unimplemented!("unused in this test")
+            }
+
+            async fn unlink_transfer_activities(
+                &self,
+                _activity_a_id: String,
+                _activity_b_id: String,
+            ) -> Result<(Activity, Activity)> {
+                unimplemented!("unused in this test")
+            }
+
+            async fn bulk_mutate_activities(
+                &self,
+                _creates: Vec<NewActivity>,
+                _updates: Vec<ActivityUpdate>,
+                _delete_ids: Vec<String>,
+            ) -> Result<ActivityBulkMutationResult> {
+                unimplemented!("unused in this test")
+            }
+
+            async fn create_activities(&self, _activities: Vec<NewActivity>) -> Result<usize> {
+                unimplemented!("unused in this test")
+            }
+
+            fn get_first_activity_date(
+                &self,
+                _account_ids: Option<&[String]>,
+            ) -> Result<Option<chrono::DateTime<Utc>>> {
+                unimplemented!("unused in this test")
+            }
+
+            fn get_import_mapping(
+                &self,
+                _account_id: &str,
+                _context_kind: &str,
+            ) -> Result<Option<ImportMapping>> {
+                unimplemented!("unused in this test")
+            }
+
+            async fn save_import_mapping(&self, _mapping: &ImportMapping) -> Result<()> {
+                unimplemented!("unused in this test")
+            }
+
+            async fn link_account_template(
+                &self,
+                _account_id: &str,
+                _template_id: &str,
+                _context_kind: &str,
+            ) -> Result<()> {
+                unimplemented!("unused in this test")
+            }
+
+            fn list_import_templates(&self) -> Result<Vec<crate::activities::ImportTemplate>> {
+                Ok(Vec::new())
+            }
+
+            fn get_import_template(
+                &self,
+                _template_id: &str,
+            ) -> Result<Option<crate::activities::ImportTemplate>> {
+                Ok(None)
+            }
+
+            async fn save_import_template(
+                &self,
+                _template: &crate::activities::ImportTemplate,
+            ) -> Result<()> {
+                unimplemented!("unused in this test")
+            }
+
+            async fn delete_import_template(&self, _template_id: &str) -> Result<()> {
+                unimplemented!("unused in this test")
+            }
+
+            fn get_broker_sync_profile(
+                &self,
+                _account_id: &str,
+                _source_system: &str,
+            ) -> Result<Option<crate::activities::ImportTemplate>> {
+                Ok(None)
+            }
+
+            async fn save_broker_sync_profile(
+                &self,
+                _template: &crate::activities::ImportTemplate,
+            ) -> Result<()> {
+                Ok(())
+            }
+
+            async fn link_broker_sync_profile(
+                &self,
+                _account_id: &str,
+                _template_id: &str,
+                _source_system: &str,
+            ) -> Result<()> {
+                Ok(())
+            }
+
+            fn calculate_average_cost(
+                &self,
+                _account_id: &str,
+                _asset_id: &str,
+            ) -> Result<rust_decimal::Decimal> {
+                unimplemented!("unused in this test")
+            }
+
+            fn get_income_activities_data(
+                &self,
+                _account_ids: Option<&[String]>,
+            ) -> Result<Vec<IncomeData>> {
+                unimplemented!("unused in this test")
+            }
+
+            fn get_first_activity_date_overall(&self) -> Result<chrono::DateTime<Utc>> {
+                unimplemented!("unused in this test")
+            }
+
+            fn get_activity_bounds_for_assets(
+                &self,
+                _asset_ids: &[String],
+            ) -> Result<HashMap<String, (Option<NaiveDate>, Option<NaiveDate>)>> {
+                unimplemented!("unused in this test")
+            }
+
+            fn get_holdings_snapshot_bounds_for_assets(
+                &self,
+                _asset_ids: &[String],
+            ) -> Result<HashMap<String, (Option<NaiveDate>, Option<NaiveDate>)>> {
+                unimplemented!("unused in this test")
+            }
+
+            fn check_existing_duplicates(
+                &self,
+                _idempotency_keys: &[String],
+            ) -> Result<HashMap<String, String>> {
+                unimplemented!("unused in this test")
+            }
+
+            async fn bulk_upsert(
+                &self,
+                _activities: Vec<crate::activities::ActivityUpsert>,
+            ) -> Result<crate::activities::BulkUpsertResult> {
+                unimplemented!("unused in this test")
+            }
+
+            async fn reassign_asset(&self, old_asset_id: &str, new_asset_id: &str) -> Result<u32> {
+                let mut rows = self.rows.lock().unwrap();
+                let mut moved = 0;
+                for row in rows.iter_mut().filter(|row| row.1 == old_asset_id) {
+                    row.1 = new_asset_id.to_string();
+                    moved += 1;
+                }
+                Ok(moved)
+            }
+
+            async fn get_activity_accounts_and_currencies_by_asset_id(
+                &self,
+                asset_id: &str,
+            ) -> Result<(Vec<String>, Vec<String>)> {
+                let rows = self.rows.lock().unwrap();
+                let matching = rows.iter().filter(|row| row.1 == asset_id);
+                Ok((
+                    matching.clone().map(|row| row.2.clone()).collect(),
+                    matching.map(|row| row.3.clone()).collect(),
+                ))
+            }
+        }
+
+        fn plain_asset(id: &str) -> Asset {
+            Asset {
+                id: id.to_string(),
+                kind: AssetKind::Investment,
+                quote_mode: QuoteMode::Market,
+                quote_ccy: "USD".to_string(),
+                created_at: Utc::now().naive_utc(),
+                updated_at: Utc::now().naive_utc(),
+                ..Default::default()
+            }
+        }
+
+        fn service_with(
+            assets: Vec<Asset>,
+        ) -> (
+            AssetService,
+            Arc<TestAssetRepository>,
+            Arc<MockDomainEventSink>,
+        ) {
+            let repo = Arc::new(TestAssetRepository::with_assets(assets));
+            let sink = Arc::new(MockDomainEventSink::new());
+            let service = AssetService::new(repo.clone(), Arc::new(TestQuoteService::default()))
+                .unwrap()
+                .with_event_sink(sink.clone());
+            (service, repo, sink)
+        }
+
+        fn activity_repo(rows: &[(&str, &str, &str, &str)]) -> MergeActivityRepository {
+            MergeActivityRepository {
+                rows: Mutex::new(
+                    rows.iter()
+                        .map(|(id, asset, account, ccy)| {
+                            (
+                                id.to_string(),
+                                asset.to_string(),
+                                account.to_string(),
+                                ccy.to_string(),
+                            )
+                        })
+                        .collect(),
+                ),
+            }
+        }
+
+        #[tokio::test]
+        async fn merge_moves_activities_deletes_source_and_emits_recalc() {
+            let (service, repo, sink) = service_with(vec![plain_asset("dup"), plain_asset("keep")]);
+            let activities = activity_repo(&[
+                ("a1", "dup", "acct-1", "USD"),
+                ("a2", "dup", "acct-2", "USD"),
+                ("a3", "keep", "acct-1", "USD"),
+            ]);
+
+            let migrated = service
+                .merge_assets("dup", "keep", &activities)
+                .await
+                .unwrap();
+
+            assert_eq!(migrated, 2);
+            assert!(activities
+                .rows
+                .lock()
+                .unwrap()
+                .iter()
+                .all(|row| row.1 == "keep"));
+            assert!(repo.get_by_id("dup").is_err(), "source asset is deleted");
+            assert!(repo.get_by_id("keep").is_ok());
+
+            let events = sink.events();
+            assert!(events
+                .iter()
+                .any(|event| matches!(event, DomainEvent::AssetsMerged { .. })));
+            let changed = events
+                .iter()
+                .find_map(|event| match event {
+                    DomainEvent::ActivitiesChanged {
+                        account_ids,
+                        asset_ids,
+                        ..
+                    } => Some((account_ids.clone(), asset_ids.clone())),
+                    _ => None,
+                })
+                .expect("activities_changed triggers recalculation");
+            let accounts: HashSet<String> = changed.0.into_iter().collect();
+            assert_eq!(
+                accounts,
+                HashSet::from(["acct-1".to_string(), "acct-2".to_string()])
+            );
+            assert!(changed.1.contains(&"dup".to_string()));
+            assert!(changed.1.contains(&"keep".to_string()));
+        }
+
+        #[tokio::test]
+        async fn merge_rejects_self_and_missing_assets_without_moving_anything() {
+            let (service, repo, sink) = service_with(vec![plain_asset("dup")]);
+            let activities = activity_repo(&[("a1", "dup", "acct-1", "USD")]);
+
+            assert!(service
+                .merge_assets("dup", "dup", &activities)
+                .await
+                .is_err());
+            assert!(service
+                .merge_assets("dup", "missing", &activities)
+                .await
+                .is_err());
+            assert!(service
+                .merge_assets("missing", "dup", &activities)
+                .await
+                .is_err());
+
+            assert_eq!(activities.rows.lock().unwrap()[0].1, "dup");
+            assert!(repo.get_by_id("dup").is_ok());
+            assert!(sink.events().is_empty());
         }
     }
 }
