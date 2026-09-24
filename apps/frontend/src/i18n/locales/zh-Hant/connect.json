@@ -1,4 +1,5 @@
 {
+  "opensInBrowser": "在瀏覽器中開啟",
   "page": {
     "title": "同步與連線",
     "subtitle": "所有裝置，集中管理。",
@@ -37,6 +38,7 @@
     }
   },
   "flow": {
+    "aggregatorExample": "（例如 SnapTrade）",
     "yourDevice": "你的裝置",
     "localDatabase": "本機資料庫",
     "dataStaysHere": "資料保留在此",
@@ -222,6 +224,10 @@
     "lastUsed": "上次使用"
   },
   "subscription": {
+    "copySupportEmail": "複製支援電子郵件地址",
+    "syncPausedTooltip": "同步已暫停 — 需要有效訂閱",
+    "syncPausedTitle": "同步已暫停",
+    "syncPausedDescription": "同步需要有效訂閱。您的本機資料和待同步的變更會保留。",
     "comingSoon": "敬請期待",
     "getStarted": "開始使用",
     "perMonthShort": "月",
@@ -282,5 +288,16 @@
   },
   "errors": {
     "unknown": "未知錯誤"
+  },
+  "session": {
+    "restoring": "正在還原 Connect…",
+    "unavailable": "Connect 暫時無法使用",
+    "localAvailable": "您的本機投資組合仍可使用。請重試連線。"
+  },
+  "rebind": {
+    "title": "變更此個人資料的 Connect 連線？",
+    "description": "你正在連接其他帳戶或家庭。你的本機投資組合資料將會保留，但現有的券商關聯和裝置同步設定將會移除。新帳戶可以在此個人資料中新增券商資料。你可以在準備好後重新設定裝置同步。如果希望分開管理資料，請使用新的個人資料。",
+    "cancel": "取消",
+    "confirm": "變更連線"
   }
 }

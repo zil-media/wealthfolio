@@ -13,6 +13,9 @@ use crate::accounts::TrackingMode;
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum DomainEvent {
+    /// Price history was saved; recalculate portfolios from saved quotes without fetching again.
+    PriceHistoryChanged,
+
     /// Activities were created, updated, or deleted.
     ActivitiesChanged {
         account_ids: Vec<String>,

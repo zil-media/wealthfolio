@@ -438,12 +438,58 @@ fn test_detect_addon_permissions_historical_exchange_rates() {
 }
 
 #[test]
+fn test_detect_addon_permissions_activities_transfer_functions() {
+    let addon_files = vec![AddonFile {
+        name: "addon.js".to_string(),
+        content: r#"
+            export default function enable(ctx) {
+                ctx.api.activities.getTransferPair('activity-1');
+                ctx.api.activities.findTransferMatchCandidates({ activityId: 'activity-1' });
+                ctx.api.activities.saveTransferPair({ fromAccountId: 'a', toAccountId: 'b' });
+                ctx.api.activities.linkTransfer('activity-a', 'activity-b');
+                ctx.api.activities.unlinkTransfer('activity-a', 'activity-b');
+            }
+        "#
+        .to_string(),
+        is_main: true,
+    }];
+
+    let detected_permissions = detect_addon_permissions(&addon_files);
+
+    let activities_permission = detected_permissions
+        .iter()
+        .find(|p| p.category == "activities")
+        .expect("activities permissions should be detected");
+    let activities_functions: Vec<&str> = activities_permission
+        .functions
+        .iter()
+        .map(|f| f.name.as_str())
+        .collect();
+
+    for function in [
+        "getTransferPair",
+        "findTransferMatchCandidates",
+        "saveTransferPair",
+        "linkTransfer",
+        "unlinkTransfer",
+    ] {
+        assert!(
+            activities_functions.contains(&function),
+            "{} should be detected under activities",
+            function
+        );
+    }
+}
+
+#[test]
 fn test_detect_addon_permissions_spending() {
     let addon_files = vec![AddonFile {
         name: "addon.js".to_string(),
         content: r#"
             export default async function enable(ctx) {
                 await ctx.api.spending.isEnabled();
+                await ctx.api.spending.searchCashActivities({});
+                await ctx.api.spending.getReport({});
                 await ctx.api.spending.getCategories();
                 await ctx.api.spending.getRules();
                 await ctx.api.spending.saveRule({});
@@ -471,12 +517,22 @@ fn test_detect_addon_permissions_spending() {
         std::collections::HashSet::from([
             "isEnabled",
             "getCategories",
+            "getReport",
             "getRules",
             "saveRule",
             "deleteRule",
             "rerunRules",
         ])
     );
+
+    let activities_permission = detected_permissions
+        .iter()
+        .find(|permission| permission.category == "activities")
+        .expect("cash activity search should require activities permission");
+    assert!(activities_permission
+        .functions
+        .iter()
+        .any(|function| function.name == "searchCashActivities"));
 }
 
 #[test]
@@ -2134,6 +2190,7 @@ mod service_tests {
                         auth_type: "bearer".to_string(),
                         secret_key: "api-token".to_string(),
                     }),
+                    timeout_secs: None,
                     injected_authorization: Some("Bearer secret-token".to_string()),
                 },
             )
@@ -2200,6 +2257,7 @@ mod service_tests {
                         auth_type: "bearer".to_string(),
                         secret_key: "api-token".to_string(),
                     }),
+                    timeout_secs: None,
                     injected_authorization: Some("Bearer secret-token".to_string()),
                 },
             )

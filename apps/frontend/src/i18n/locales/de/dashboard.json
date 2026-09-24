@@ -49,15 +49,15 @@
     "sync_broker_accounts": "Brokerkonten synchronisieren",
     "sync_devices": "Geräte synchronisieren",
     "update_prices": "Kurse aktualisieren",
-    "rebuild_full_history": "Vollständige Historie neu aufbauen",
+    "rebuild_full_history": "Gesamten Verlauf aktualisieren",
     "verify_data": "Daten prüfen"
   },
   "update": {
     "as_of": "Stand:",
     "update_quotes": "Kurse aktualisieren",
     "updating_quotes": "Kurse werden aktualisiert...",
-    "rebuild_history": "Vollständige Historie neu aufbauen",
-    "rebuilding_history": "Historie wird neu aufgebaut..."
+    "rebuild_history": "Gesamten Verlauf aktualisieren",
+    "rebuilding_history": "Gesamten Verlauf aktualisieren…"
   },
   "goals": {
     "no_goals_set": "Keine Ziele festgelegt.",

@@ -22,10 +22,21 @@
     "deleting": "Eliminazione..."
   },
   "refreshDialog": {
-    "title": "Aggiorna cronologia",
-    "description_named": "Questo eliminerà e sostituirà tutte le quotazioni del provider con dati aggiornati per {{name}}. Le quotazioni manuali verranno conservate. Continuare?",
-    "description_generic": "Questo eliminerà e sostituirà tutte le quotazioni del provider con dati aggiornati. Le quotazioni manuali verranno conservate. Continuare?",
+    "title": "Aggiorna tutta la cronologia",
+    "description_named": "I nuovi prezzi di {{name}} verranno uniti a quelli esistenti. La cronologia precedente e i prezzi manuali e del broker saranno conservati. Continuare?",
+    "description_generic": "I nuovi prezzi verranno uniti a quelli esistenti. La cronologia precedente e i prezzi manuali e del broker saranno conservati. Continuare?",
     "refresh": "Aggiorna"
+  },
+  "resetDialog": {
+    "globalDescription": "Sostituire i prezzi dei fornitori per tutti gli asset idonei, comprese le coppie di valute? Ogni cronologia viene scaricata e verificata prima della sostituzione e può essere più breve. I prezzi manuali e del broker vengono conservati. Gli asset non riusciti mantengono la cronologia; le sostituzioni riuscite non vengono annullate.",
+    "globalResult": "Sostituiti: {{succeeded}}. Non riusciti: {{failed}}. Ignorati: {{skipped}}.",
+    "title": "Reimposta cronologia del fornitore",
+    "description": "Sostituire tutti i prezzi del fornitore per {{name}} con una cronologia appena scaricata? La nuova cronologia potrebbe essere più breve. I prezzi manuali e del broker saranno conservati. Se il recupero o la verifica fallisce, la cronologia esistente sarà mantenuta.",
+    "confirm": "Reimposta cronologia del fornitore",
+    "resetting": "Reimpostazione…",
+    "success": "Cronologia del fornitore sostituita",
+    "complete": "I prezzi sono stati sostituiti. È stato richiesto il ricalcolo del portafoglio.",
+    "uncertain": "La risposta è stata interrotta; i prezzi potrebbero essere già stati sostituiti. Controlla la cronologia e aggiorna la pagina prima di considerare un’altra reimpostazione."
   },
   "createSecurity": {
     "title": "Aggiungi titolo",
@@ -177,7 +188,7 @@
     "record_transaction": "Registra transazione",
     "valuation": "Valutazione",
     "update_price": "Aggiorna prezzo",
-    "refresh_history": "Aggiorna cronologia",
+    "refresh_history": "Aggiorna tutta la cronologia",
     "edit": "Modifica",
     "update_value": "Aggiorna valore",
     "edit_details": "Modifica dettagli",

@@ -1,5 +1,6 @@
 import { ExternalLink } from "@/components/external-link";
 import { StartupError } from "@/components/startup-error";
+import { StartupScreen } from "@/components/startup-screen";
 import { usePlatform } from "@/hooks/use-platform";
 import { useSettings } from "@/hooks/use-settings";
 import { WEALTHFOLIO_CONNECT_PORTAL_URL } from "@/lib/constants";
@@ -40,7 +41,7 @@ const OnboardingPage = () => {
   const isFinalStep = currentStep === maxSteps;
   const isAppearanceStep = currentStep === 3;
 
-  if (isSettingsLoading) return null;
+  if (isSettingsLoading) return <StartupScreen />;
   if (isSettingsError) {
     return (
       <StartupError

@@ -5,7 +5,6 @@ use crate::{
     config::Config,
     main_lib::AppState,
     models::{Account, AccountUpdate, NewAccount},
-    oidc,
 };
 use axum::middleware;
 use axum::{
@@ -19,11 +18,9 @@ use axum::{
     routing::get,
     Json, Router,
 };
-use tower_governor::{governor::GovernorConfigBuilder, GovernorLayer};
 use tower_http::{
     cors::{Any, CorsLayer},
     request_id::{MakeRequestUuid, PropagateRequestIdLayer, SetRequestIdLayer},
-    timeout::TimeoutLayer,
     trace::{DefaultOnRequest, DefaultOnResponse, TraceLayer},
 };
 use tracing::Level;
@@ -56,6 +53,7 @@ mod limits;
 mod market_data;
 mod net_worth;
 mod performance;
+pub(crate) mod portable_backups;
 mod portfolio;
 mod portfolios;
 mod secrets;
@@ -84,7 +82,8 @@ pub async fn readyz() -> &'static str {
 )]
 pub struct ApiDoc;
 
-const SERVER_CSP: &str = "default-src 'self'; script-src 'self' 'sha256-s/UhdlprnzFxx+iXOtDj2n/Jk+MSRz1g/1lyBtFatVw=' 'wasm-unsafe-eval' blob:; style-src 'self' 'unsafe-inline' blob:; img-src 'self' data: blob: https:; font-src 'self' data: blob:; media-src 'self' data: blob:; connect-src 'self' https://wealthfolio.app https://auth.wealthfolio.app https://connect.wealthfolio.app https://connect-staging.wealthfolio.app; frame-src 'none'; child-src 'self' blob: about:; object-src 'none'; base-uri 'self'; form-action 'self'; frame-ancestors 'none'; worker-src 'self' blob:";
+// Keep the addon bootstrap hash as well as the application's inline theme script.
+const SERVER_CSP: &str = "default-src 'self'; script-src 'self' 'sha256-OUUXM+aKkYdqwM38Z84FhgHpIYOk/e5Dz9UaAnwYXk8=' 'sha256-s/UhdlprnzFxx+iXOtDj2n/Jk+MSRz1g/1lyBtFatVw=' 'wasm-unsafe-eval' blob:; style-src 'self' 'unsafe-inline' blob:; img-src 'self' data: blob: https:; font-src 'self' data: blob:; media-src 'self' data: blob:; connect-src 'self' https://wealthfolio.app https://auth.wealthfolio.app https://connect.wealthfolio.app https://connect-staging.wealthfolio.app; frame-src 'none'; child-src 'self' blob: about:; object-src 'none'; base-uri 'self'; form-action 'self'; frame-ancestors 'none'; worker-src 'self' blob:";
 const ADDON_SANDBOX_CSP: &str = "default-src 'none'; script-src 'sha256-s/UhdlprnzFxx+iXOtDj2n/Jk+MSRz1g/1lyBtFatVw=' 'wasm-unsafe-eval' blob:; style-src 'unsafe-inline' blob:; img-src data: blob:; font-src data: blob:; media-src data: blob:; connect-src 'none'; object-src 'none'; base-uri 'none'; form-action 'none'";
 
 pub async fn security_headers(request: Request<Body>, next: Next) -> Response {
@@ -117,23 +116,50 @@ pub async fn security_headers(request: Request<Body>, next: Next) -> Response {
     response
 }
 
-#[allow(deprecated)]
-pub fn app_router(state: Arc<AppState>, config: &Config) -> Router {
-    let cors = if config.cors_allow.iter().any(|o| o == "*") {
-        CorsLayer::new().allow_origin(Any)
+pub(crate) fn cors_layer(config: &Config) -> anyhow::Result<CorsLayer> {
+    if config.cors_allow.iter().any(|o| o == "*") {
+        Ok(CorsLayer::new().allow_origin(Any))
     } else {
         let origins = config
             .cors_allow
             .iter()
-            .map(|o| o.parse().unwrap())
-            .collect::<Vec<_>>();
-        CorsLayer::new()
+            .map(|origin| origin.parse::<HeaderValue>())
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(|_| anyhow::anyhow!("Invalid header value in WF_CORS_ALLOW_ORIGINS"))?;
+        Ok(CorsLayer::new()
             .allow_origin(origins)
-            .allow_credentials(true)
-    };
+            .allow_credentials(true))
+    }
+}
+
+#[allow(deprecated)]
+pub fn app_router(state: Arc<AppState>, config: &Config) -> anyhow::Result<Router> {
+    let profiles = crate::profiles::WebProfiles::new(state.clone(), config)?;
+    app_router_with_profiles(
+        profiles,
+        auth::AuthState {
+            auth: state.auth.clone(),
+            oidc: state.oidc.clone(),
+        },
+        config,
+    )
+}
+
+pub async fn app_router_from_config(config: &Config) -> anyhow::Result<Router> {
+    let profiles = crate::profiles::WebProfiles::open(config).await?;
+    let auth = profiles.auth_state();
+    app_router_with_profiles(profiles, auth, config)
+}
+
+fn app_router_with_profiles(
+    profiles: Arc<crate::profiles::WebProfiles>,
+    auth_state: auth::AuthState,
+    config: &Config,
+) -> anyhow::Result<Router> {
+    let cors = cors_layer(config)?;
+    profiles.start_connected_profiles();
 
     let openapi = ApiDoc::openapi();
-    let requires_auth = state.auth.is_some();
 
     // Compose all protected routes from individual modules
     #[allow(unused_mut)]
@@ -186,68 +212,58 @@ pub fn app_router(state: Arc<AppState>, config: &Config) -> Router {
         }),
     );
 
-    let protected_api = if requires_auth {
-        protected_api.layer(middleware::from_fn_with_state(
-            state.clone(),
-            auth::require_jwt,
+    let protected_api = protected_api
+        .layer(middleware::from_fn_with_state(
+            profiles.clone(),
+            crate::profiles::admit,
         ))
-    } else {
-        protected_api
-    };
-
-    // Rate limit login: 5 requests per 60 seconds per peer IP
-    let login_governor = GovernorConfigBuilder::default()
-        .per_second(12) // replenish 1 token every 12s → 5 per 60s
-        .burst_size(5)
-        .finish()
-        .expect("valid governor config");
-
-    // Rate limit the OIDC start + callback the same way (per peer IP).
-    let oidc_login_governor = GovernorConfigBuilder::default()
-        .per_second(12)
-        .burst_size(5)
-        .finish()
-        .expect("valid governor config");
-    let oidc_governor = GovernorConfigBuilder::default()
-        .per_second(12)
-        .burst_size(5)
-        .finish()
-        .expect("valid governor config");
+        .merge(crate::profiles::router(profiles.clone()))
+        .layer(middleware::from_fn_with_state(
+            auth_state.auth.clone(),
+            auth::require_backup_session,
+        ));
 
     let api = Router::new()
         .route("/healthz", get(healthz))
         .route("/readyz", get(readyz))
-        .route("/auth/status", get(auth::auth_status))
-        .route(
-            "/auth/login",
-            axum::routing::post(auth::login).layer(GovernorLayer::new(login_governor)),
-        )
-        .route("/auth/logout", axum::routing::post(auth::logout))
-        .route("/auth/me", get(auth::auth_me))
-        .route(
-            "/auth/oidc/login",
-            get(oidc::oidc_login).layer(GovernorLayer::new(oidc_login_governor)),
-        )
-        .route("/auth/oidc/logout", get(oidc::oidc_logout))
-        .route(
-            "/auth/oidc/callback",
-            get(oidc::oidc_callback).layer(GovernorLayer::new(oidc_governor)),
-        )
+        .merge(auth::router(auth_state))
         .merge(protected_api)
-        .with_state(state.clone());
+        .with_state(());
 
     // Timeout wraps only the /api/v1 subtree: /mcp serves long-lived SSE
     // streams that a request timeout would sever.
     let mut router = Router::new()
         .nest("/api/v1", api)
-        .with_state(state.clone())
-        .layer(TimeoutLayer::new(config.request_timeout));
+        .layer(middleware::from_fn_with_state(
+            profiles.clone(),
+            crate::profiles::instance_logout,
+        ))
+        .with_state(())
+        .layer(middleware::from_fn({
+            let ordinary_timeout = config.request_timeout;
+            move |request: axum::extract::Request, next: middleware::Next| async move {
+                use axum::response::IntoResponse;
+                let path = request.uri().path();
+                let timeout =
+                    if path.contains("/utilities/database/backups/") && path.ends_with("/export") {
+                        std::time::Duration::from_secs(30 * 60)
+                    } else {
+                        ordinary_timeout
+                    };
+                tokio::time::timeout(timeout, next.run(request))
+                    .await
+                    .unwrap_or_else(|_| axum::http::StatusCode::REQUEST_TIMEOUT.into_response())
+            }
+        }));
 
     if config.mcp_enabled {
-        router = router.merge(crate::mcp::router(state, config));
+        router = router.route(
+            "/mcp",
+            axum::routing::any(crate::profiles::mcp).with_state(profiles),
+        );
     }
 
-    router
+    Ok(router
         .layer(cors)
         .layer(SetRequestIdLayer::x_request_id(MakeRequestUuid))
         .layer(PropagateRequestIdLayer::x_request_id())
@@ -262,7 +278,7 @@ pub fn app_router(state: Arc<AppState>, config: &Config) -> Router {
                 })
                 .on_request(DefaultOnRequest::new().level(Level::INFO))
                 .on_response(DefaultOnResponse::new().level(Level::INFO)),
-        )
+        ))
 }
 
 #[cfg(test)]
@@ -270,6 +286,45 @@ mod security_header_tests {
     use super::*;
     use axum::{routing::get, Router};
     use tower::ServiceExt;
+
+    #[tokio::test]
+    async fn application_csp_allows_inline_theme_initialization() {
+        use base64::{engine::general_purpose::STANDARD, Engine};
+        use sha2::{Digest, Sha256};
+
+        let html = include_str!("../../frontend/index.html");
+        let app = Router::new()
+            .route("/", get(move || async move { html }))
+            .layer(axum::middleware::from_fn(security_headers));
+        let response = app
+            .oneshot(Request::builder().uri("/").body(Body::empty()).unwrap())
+            .await
+            .unwrap();
+        let csp = response.headers()["content-security-policy"]
+            .to_str()
+            .unwrap()
+            .to_owned();
+        let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        let html = std::str::from_utf8(&body).unwrap();
+        let script = html
+            .split_once("<script>")
+            .expect("theme initialization script")
+            .1
+            .split_once("</script>")
+            .unwrap()
+            .0;
+        let hash = STANDARD.encode(Sha256::digest(script.as_bytes()));
+        let script_src = csp
+            .split(';')
+            .find(|directive| directive.trim_start().starts_with("script-src "))
+            .unwrap();
+        assert!(script_src
+            .split_whitespace()
+            .any(|source| source == format!("'sha256-{hash}'")));
+        assert!(!script_src.contains("'unsafe-inline'"));
+    }
 
     #[tokio::test]
     async fn addon_sandbox_response_uses_network_free_csp() {
@@ -324,3 +379,6 @@ mod security_header_tests {
         assert!(csp.contains("media-src 'self' data: blob:"));
     }
 }
+
+#[cfg(test)]
+mod connect_admission_tests;

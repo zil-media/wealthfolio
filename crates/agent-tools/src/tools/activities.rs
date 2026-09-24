@@ -51,6 +51,7 @@ pub struct ActivityDto {
     pub account_name: Option<String>,
     /// When the activity was recorded (RFC 3339).
     pub created_at: String,
+    pub notes: Option<String>,
 }
 
 /// Output envelope for activities tool.
@@ -273,6 +274,7 @@ impl AgentTool for SearchActivities {
                     account_id: a.account_id.clone(),
                     account_name: Some(a.account_name),
                     created_at: a.created_at,
+                    notes: a.comment,
                 }
             })
             .collect();

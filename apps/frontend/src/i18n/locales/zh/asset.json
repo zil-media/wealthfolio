@@ -22,10 +22,21 @@
     "deleting": "正在删除……"
   },
   "refreshDialog": {
-    "title": "刷新历史",
-    "description_named": "这将删除并以最新数据替换 {{name}} 的所有提供商报价。手动报价将被保留。是否继续？",
-    "description_generic": "这将删除并以最新数据替换所有提供商报价。手动报价将被保留。是否继续？",
+    "title": "刷新全部历史",
+    "description_named": "将获取{{name}}的新价格历史并与现有价格合并。旧历史、手动价格和券商价格将保留。继续吗？",
+    "description_generic": "将获取新价格历史并与现有价格合并。旧历史、手动价格和券商价格将保留。继续吗？",
     "refresh": "刷新"
+  },
+  "resetDialog": {
+    "globalDescription": "替换所有符合条件的资产（包括货币对）的供应商价格？每项资产的历史均在获取和验证后替换，替换后的历史可能较短。手动和经纪商价格将保留。失败资产保留原有历史，成功的替换不会回滚。",
+    "globalResult": "已替换：{{succeeded}}。失败：{{failed}}。已跳过：{{skipped}}。",
+    "title": "重置数据源历史",
+    "description": "将{{name}}的所有数据源价格替换为新获取的历史记录吗？新历史可能更短。手动价格和券商价格将保留。如果获取或验证失败，现有历史将保留。",
+    "confirm": "重置数据源历史",
+    "resetting": "正在重置…",
+    "success": "数据源历史已替换",
+    "complete": "价格已替换。已请求重新计算投资组合。",
+    "uncertain": "响应已中断；价格可能已被替换。请检查价格历史并刷新页面后，再考虑是否需要再次重置。"
   },
   "createSecurity": {
     "title": "添加证券",
@@ -177,7 +188,7 @@
     "record_transaction": "记录交易",
     "valuation": "估值",
     "update_price": "更新价格",
-    "refresh_history": "刷新历史",
+    "refresh_history": "刷新全部历史",
     "edit": "编辑",
     "update_value": "更新价值",
     "edit_details": "编辑详情",

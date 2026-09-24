@@ -1,3 +1,4 @@
+import { profilePreferenceKey, readProfilePreference } from "@/hooks/use-persistent-state";
 import { useHapticFeedback, useIsMobileViewport } from "@/hooks";
 import { cn } from "@/lib/utils";
 import { Page, SwipableView, type Icon } from "@wealthfolio/ui";
@@ -173,7 +174,7 @@ export function SwipablePage({
   const [persistedView, setPersistedView] = React.useState<string | null>(() => {
     if (!persistKey) return null;
     try {
-      const raw = window.localStorage.getItem(persistKey);
+      const raw = readProfilePreference(persistKey);
       return raw ? (JSON.parse(raw) as string) : null;
     } catch {
       return null;
@@ -215,7 +216,7 @@ export function SwipablePage({
       if (persistKey) {
         setPersistedView(nextView);
         try {
-          window.localStorage.setItem(persistKey, JSON.stringify(nextView));
+          window.localStorage.setItem(profilePreferenceKey(persistKey), JSON.stringify(nextView));
         } catch {
           // Swallow quota/serialization errors — persistence is best-effort.
         }

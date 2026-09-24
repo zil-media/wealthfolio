@@ -1,8 +1,13 @@
 import { resolveSymbolQuote } from "@/adapters";
 import TickerSearchInput from "@/components/ticker-search";
-import { buildOccSymbol, formatOptionExpiration, parseOccSymbol } from "@/lib/occ-symbol";
+import {
+  buildOccSymbol,
+  formatOptionExpiration,
+  isValidOptionExpiration,
+  parseOccSymbol,
+} from "@/lib/occ-symbol";
 import type { SymbolSearchResult } from "@/lib/types";
-import { cn, normalizeCurrency } from "@/lib/utils";
+import { cn, formatDateISO, normalizeCurrency } from "@/lib/utils";
 import {
   DatePickerInput,
   FormControl,
@@ -14,7 +19,7 @@ import {
 } from "@wealthfolio/ui";
 import { Input } from "@wealthfolio/ui/components/ui/input";
 import { motion } from "motion/react";
-import { useEffect, useId, useRef } from "react";
+import { useEffect, useId, useRef, useState } from "react";
 import { useFormContext, type FieldPath, type FieldValues } from "react-hook-form";
 import { useTranslation } from "react-i18next";
 
@@ -48,6 +53,7 @@ export function OptionContractFields<TFieldValues extends FieldValues = FieldVal
   const { t } = useTranslation(["activity"]);
   const { control, setValue, getValues, watch } = useFormContext<TFieldValues>();
   const optionTypeId = useId();
+  const [isExpirationFocused, setIsExpirationFocused] = useState(false);
   const latestResolveRequestId = useRef(0);
   const needsCurrencyConfirmation = useRef(false);
   const provisionalCurrency = useRef<string | undefined>(undefined);
@@ -59,10 +65,10 @@ export function OptionContractFields<TFieldValues extends FieldValues = FieldVal
   const optionType = watch(optionTypeName) as string | undefined;
 
   // Format expiration for summary (YYYY-MM-DD → "Mar 29")
-  const expirationDisplay = expirationDate
+  const expirationDisplay = isValidOptionExpiration(expirationDate)
     ? formatOptionExpiration(expirationDate, dateFormatting)
     : undefined;
-  const hasContractSummary = strikePrice && expirationDate && optionType;
+  const hasContractSummary = strikePrice && isValidOptionExpiration(expirationDate) && optionType;
 
   const handleUnderlyingSelect = (symbol: string, searchResult?: SymbolSearchResult) => {
     const upper = symbol.toUpperCase();
@@ -113,10 +119,12 @@ export function OptionContractFields<TFieldValues extends FieldValues = FieldVal
   // Resolve option contract quote when all contract fields are filled.
   // Builds OCC symbol → resolves via provider → sets currency + pre-fills premium.
   useEffect(() => {
-    if (!underlying || !strikePrice || !expirationDate || !optionType) return;
+    latestResolveRequestId.current += 1;
+    if (isExpirationFocused) return;
+    if (!underlying || !strikePrice || !isValidOptionExpiration(expirationDate) || !optionType)
+      return;
     if (optionType !== "CALL" && optionType !== "PUT") return;
 
-    latestResolveRequestId.current += 1;
     const requestId = latestResolveRequestId.current;
 
     const occSymbol = buildOccSymbol(underlying, expirationDate, optionType, strikePrice);
@@ -159,7 +167,7 @@ export function OptionContractFields<TFieldValues extends FieldValues = FieldVal
         // Ignore — provisional currency from search result is already set
       });
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [underlying, strikePrice, expirationDate, optionType]);
+  }, [underlying, strikePrice, expirationDate, optionType, isExpirationFocused]);
 
   return (
     <div className="space-y-4">
@@ -295,15 +303,9 @@ export function OptionContractFields<TFieldValues extends FieldValues = FieldVal
               <FormLabel>{t("activity:form.expiration")}</FormLabel>
               <FormControl>
                 <DatePickerInput
-                  onChange={(date: Date | undefined) => {
-                    if (date) {
-                      const yyyy = date.getFullYear();
-                      if (yyyy < 1000) return;
-                      const mm = String(date.getMonth() + 1).padStart(2, "0");
-                      const dd = String(date.getDate()).padStart(2, "0");
-                      field.onChange(`${yyyy}-${mm}-${dd}`);
-                    }
-                  }}
+                  onChange={(date) => field.onChange(date ? formatDateISO(date) : "")}
+                  onBlur={field.onBlur}
+                  onFocusChange={setIsExpirationFocused}
                   value={field.value as string | undefined}
                   disabled={field.disabled}
                 />

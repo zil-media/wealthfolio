@@ -25,7 +25,13 @@ function buildStatusConfig(
   { label: string; variant: "default" | "secondary" | "destructive" | "outline" }
 > {
   return {
+    restoring: { label: t("connect:session.restoring"), variant: "secondary" },
+    unavailable: { label: t("connect:session.unavailable"), variant: "secondary" },
     not_connected: { label: t("connect:status.notConnected"), variant: "secondary" },
+    subscription_required: {
+      label: t("connect:subscription.syncPausedTitle"),
+      variant: "secondary",
+    },
     idle: { label: t("connect:status.upToDate"), variant: "default" },
     running: { label: t("connect:status.syncingEllipsis"), variant: "outline" },
     needs_review: { label: t("connect:status.needsReview"), variant: "destructive" },

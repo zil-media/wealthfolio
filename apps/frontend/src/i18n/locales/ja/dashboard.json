@@ -49,15 +49,15 @@
     "sync_broker_accounts": "証券口座を同期",
     "sync_devices": "デバイスを同期",
     "update_prices": "価格を更新",
-    "rebuild_full_history": "全履歴を再構築",
+    "rebuild_full_history": "全履歴を更新",
     "verify_data": "データを検証"
   },
   "update": {
     "as_of": "基準日:",
     "update_quotes": "価格を更新",
     "updating_quotes": "価格を更新中...",
-    "rebuild_history": "全履歴を再構築",
-    "rebuilding_history": "履歴を再構築中..."
+    "rebuild_history": "全履歴を更新",
+    "rebuilding_history": "全履歴を更新…"
   },
   "goals": {
     "no_goals_set": "目標が未設定です。",

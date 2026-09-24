@@ -22,10 +22,21 @@
     "deleting": "Wird gelöscht..."
   },
   "refreshDialog": {
-    "title": "Verlauf aktualisieren",
-    "description_named": "Dadurch werden alle Anbieter-Kursnotierungen gelöscht und durch aktuelle Daten für {{name}} ersetzt. Manuelle Kursnotierungen bleiben erhalten. Fortfahren?",
-    "description_generic": "Dadurch werden alle Anbieter-Kursnotierungen gelöscht und durch aktuelle Daten ersetzt. Manuelle Kursnotierungen bleiben erhalten. Fortfahren?",
+    "title": "Gesamten Verlauf aktualisieren",
+    "description_named": "Neue Kurse für {{name}} werden mit vorhandenen Kursen zusammengeführt. Ältere, manuelle und Broker-Kurse bleiben erhalten. Fortfahren?",
+    "description_generic": "Neue Kurse werden mit vorhandenen Kursen zusammengeführt. Ältere, manuelle und Broker-Kurse bleiben erhalten. Fortfahren?",
     "refresh": "Aktualisieren"
+  },
+  "resetDialog": {
+    "globalDescription": "Anbieterkurse für alle geeigneten Vermögenswerte einschließlich Währungspaare ersetzen? Jeder Verlauf wird vor dem Ersetzen abgerufen und geprüft. Der Ersatz kann kürzer sein. Manuelle und Brokerkurse bleiben erhalten. Bei Fehlern bleibt der bisherige Verlauf erhalten; erfolgreiche Ersetzungen werden nicht rückgängig gemacht.",
+    "globalResult": "Ersetzt: {{succeeded}}. Fehlgeschlagen: {{failed}}. Übersprungen: {{skipped}}.",
+    "title": "Anbieterhistorie zurücksetzen",
+    "description": "Alle Anbieterpreise für {{name}} durch neu abgerufene Daten ersetzen? Die neue Historie kann kürzer sein. Manuelle und Broker-Kurse bleiben erhalten. Bei einem Abruf- oder Validierungsfehler bleibt die bestehende Historie erhalten.",
+    "confirm": "Anbieterhistorie zurücksetzen",
+    "resetting": "Wird zurückgesetzt…",
+    "success": "Anbieterhistorie ersetzt",
+    "complete": "Die Kurse wurden ersetzt. Die Neuberechnung des Portfolios wurde angefordert.",
+    "uncertain": "Die Antwort wurde unterbrochen; die Preise wurden möglicherweise bereits ersetzt. Prüfen Sie die Kurshistorie und laden Sie die Seite neu, bevor Sie erneut zurücksetzen."
   },
   "createSecurity": {
     "title": "Wertpapier hinzufügen",
@@ -177,7 +188,7 @@
     "record_transaction": "Transaktion erfassen",
     "valuation": "Bewertung",
     "update_price": "Preis aktualisieren",
-    "refresh_history": "Verlauf aktualisieren",
+    "refresh_history": "Gesamten Verlauf aktualisieren",
     "edit": "Bearbeiten",
     "update_value": "Wert aktualisieren",
     "edit_details": "Details bearbeiten",

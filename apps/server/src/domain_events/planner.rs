@@ -82,6 +82,15 @@ pub fn plan_portfolio_job(events: &[DomainEvent], timezone: &str) -> Option<Port
     let mut requires_full_rebuild = false;
     let mut min_activity_at_utc: Option<DateTime<Utc>> = None;
     let mut min_snapshot_date: Option<NaiveDate> = None;
+    // Price-only batches use saved quotes. Other events retain their normal sync.
+    let needs_market_sync = events.iter().any(|event| {
+        !matches!(
+            event,
+            DomainEvent::PriceHistoryChanged
+                | DomainEvent::AssetClassificationsChanged { .. }
+                | DomainEvent::AssetsMerged { .. }
+        )
+    });
 
     for event in events {
         match event {
@@ -185,6 +194,11 @@ pub fn plan_portfolio_job(events: &[DomainEvent], timezone: &str) -> Option<Port
                     }
                 }
             }
+            DomainEvent::PriceHistoryChanged => {
+                has_recalc_event = true;
+                recalculate_all_accounts = true;
+                requires_full_rebuild = true;
+            }
             DomainEvent::AssetClassificationsChanged { .. } => {}
             DomainEvent::TrackingModeChanged {
                 account_id,
@@ -223,12 +237,16 @@ pub fn plan_portfolio_job(events: &[DomainEvent], timezone: &str) -> Option<Port
         } else {
             Some(account_ids.into_iter().collect())
         },
-        market_sync_mode: MarketSyncMode::Incremental {
-            asset_ids: if asset_ids.is_empty() {
-                None
-            } else {
-                Some(asset_ids.into_iter().collect())
-            },
+        market_sync_mode: if !needs_market_sync {
+            MarketSyncMode::None
+        } else {
+            MarketSyncMode::Incremental {
+                asset_ids: if asset_ids.is_empty() {
+                    None
+                } else {
+                    Some(asset_ids.into_iter().collect())
+                },
+            }
         },
         snapshot_mode: SnapshotRecalcMode::Full,
         valuation_mode: ValuationRecalcMode::Full,
@@ -675,5 +693,34 @@ mod tests {
 
         let assets = plan_asset_enrichment(&events);
         assert_eq!(assets.len(), 3);
+    }
+
+    #[test]
+    fn price_history_notifications_do_not_schedule_market_fetches() {
+        let events = vec![
+            DomainEvent::PriceHistoryChanged,
+            DomainEvent::PriceHistoryChanged,
+        ];
+        let job = plan_portfolio_job(&events, "UTC").unwrap();
+        assert!(!job.market_sync_mode.requires_sync());
+        assert!(job.account_ids.is_none());
+        assert!(job.since_date.is_none());
+    }
+
+    #[test]
+    fn price_history_notifications_preserve_other_portfolio_work() {
+        let events = vec![
+            DomainEvent::PriceHistoryChanged,
+            DomainEvent::ActivitiesChanged {
+                account_ids: vec!["acc1".to_string()],
+                asset_ids: vec![],
+                currencies: vec![],
+                earliest_activity_at_utc: None,
+            },
+        ];
+        let job = plan_portfolio_job(&events, "UTC").unwrap();
+        assert!(job.account_ids.is_none());
+        assert!(job.market_sync_mode.requires_sync());
+        assert!(job.since_date.is_none());
     }
 }

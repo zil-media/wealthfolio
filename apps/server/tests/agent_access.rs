@@ -11,7 +11,7 @@ use base64::{engine::general_purpose::STANDARD as BASE64, Engine as _};
 use rand::{rngs::OsRng, RngCore};
 use reqwest::header;
 use tempfile::TempDir;
-use wealthfolio_server::{api::app_router, build_state, config::Config};
+use wealthfolio_server::{api::app_router_from_config, config::Config};
 
 const PASSWORD: &str = "super-secret";
 
@@ -64,9 +64,8 @@ async fn spawn_server(mcp_enabled: bool, audit_enabled: bool) -> TestServer {
             std::env::set_var("WF_MCP_AUDIT_ENABLED", "false");
         }
 
-        let config = Config::from_env();
-        let state = build_state(&config).await.unwrap();
-        app_router(state, &config)
+        let config = Config::from_env().unwrap();
+        app_router_from_config(&config).await.unwrap()
     };
 
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
@@ -490,14 +489,18 @@ async fn mcp_write_scoped_token_sees_write_tools() {
     let names: Vec<&str> = tools.iter().map(|t| t["name"].as_str().unwrap()).collect();
     assert_eq!(
         tools.len(),
-        31,
-        "full-scope token must see all 31 tools: {names:?}"
+        32,
+        "full-scope token must see all 32 tools: {names:?}"
     );
     assert!(
         names.contains(&"commit_activity_import"),
         "import tool visible"
     );
     assert!(names.contains(&"record_activity"), "draft tool visible");
+    assert!(
+        names.contains(&"commit_categorization_rule"),
+        "categorization rule commit tool visible"
+    );
     assert!(
         names.contains(&"prepare_asset_classification"),
         "suggest tool visible"
@@ -522,6 +525,175 @@ async fn mcp_write_scoped_token_sees_write_tools() {
     ] {
         assert!(names.contains(&manage), "{manage} visible");
     }
+}
+
+/// Exercise the actual MCP tools, shared resolver, writer and SQLite storage.
+/// Manual quotes keep this deterministic and independent of market providers.
+#[tokio::test]
+async fn mcp_import_reuses_reviewed_crypto_assets_despite_equity_collisions() {
+    async fn post_api(
+        server: &TestServer,
+        cookie: &str,
+        path: &str,
+        body: serde_json::Value,
+    ) -> serde_json::Value {
+        let response = server
+            .client
+            .post(format!("{}/api/v1/{path}", server.base))
+            .header(header::COOKIE, format!("wf_session={cookie}"))
+            .json(&body)
+            .send()
+            .await
+            .unwrap();
+        let status = response.status();
+        let value: serde_json::Value = response.json().await.unwrap();
+        assert!(status.is_success(), "{path}: {status} {value}");
+        value
+    }
+
+    async fn call_import(
+        server: &TestServer,
+        pat: &str,
+        session: &str,
+        name: &str,
+        activities: serde_json::Value,
+    ) -> serde_json::Value {
+        let response = mcp_post(
+            server,
+            Some(pat),
+            Some(session),
+            serde_json::json!({
+                "jsonrpc": "2.0", "id": name, "method": "tools/call",
+                "params": { "name": name, "arguments": { "activities": activities } }
+            }),
+        )
+        .await;
+        assert_eq!(response.status(), 200);
+        let result = parse_sse_data(&response.text().await.unwrap());
+        assert!(result.get("error").is_none(), "{result}");
+        assert_ne!(result["result"]["isError"], true, "{result}");
+        result["result"]["structuredContent"].clone()
+    }
+
+    let server = spawn_server(true, false).await;
+    let cookie = login(&server).await;
+    let account = post_api(
+        &server,
+        &cookie,
+        "accounts",
+        serde_json::json!({
+            "name": "Synthetic crypto account", "accountType": "CRYPTOCURRENCY",
+            "currency": "EUR", "isDefault": false, "isActive": true,
+            "trackingMode": "TRANSACTIONS"
+        }),
+    )
+    .await;
+    let mut crypto_ids = Vec::new();
+    for symbol in ["BNB", "PEPE"] {
+        for kind in ["EQUITY", "CRYPTO"] {
+            let asset = post_api(
+                &server,
+                &cookie,
+                "assets",
+                serde_json::json!({
+                    "kind": "INVESTMENT", "name": format!("Synthetic {kind} {symbol}"),
+                    "instrumentSymbol": symbol, "instrumentType": kind,
+                    "instrumentExchangeMic": if kind == "EQUITY" { Some("XETR") } else { None },
+                    "quoteCcy": "EUR", "quoteMode": "MANUAL"
+                }),
+            )
+            .await;
+            if kind == "CRYPTO" {
+                crypto_ids.push(asset["id"].clone());
+            }
+        }
+    }
+    let (status, token) = create_pat(&server, &cookie, serde_json::json!({
+        "name": "import regression", "scopes": ["activities:read", "activities:draft", "activities:write"]
+    })).await;
+    assert_eq!(status, 201);
+    let pat = token["token"].as_str().unwrap();
+    let session = mcp_initialize(&server, pat).await;
+    let mut activities = serde_json::json!([
+        { "date": "2024-06-01", "activityType": "BUY", "currency": "EUR",
+          "symbol": "crypto:BNB-EUR", "quantity": 0.5, "unitPrice": 500, "amount": 250 },
+        { "date": "2024-06-02", "activityType": "BUY", "currency": "EUR",
+          "symbol": "PEPE", "instrumentType": "crypto", "quantity": 10, "unitPrice": 1, "amount": 10 },
+        { "date": "2024-06-03", "activityType": "BUY", "currency": "EUR",
+          "assetId": crypto_ids[0], "quantity": 1, "unitPrice": 500, "amount": 500 }
+    ]);
+    for row in activities.as_array_mut().unwrap() {
+        row["accountId"] = account["id"].clone();
+    }
+    let preview = call_import(
+        &server,
+        pat,
+        &session,
+        "prepare_activity_import",
+        activities.clone(),
+    )
+    .await;
+    assert_eq!(preview["summary"]["valid"], 3, "{preview}");
+    let expected_ids = [&crypto_ids[0], &crypto_ids[1], &crypto_ids[0]];
+    for ((input, reviewed), expected_id) in activities
+        .as_array_mut()
+        .unwrap()
+        .iter_mut()
+        .zip(preview["rows"].as_array().unwrap())
+        .zip(expected_ids)
+    {
+        assert_eq!(&reviewed["assetId"], expected_id, "{reviewed}");
+        assert_eq!(reviewed["instrumentType"], "CRYPTO");
+        assert!(!reviewed["symbol"].as_str().unwrap().contains(':'));
+        input
+            .as_object_mut()
+            .unwrap()
+            .extend(reviewed.as_object().unwrap().clone());
+    }
+    let committed = call_import(&server, pat, &session, "commit_activity_import", activities).await;
+    assert_eq!(committed["summary"]["imported"], 3, "{committed}");
+    assert_eq!(committed["summary"]["assetsCreated"], 0, "{committed}");
+
+    let stored = post_api(
+        &server,
+        &cookie,
+        "activities/search",
+        serde_json::json!({
+            "page": 0, "pageSize": 10, "accountIdFilter": account["id"]
+        }),
+    )
+    .await;
+    let rows = stored["data"].as_array().unwrap();
+    assert_eq!(rows.len(), 3, "{stored}");
+    assert_eq!(
+        rows.iter()
+            .filter(|r| r["assetId"] == crypto_ids[0])
+            .count(),
+        2
+    );
+    assert_eq!(
+        rows.iter()
+            .filter(|r| r["assetId"] == crypto_ids[1])
+            .count(),
+        1
+    );
+    assert!(rows.iter().all(|r| r["instrumentType"] == "CRYPTO"));
+    let assets: Vec<serde_json::Value> = server
+        .client
+        .get(format!("{}/api/v1/assets", server.base))
+        .header(header::COOKIE, format!("wf_session={cookie}"))
+        .send()
+        .await
+        .unwrap()
+        .error_for_status()
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    assert_eq!(
+        assets.iter().filter(|a| a["kind"] == "INVESTMENT").count(),
+        4
+    );
 }
 
 #[tokio::test]
@@ -891,4 +1063,54 @@ async fn mcp_manage_tools_edit_delete_and_merge_records() {
         !audit_text.contains(dupe_id.as_str()),
         "asset id leaked to audit: {audit_text}"
     );
+}
+
+#[tokio::test]
+async fn profile_deletion_closes_initialized_mcp_sessions() {
+    let server = spawn_server(true, true).await;
+    let cookie = login(&server).await;
+    let (status, token) = create_pat(
+        &server,
+        &cookie,
+        serde_json::json!({"name":"deletion test", "scopes":READ_ONLY_SCOPES}),
+    )
+    .await;
+    assert_eq!(status, 201);
+    let pat = token["token"].as_str().unwrap();
+    let session = mcp_initialize(&server, pat).await;
+    let state: serde_json::Value = server
+        .client
+        .post(format!("{}/api/v1/profiles/get_profile_state", server.base))
+        .header(header::COOKIE, format!("wf_session={cookie}"))
+        .json(&serde_json::json!({}))
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    let profile = &state["profiles"][0];
+    let response = server
+        .client
+        .post(format!("{}/api/v1/profiles/delete_profile", server.base))
+        .header(header::COOKIE, format!("wf_session={cookie}"))
+        .header(
+            "x-wf-profile-scope",
+            state["session"]["scopeId"].as_str().unwrap(),
+        )
+        .json(&serde_json::json!({"profileId":profile["id"],"confirmation":profile["name"]}))
+        .timeout(std::time::Duration::from_secs(20))
+        .send()
+        .await
+        .unwrap();
+    let status = response.status();
+    assert_eq!(status, 200, "{}", response.text().await.unwrap());
+    let response = mcp_post(
+        &server,
+        Some(pat),
+        Some(&session),
+        serde_json::json!({"jsonrpc":"2.0","id":2,"method":"tools/list"}),
+    )
+    .await;
+    assert!(!response.status().is_success());
 }

@@ -1,3 +1,4 @@
+import type { BaselinePeriod } from "../../../hooks/use-baseline-pace";
 /**
  * Desktop SVG timeline of events overlaid on a daily-spend area chart, with a
  * 4-cell summary strip below. The mobile alternative is `events-calendar-card`.
@@ -22,7 +23,7 @@ import {
 } from "@wealthfolio/ui";
 
 import { useEventsAggregate } from "../../../hooks/use-events-aggregate";
-import { getActivitySpendingAmount } from "../../../lib/constants";
+import { getVisibleSpendingAmount } from "../../../lib/constants";
 import { inclusiveDays } from "../../../lib/date-utils";
 import type { EventSpendingSummary } from "../../../types/event";
 import { useEventDialog } from "../../event-dialog-provider";
@@ -38,6 +39,7 @@ export interface EventsTimelineCardProps {
   heatmapActivities: Activity[];
   accountTypeById?: Map<string, string>;
   dailySpendByDate?: Map<string, number>;
+  baselinePeriod?: BaselinePeriod;
   selectedId: string | null;
   onSelect: (id: string) => void;
   /** 0 = current window, 1+ = N windows back. */
@@ -54,6 +56,7 @@ export const EventsTimelineCard: FC<EventsTimelineCardProps> = ({
   heatmapActivities,
   accountTypeById,
   dailySpendByDate,
+  baselinePeriod,
   selectedId,
   onSelect,
   windowOffset,
@@ -78,7 +81,13 @@ export const EventsTimelineCard: FC<EventsTimelineCardProps> = ({
     return () => ro.disconnect();
   }, []);
 
-  const computed = useEventsAggregate(events, heatmapActivities, accountTypeById, dailySpendByDate);
+  const computed = useEventsAggregate(
+    events,
+    heatmapActivities,
+    accountTypeById,
+    dailySpendByDate,
+    baselinePeriod,
+  );
 
   const dailySeries = useMemo(
     () =>
@@ -688,7 +697,7 @@ function buildDailySeries(
     }
   } else {
     for (const a of activities) {
-      const amt = getActivitySpendingAmount(a, accountTypeById?.get(a.accountId));
+      const amt = getVisibleSpendingAmount(a, accountTypeById?.get(a.accountId));
       if (amt <= 0) continue;
       const idx = Math.round((new Date(a.activityDate).getTime() - startMs) / 86_400_000);
       if (idx >= 0 && idx < periodDays) series[idx] += amt;

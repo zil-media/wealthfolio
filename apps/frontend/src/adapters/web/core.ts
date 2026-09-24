@@ -1,3 +1,4 @@
+import { profileFetch } from "@/features/profiles/session";
 // Web adapter core - Internal invoke function, COMMANDS map, and helpers
 // This module exports invoke, logger, and platform constants for shared modules
 
@@ -40,6 +41,10 @@ export const COMMANDS: CommandMap = {
   is_auto_update_check_enabled: { method: "GET", path: "/settings/auto-update-enabled" },
   get_app_info: { method: "GET", path: "/app/info" },
   check_update: { method: "GET", path: "/app/check-update" },
+  get_database_encryption_status: {
+    method: "GET",
+    path: "/utilities/database/encryption",
+  },
   backup_database: { method: "POST", path: "/utilities/database/backup" },
   list_database_backups: { method: "GET", path: "/utilities/database/backups" },
   delete_database_backup: { method: "DELETE", path: "/utilities/database/backups" },
@@ -166,6 +171,11 @@ export const COMMANDS: CommandMap = {
   check_quotes_import: { method: "POST", path: "/market-data/quotes/check" },
   import_quotes_csv: { method: "POST", path: "/market-data/quotes/import" },
   synch_quotes: { method: "POST", path: "/market-data/sync/history" },
+  reset_all_provider_history: {
+    method: "POST",
+    path: "/market-data/quotes/reset",
+  },
+  reset_provider_history: { method: "POST", path: "/market-data/quotes" },
   sync_market_data: { method: "POST", path: "/market-data/sync" },
   // Secrets
   set_secret: { method: "POST", path: "/secrets" },
@@ -275,17 +285,12 @@ export const COMMANDS: CommandMap = {
   set_addon_storage_item: { method: "PUT", path: "/addons/storage" },
   delete_addon_storage_item: { method: "DELETE", path: "/addons/storage" },
   // Device Sync - Device management
-  register_device: { method: "POST", path: "/sync/device/register" },
   get_device: { method: "GET", path: "/sync/device" },
   list_devices: { method: "GET", path: "/sync/devices" },
   update_device: { method: "PATCH", path: "/sync/device" },
   delete_device: { method: "DELETE", path: "/sync/device" },
   revoke_device: { method: "POST", path: "/sync/device" },
-  // Device Sync - Team keys (E2EE)
-  initialize_team_keys: { method: "POST", path: "/sync/keys/initialize" },
-  commit_initialize_team_keys: { method: "POST", path: "/sync/keys/initialize/commit" },
-  rotate_team_keys: { method: "POST", path: "/sync/keys/rotate" },
-  commit_rotate_team_keys: { method: "POST", path: "/sync/keys/rotate/commit" },
+  // Device Sync - Sync reset
   reset_team_sync: { method: "POST", path: "/sync/team/reset" },
   // Device Sync - Pairing (Issuer - Trusted Device)
   create_pairing: { method: "POST", path: "/sync/pairing" },
@@ -301,14 +306,13 @@ export const COMMANDS: CommandMap = {
     method: "POST",
     path: "/sync/pairing/complete-with-transfer",
   },
-  confirm_pairing_with_bootstrap: {
-    method: "POST",
-    path: "/sync/pairing/confirm-with-bootstrap",
-  },
-  begin_pairing_confirm: { method: "POST", path: "/sync/pairing/flow/begin" },
-  get_pairing_flow_state: { method: "POST", path: "/sync/pairing/flow/state" },
-  approve_pairing_overwrite: { method: "POST", path: "/sync/pairing/flow/approve-overwrite" },
-  cancel_pairing_flow: { method: "POST", path: "/sync/pairing/flow/cancel" },
+  // Device Sync - Restore operation (receiving device)
+  device_sync_begin_pairing_restore: { method: "POST", path: "/sync/pairing/begin-restore" },
+  device_sync_get_restore: { method: "GET", path: "/sync/restore" },
+  device_sync_start_restore: { method: "POST", path: "/sync/restore/start" },
+  device_sync_approve_restore: { method: "POST", path: "/sync/restore/approve" },
+  device_sync_retry_restore: { method: "POST", path: "/sync/restore/retry" },
+  device_sync_cancel_restore: { method: "POST", path: "/sync/restore/cancel" },
   // Wealthfolio Connect (Broker Sync)
   store_sync_session: { method: "POST", path: "/connect/session" },
   post_login_bootstrap: { method: "POST", path: "/connect/post-login-bootstrap" },
@@ -343,18 +347,6 @@ export const COMMANDS: CommandMap = {
   device_sync_pairing_source_status: {
     method: "GET",
     path: "/connect/device/pairing-source-status",
-  },
-  device_sync_bootstrap_overwrite_check: {
-    method: "GET",
-    path: "/connect/device/bootstrap-overwrite-check",
-  },
-  device_sync_reconcile_ready_state: {
-    method: "POST",
-    path: "/connect/device/reconcile-ready-state",
-  },
-  device_sync_bootstrap_snapshot_if_needed: {
-    method: "POST",
-    path: "/connect/device/bootstrap-snapshot",
   },
   device_sync_trigger_cycle: { method: "POST", path: "/connect/device/trigger-cycle" },
   device_sync_start_background_engine: {
@@ -1136,6 +1128,11 @@ export const invoke = async <T>(command: string, payload?: Record<string, unknow
       body = JSON.stringify({ quotes, overwriteExisting });
       break;
     }
+    case "reset_provider_history": {
+      const { assetId } = payload as { assetId: string };
+      url += `/${encodeURIComponent(assetId)}/reset`;
+      break;
+    }
     case "sync_market_data": {
       body = JSON.stringify(payload);
       break;
@@ -1682,24 +1679,6 @@ export const invoke = async <T>(command: string, payload?: Record<string, unknow
       break;
     }
     // Device Sync commands - Device management
-    case "register_device": {
-      const { displayName, deviceNonce, instanceId } = payload as {
-        displayName: string;
-        deviceNonce?: string;
-        instanceId?: string;
-      };
-      // Detect platform from browser user agent
-      const userAgent = navigator.userAgent.toLowerCase();
-      let platform = "server"; // default fallback
-      if (userAgent.includes("mac")) platform = "macos";
-      else if (userAgent.includes("win")) platform = "windows";
-      else if (userAgent.includes("linux") && !userAgent.includes("android")) platform = "linux";
-      else if (userAgent.includes("android")) platform = "android";
-      else if (userAgent.includes("iphone") || userAgent.includes("ipad")) platform = "ios";
-
-      body = JSON.stringify({ displayName, platform, deviceNonce: deviceNonce ?? instanceId });
-      break;
-    }
     case "get_device": {
       const { deviceId } = (payload ?? {}) as { deviceId?: string };
       if (deviceId) {
@@ -1725,35 +1704,7 @@ export const invoke = async <T>(command: string, payload?: Record<string, unknow
       url += `/${encodeURIComponent(deviceId)}/revoke`;
       break;
     }
-    // Device Sync commands - Team keys (E2EE)
-    case "commit_initialize_team_keys": {
-      const { keyVersion, deviceKeyEnvelope, signature, challengeResponse, recoveryEnvelope } =
-        payload as {
-          keyVersion: number;
-          deviceKeyEnvelope: string;
-          signature: string;
-          challengeResponse?: string;
-          recoveryEnvelope?: string;
-        };
-      body = JSON.stringify({
-        keyVersion,
-        deviceKeyEnvelope,
-        signature,
-        challengeResponse,
-        recoveryEnvelope,
-      });
-      break;
-    }
-    case "commit_rotate_team_keys": {
-      const { newKeyVersion, envelopes, signature, challengeResponse } = payload as {
-        newKeyVersion: number;
-        envelopes: { deviceId: string; deviceKeyEnvelope: string }[];
-        signature: string;
-        challengeResponse?: string;
-      };
-      body = JSON.stringify({ newKeyVersion, envelopes, signature, challengeResponse });
-      break;
-    }
+    // Device Sync commands - Sync reset
     case "reset_team_sync": {
       const { reason } = (payload ?? {}) as { reason?: string };
       body = reason ? JSON.stringify({ reason }) : JSON.stringify({});
@@ -1822,32 +1773,24 @@ export const invoke = async <T>(command: string, payload?: Record<string, unknow
       body = JSON.stringify(payload);
       break;
     }
-    case "confirm_pairing_with_bootstrap": {
+    case "device_sync_begin_pairing_restore":
+    case "device_sync_start_restore":
+    case "device_sync_approve_restore":
+    case "device_sync_retry_restore":
+    case "device_sync_cancel_restore": {
       body = JSON.stringify(payload);
-      break;
-    }
-    case "begin_pairing_confirm":
-    case "get_pairing_flow_state":
-    case "approve_pairing_overwrite":
-    case "cancel_pairing_flow": {
-      body = JSON.stringify(payload);
-      break;
-    }
-    case "device_sync_reconcile_ready_state": {
-      body = JSON.stringify(payload ?? {});
       break;
     }
     // Wealthfolio Connect commands
     case "store_sync_session": {
-      const { refreshToken } = payload as {
+      const { refreshToken, confirmRebind } = payload as {
         refreshToken: string;
+        confirmRebind?: boolean;
       };
-      body = JSON.stringify({ refreshToken });
+      body = JSON.stringify({ refreshToken, confirmRebind });
       break;
     }
     case "list_devices":
-    case "initialize_team_keys":
-    case "rotate_team_keys":
     case "post_login_bootstrap":
     case "clear_sync_session":
     case "get_sync_session_status":
@@ -2187,7 +2130,7 @@ export const invoke = async <T>(command: string, payload?: Record<string, unknow
     }
   }
 
-  const res = await fetch(url, {
+  const res = await profileFetch(url, {
     method,
     headers,
     body,
@@ -2216,7 +2159,11 @@ export const invoke = async <T>(command: string, payload?: Record<string, unknow
       void 0;
     }
     console.error(`[Invoke] Command "${command}" failed: ${msg}`);
-    throw new Error(msg);
+    // The server's 408 timeout leaves owned reset tasks running; 5xx responses
+    // can also follow a committed reset whose completion failed.
+    throw Object.assign(new Error(msg), {
+      outcomeUnknown: res.status === 408 || res.status >= 500,
+    });
   }
   // Handle responses with no body (204 No Content, 202 Accepted, or empty 200)
   if (res.status === 204 || res.status === 202) {

@@ -10,6 +10,8 @@ import { useEffect, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { Link, useSearchParams } from "react-router-dom";
 
+import { ResetProviderHistoryDialog } from "@/pages/asset/reset-provider-history-dialog";
+
 import { SettingsHeader } from "../settings-header";
 
 import { getSecret, type MarketDataProviderSetting } from "@/adapters";
@@ -621,6 +623,7 @@ export default function MarketDataSettingsPage() {
   const { mutate: updateCustomProvider } = useUpdateCustomProvider();
 
   const [priorityInputs, setPriorityInputs] = useState<Record<string, number>>({});
+  const [resetHistoryOpen, setResetHistoryOpen] = useState(false);
   const [customFormOpen, setCustomFormOpen] = useState(false);
   const [editingProvider, setEditingProvider] = useState<CustomProviderWithSources | undefined>();
   const [deletingId, setDeletingId] = useState<string | null>(null);
@@ -757,7 +760,10 @@ export default function MarketDataSettingsPage() {
         text={t("settings:market_data_page.subtitle")}
         actionsInline
       >
-        <div className="flex items-center gap-2">
+        <div className="flex flex-wrap items-center gap-2">
+          <Button variant="outline" size="sm" onClick={() => setResetHistoryOpen(true)}>
+            {t("asset:resetDialog.title")}
+          </Button>
           <Button
             asChild
             variant="outline"
@@ -790,7 +796,7 @@ export default function MarketDataSettingsPage() {
             confirmButtonText={t("settings:market_data_page.rebuild_confirm_button")}
             pendingText={t("settings:market_data_page.rebuild_pending")}
             cancelButtonText={t("settings:common_cancel")}
-            confirmButtonVariant="destructive"
+            confirmButtonVariant="default"
             button={
               <Button
                 variant="outline"
@@ -830,7 +836,7 @@ export default function MarketDataSettingsPage() {
             confirmButtonText={t("settings:market_data_page.rebuild_confirm_button")}
             pendingText={t("settings:market_data_page.rebuild_pending")}
             cancelButtonText={t("settings:common_cancel")}
-            confirmButtonVariant="destructive"
+            confirmButtonVariant="default"
             button={
               <Button
                 variant="outline"
@@ -862,6 +868,11 @@ export default function MarketDataSettingsPage() {
           </Button>
         </div>
       </SettingsHeader>
+      <ResetProviderHistoryDialog
+        allAssets
+        open={resetHistoryOpen}
+        onOpenChange={setResetHistoryOpen}
+      />
       <Separator />
       {showHealthBanner && (
         <div className="border-border bg-muted/30 flex items-center justify-between gap-3 rounded-md border px-3 py-2">

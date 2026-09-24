@@ -344,7 +344,7 @@ impl DeviceSyncClient {
     ///
     /// * `base_url` - The base URL of the cloud API (e.g., "https://api.wealthfolio.app")
     pub fn new(base_url: &str) -> Self {
-        let client = reqwest::Client::builder()
+        let client = wealthfolio_http::client_builder()
             .timeout(Duration::from_secs(DEFAULT_TIMEOUT_SECS))
             .build()
             .expect("Failed to build HTTP client");
@@ -696,45 +696,8 @@ impl DeviceSyncClient {
         .await
     }
 
-    /// Start key rotation (Phase 1).
-    ///
-    /// POST /api/v1/sync/team/keys/rotate
-    pub async fn rotate_team_keys(
-        &self,
-        token: &str,
-        initiator_device_id: &str,
-    ) -> Result<RotateKeysResponse> {
-        self.send_json_body(
-            Method::POST,
-            "/api/v1/sync/team/keys/rotate".to_string(),
-            token,
-            Some(initiator_device_id),
-            &serde_json::json!({ "initiator_device_id": initiator_device_id }),
-        )
-        .await
-    }
-
-    /// Commit key rotation (Phase 2).
-    ///
-    /// POST /api/v1/sync/team/keys/rotate/commit
-    pub async fn commit_rotate_team_keys(
-        &self,
-        token: &str,
-        device_id: &str,
-        req: CommitRotateKeysRequest,
-    ) -> Result<CommitRotateKeysResponse> {
-        self.send_json_body(
-            Method::POST,
-            "/api/v1/sync/team/keys/rotate/commit".to_string(),
-            token,
-            Some(device_id),
-            &req,
-        )
-        .await
-    }
-
-    /// Reset team sync (destructive).
-    /// Owner only - revokes all devices and resets key version.
+    /// Reset the authenticated user’s sync (destructive).
+    /// Legacy URL is preserved; other household members are unaffected.
     ///
     /// POST /api/v1/sync/team/keys/reset
     pub async fn reset_team_sync(

@@ -23,7 +23,7 @@ import {
   isSecuritiesTransfer,
   isSymbolRequired,
 } from "@/lib/activity-utils";
-import { buildOccSymbol, parseOccSymbol } from "@/lib/occ-symbol";
+import { buildOccSymbol, isValidOptionExpiration, parseOccSymbol } from "@/lib/occ-symbol";
 import { generateId } from "@/lib/id";
 import type { ActivityCreate, ActivityDetails, ActivityUpdate } from "@/lib/types";
 import { zodResolver } from "@hookform/resolvers/zod";
@@ -196,7 +196,7 @@ export function validateTransferFields(
  * Validates trade fields that the Zod schema can't enforce in a discriminatedUnion.
  * For options: requires all structured fields. For stocks/bonds: requires assetId.
  */
-function validateTradeFields(
+export function validateTradeFields(
   data: Record<string, unknown>,
   t: TFunction,
 ): TransferValidationError | null {
@@ -214,6 +214,9 @@ function validateTradeFields(
     }
     if (!(data.expirationDate as string)?.trim()) {
       return { field: "expirationDate", message: t("activity:form.err_expiration_required") };
+    }
+    if (!isValidOptionExpiration(data.expirationDate)) {
+      return { field: "expirationDate", message: t("activity:form.err_expiration_invalid") };
     }
     if (!data.optionType) {
       return { field: "optionType", message: t("activity:form.err_option_type_required") };

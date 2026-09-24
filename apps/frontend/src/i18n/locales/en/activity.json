@@ -630,6 +630,7 @@
     "err_underlying_required": "Underlying symbol is required.",
     "err_strike_required": "Strike price is required.",
     "err_expiration_required": "Expiration date is required.",
+    "err_expiration_invalid": "Enter a valid expiration date.",
     "err_option_type_required": "Option type is required.",
     "err_enter_split_ratio": "Please enter a split ratio.",
     "err_split_ratio_number": "Split ratio must be a number.",

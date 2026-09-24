@@ -48,16 +48,16 @@
     "record_transaction": "Enregistrer une transaction",
     "sync_broker_accounts": "Synchroniser les comptes courtier",
     "sync_devices": "Synchroniser les appareils",
-    "update_prices": "Mettre à jour les prix",
-    "rebuild_full_history": "Reconstruire l'historique complet",
+    "update_prices": "Actualiser les cours",
+    "rebuild_full_history": "Actualiser tout l’historique",
     "verify_data": "Vérifier les données"
   },
   "update": {
     "as_of": "Au :",
-    "update_quotes": "Mettre à jour les cours",
+    "update_quotes": "Actualiser les cours",
     "updating_quotes": "Mise à jour des cours...",
-    "rebuild_history": "Reconstruire l'historique complet",
-    "rebuilding_history": "Reconstruction de l'historique..."
+    "rebuild_history": "Actualiser tout l’historique",
+    "rebuilding_history": "Actualiser tout l’historique…"
   },
   "goals": {
     "no_goals_set": "Aucun objectif défini.",

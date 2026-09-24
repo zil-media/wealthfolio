@@ -445,10 +445,13 @@ function getActivityTone(type: ActivityType) {
     case ActivityType.BUY:
     case ActivityType.DEPOSIT:
     case ActivityType.TRANSFER_IN:
+      return {
+        text: "text-success",
+      };
     case ActivityType.DIVIDEND:
     case ActivityType.INTEREST:
       return {
-        text: "text-success",
+        text: "text-info",
       };
     case ActivityType.SELL:
     case ActivityType.WITHDRAWAL:

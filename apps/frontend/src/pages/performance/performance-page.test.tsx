@@ -9,7 +9,14 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import PerformancePage from "./performance-page";
 import { ALL_PORTFOLIO_ITEM } from "./performance-selection";
 
-const mocks = vi.hoisted(() => ({ performance: vi.fn(), getAccounts: vi.fn() }));
+const mocks = vi.hoisted(() => ({
+  performance: vi.fn(),
+  getAccounts: vi.fn(),
+  settings: { timezone: "Asia/Shanghai" } as { timezone: string } | null,
+}));
+vi.mock("@/lib/settings-provider", () => ({
+  useSettingsContext: () => ({ settings: mocks.settings }),
+}));
 vi.mock("@/adapters", () => ({ getAccounts: mocks.getAccounts }));
 vi.mock("@/hooks/use-portfolios", () => ({
   usePortfolios: () => ({ data: [{ id: "p", name: "Retirement" }] }),
@@ -59,6 +66,32 @@ const accounts = [
   { id: "b", name: "Hidden TFSA", accountType: "SECURITIES", isActive: false },
   { id: "card", name: "Credit Card", accountType: "CREDIT_CARD", isActive: true },
 ].map((account) => ({ ...account, isArchived: false, currency: "USD" })) as Account[];
+const TWR_WARNING = "Some holdings are missing valuations for part of the period.";
+
+const resultWithWarning = {
+  id: ALL_PORTFOLIO_ITEM.id,
+  type: "account",
+  name: ALL_PORTFOLIO_ITEM.name,
+  scope: { id: ALL_PORTFOLIO_ITEM.id, currency: "USD" },
+  period: { startDate: "2026-01-01", endDate: "2026-03-01" },
+  mode: "timeWeighted",
+  returns: { twr: 0.1, annualizedTwr: 0.2, irr: null, annualizedIrr: null, valueReturn: null },
+  attribution: {
+    contributions: 0,
+    distributions: 0,
+    income: 0,
+    realizedPnl: 0,
+    unrealizedPnlChange: 0,
+    fxEffect: 0,
+    fees: 0,
+    taxes: 0,
+    residual: 0,
+  },
+  risk: { volatility: 0.05, maxDrawdown: -0.02 },
+  dataQuality: { status: "partial", warnings: [TWR_WARNING], notApplicableReasons: [] },
+  series: [{ date: "2026-01-01", value: 0 }],
+};
+
 const initialState = useAccountScopeStore.getState();
 
 function setScope(scope: AccountScope) {
@@ -91,6 +124,7 @@ function renderPage(seedAccounts = true) {
 
 describe("PerformancePage shared scope", () => {
   beforeEach(() => {
+    mocks.settings = { timezone: "Asia/Shanghai" };
     localStorage.clear();
     useAccountScopeStore.setState(initialState, true);
     mocks.performance.mockReturnValue({
@@ -100,6 +134,27 @@ describe("PerformancePage shared scope", () => {
       errorMessages: [],
     });
     mocks.getAccounts.mockResolvedValue(accounts);
+  });
+
+  it("updates the default range when settings arrive after the initial render", async () => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(new Date("2026-12-31T16:30:00Z"));
+    mocks.settings = null;
+    const { rerender, client } = renderPage();
+    mocks.settings = { timezone: "Asia/Shanghai" };
+    rerender(
+      <StrictMode>
+        <QueryClientProvider client={client}>
+          <PerformancePage />
+        </QueryClientProvider>
+      </StrictMode>,
+    );
+    expect(mocks.performance).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        dateRange: { from: new Date(2026, 0, 1), to: new Date(2027, 0, 1) },
+      }),
+    );
+    vi.useRealTimers();
   });
 
   it("retains and requests a hidden account selected elsewhere", async () => {
@@ -305,6 +360,23 @@ describe("PerformancePage shared scope", () => {
     expect(useAccountScopeStore.getState().bridgedItemId).toBe("b");
   });
 
+  it("opens the TWR calculation notes from the desktop strip warning icon", async () => {
+    mocks.performance.mockReturnValue({
+      data: [resultWithWarning],
+      isLoading: false,
+      hasErrors: false,
+      errorMessages: [],
+      displayDateRange: "",
+    });
+    renderPage();
+    const trigger = await screen.findByRole("button", {
+      name: /calculation note for/i,
+    });
+    expect(screen.queryByText(TWR_WARNING)).toBeNull();
+    await userEvent.click(trigger);
+    expect(await screen.findByText(TWR_WARNING)).toBeInTheDocument();
+  });
+
   it("does not request unvalidated persisted scopes during a cold load", async () => {
     const staleItem: TrackedItem = {
       id: "accounts:a,deleted",
@@ -331,6 +403,27 @@ describe("PerformancePage shared scope", () => {
       expect(request.selectedItems.some((item: TrackedItem) => item.id === staleItem.id)).toBe(
         false,
       );
+    }
+  });
+  it("defaults to the configured day and preserves a saved historical range", () => {
+    vi.useFakeTimers();
+    try {
+      vi.setSystemTime(new Date("2026-12-31T16:30:00Z"));
+      const first = renderPage();
+      expect(mocks.performance).toHaveBeenLastCalledWith(
+        expect.objectContaining({
+          dateRange: { from: new Date(2026, 0, 1), to: new Date(2027, 0, 1) },
+        }),
+      );
+      first.unmount();
+      const range = { from: new Date(2024, 0, 1), to: new Date(2024, 1, 1) };
+      localStorage.setItem("performance:dateRange", JSON.stringify(range));
+      renderPage();
+      expect(mocks.performance).toHaveBeenLastCalledWith(
+        expect.objectContaining({ dateRange: range }),
+      );
+    } finally {
+      vi.useRealTimers();
     }
   });
 });

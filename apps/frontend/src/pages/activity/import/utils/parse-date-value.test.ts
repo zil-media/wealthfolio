@@ -71,4 +71,19 @@ describe("parseDateValue — month-name dates", () => {
     const r = local(parseDateValue("May-19-2023", "auto"));
     expect({ y: r.y, mo: r.mo, day: r.day }).toEqual({ y: 2023, mo: 5, day: 19 });
   });
+
+  it("auto-detects day-month-name dates with a two-digit year instead of an epoch date", () => {
+    const r = local(parseDateValue("21-Sep-26", "auto"));
+    expect({ y: r.y, mo: r.mo, day: r.day }).toEqual({ y: 2026, mo: 9, day: 21 });
+  });
+});
+
+describe("parseDateValue — two-digit years (issue #1341)", () => {
+  it("auto-detects a day-first dot date instead of interpreting it as a timestamp", () => {
+    expect(local(parseDateValue("26.06.26", "auto"))).toMatchObject({
+      y: 2026,
+      mo: 6,
+      day: 26,
+    });
+  });
 });

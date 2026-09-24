@@ -36,6 +36,11 @@
     "transactionCount_other": "{{count}} transactions",
     "editCategoryTitle": "Edit category",
     "deleteCategoryTitle": "Delete category",
+    "excludeLabel": "Exclude from spending",
+    "excludeDescription": "Hidden from totals, charts, insights, and budgets",
+    "excludeDisabledParent": "Excluded because its parent category is excluded",
+    "excludedTooltip": "Excluded from spending",
+    "excludedWithParent": "Excluded with {{name}}",
     "categoryActions": "Category actions",
     "deleteTitle": "Delete Category",
     "deleteConfirm": "Are you sure you want to delete \"{{name}}\"?",
@@ -212,6 +217,12 @@
     "filteredNet": "Filtered net"
   },
   "period": {
+    "selectDates": "Select dates",
+    "chooseCustomDates": "Choose custom dates",
+    "chooseMonth": "Choose a month",
+    "startDate": "Start date",
+    "endDate": "End date",
+    "invalidRange": "End date must be on or after start date",
     "thisMonth": "This month",
     "mtdShort": "MTD",
     "lastMonth": "Last month",
@@ -384,6 +395,7 @@
     "loadMore_other": "Load {{count}} more"
   },
   "heatmapSheet": {
+    "customSubtitle": "Transactions in the selected period",
     "eyebrow": "When you spend",
     "activity": "Activity",
     "subtitle": "Last 12 weeks · spending in this weekday + hour",
@@ -531,6 +543,10 @@
     "multiCurrencyDetail": "totals shown in {{currency}}, FX-converted from {{foreign}} using rates from {{asOfDate}}."
   },
   "whenYouSpend": {
+    "customSubtitle": "Selected period · spending intensity by weekday and hour.",
+    "customSubtitleShort": "Selected period",
+    "customNoActivity": "No cash activity in the selected period.",
+    "customLegendIntro": "Each cell is one weekday-hour over the selected period.",
     "title": "When you spend",
     "subtitle": "Last 12 weeks · spending intensity by weekday and hour.",
     "subtitleShort": "Last 12 weeks",
@@ -687,6 +703,7 @@
     "spentMonths": "SPENT · {{months}} MO",
     "vsMonth": "vs {{month}}",
     "vsPrior": "vs prior",
+    "vsRange": "vs {{from}} – {{to}}",
     "moreCount": "+{{count}} more",
     "netCashflow": "NET CASHFLOW",
     "leftOver": "Left over {{pct}}",
@@ -714,6 +731,8 @@
     "sortByLabel": "Sort by {{label}}",
     "categoriesShown_one": "{{shown}} of {{total}} category shown",
     "categoriesShown_other": "{{shown}} of {{total}} categories shown",
+    "excludedInSettings_one": "{{count}} excluded in settings",
+    "excludedInSettings_other": "{{count}} excluded in settings",
     "openTransactions": "Open transactions →",
     "moreCount_one": "+{{count}} more",
     "moreCount_other": "+{{count}} more"
@@ -852,6 +871,8 @@
     "automateMatching": "Automate matching for recurring merchants",
     "loadError": "Couldn't load spending data.",
     "spentLabel": "Spent",
+    "excludedCategoriesHint_one": "{{count}} category excluded",
+    "excludedCategoriesHint_other": "{{count}} categories excluded",
     "noSpendingInPeriod": "No spending in this period",
     "whereItWent": "Where it went",
     "whereItWentView": "Where it went view",

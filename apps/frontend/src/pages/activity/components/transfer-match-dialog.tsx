@@ -337,7 +337,7 @@ function ActivitySummaryRow({
       <div className="text-muted-foreground flex items-center justify-between gap-3 text-xs">
         <span className="min-w-0 truncate">{normalized.notes || symbol}</span>
         <span className="shrink-0">
-          {quantity != null ? `${Math.abs(quantity)} ${symbol}` : normalized.accountCurrency}
+          {quantity != null ? `${Math.abs(quantity)} ${symbol}` : normalized.currency}
         </span>
       </div>
     </div>
@@ -509,6 +509,10 @@ export function TransferMatchDialog({
       setCounterpartLoading(true);
       getTransferPairForActivity(sourceActivity.id)
         .then((pair) => {
+          if (!pair) {
+            setCounterpartError(t("activity:transfer_match.error_load_pair"));
+            return;
+          }
           setCounterpart(
             sourceActivity.id === pair.transferIn.id ? pair.transferOut : pair.transferIn,
           );
@@ -543,8 +547,8 @@ export function TransferMatchDialog({
     void Promise.all(
       groupedCandidates.map(async (activity) => {
         try {
-          await getTransferPairForActivity(activity.id);
-          return activity.id;
+          const pair = await getTransferPairForActivity(activity.id);
+          return pair ? activity.id : null;
         } catch {
           return null;
         }

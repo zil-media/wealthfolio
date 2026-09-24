@@ -48,16 +48,16 @@
     "record_transaction": "거래 기록",
     "sync_broker_accounts": "증권사 계좌 동기화",
     "sync_devices": "기기 동기화",
-    "update_prices": "시세 업데이트",
-    "rebuild_full_history": "전체 기록 재구성",
+    "update_prices": "가격 업데이트",
+    "rebuild_full_history": "전체 기록 새로고침",
     "verify_data": "데이터 검증"
   },
   "update": {
     "as_of": "기준:",
-    "update_quotes": "시세 업데이트",
+    "update_quotes": "가격 업데이트",
     "updating_quotes": "시세 업데이트 중...",
-    "rebuild_history": "전체 기록 재구성",
-    "rebuilding_history": "기록 재구성 중..."
+    "rebuild_history": "전체 기록 새로고침",
+    "rebuilding_history": "전체 기록 새로고침…"
   },
   "goals": {
     "no_goals_set": "설정된 목표가 없습니다.",

@@ -22,10 +22,21 @@
     "deleting": "正在刪除……"
   },
   "refreshDialog": {
-    "title": "更新歷史",
-    "description_named": "系統會刪除 {{name}} 的所有資料來源報價並換成最新資料，手動報價則會保留。是否繼續？",
-    "description_generic": "系統會刪除所有資料來源報價並換成最新資料，手動報價則會保留。是否繼續？",
+    "title": "重新整理全部歷史",
+    "description_named": "將取得{{name}}的新價格歷史並與現有價格合併。舊歷史、手動價格及券商價格將保留。繼續嗎？",
+    "description_generic": "將取得新價格歷史並與現有價格合併。舊歷史、手動價格及券商價格將保留。繼續嗎？",
     "refresh": "更新"
+  },
+  "resetDialog": {
+    "globalDescription": "替換所有符合條件的資產（包括貨幣對）的供應商價格？每項資產的歷史均在取得及驗證後替換，替換後的歷史可能較短。手動及經紀商價格將保留。失敗資產保留原有歷史，成功的替換不會回復。",
+    "globalResult": "已替換：{{succeeded}}。失敗：{{failed}}。已略過：{{skipped}}。",
+    "title": "重設資料來源歷史",
+    "description": "將{{name}}的所有資料來源價格替換為新取得的歷史記錄嗎？新歷史可能較短。手動價格及券商價格將保留。如果擷取或驗證失敗，現有歷史將保留。",
+    "confirm": "重設資料來源歷史",
+    "resetting": "正在重設…",
+    "success": "資料來源歷史已替換",
+    "complete": "價格已替換。已請求重新計算投資組合。",
+    "uncertain": "回應已中斷；價格可能已被替換。請檢查價格歷史並重新整理頁面後，再考慮是否需要再次重設。"
   },
   "createSecurity": {
     "title": "新增有價證券",
@@ -177,7 +188,7 @@
     "record_transaction": "記錄交易",
     "valuation": "估值",
     "update_price": "更新價格",
-    "refresh_history": "更新歷史",
+    "refresh_history": "重新整理全部歷史",
     "edit": "編輯",
     "update_value": "更新價值",
     "edit_details": "編輯詳細資訊",

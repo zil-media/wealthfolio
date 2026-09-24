@@ -30,7 +30,7 @@ use crate::assets::{
     parse_crypto_pair_symbol, parse_symbol_with_exchange_suffix, symbol_resolution_candidates,
     Asset, AssetKind, AssetRepositoryTrait, AssetSpec, InstrumentType, ProviderProfile, QuoteMode,
 };
-use crate::errors::Result;
+use crate::errors::{Error, Result};
 use crate::fx::currency::{get_normalization_rule, normalize_currency_code};
 use crate::portfolio::snapshot::is_quantity_significant;
 use crate::secrets::SecretStore;
@@ -302,6 +302,21 @@ pub struct SparseAssetMarketFacts {
 /// Unified trait for all quote operations.
 #[async_trait]
 pub trait QuoteServiceTrait: Send + Sync {
+    async fn reset_provider_history(
+        &self,
+        _asset_id: &str,
+    ) -> Result<super::ResetProviderHistoryResult> {
+        Err(Error::Repository(
+            "Provider history reset is not supported".into(),
+        ))
+    }
+
+    async fn reset_all_provider_history(&self) -> Result<super::ResetAllProviderHistoryResult> {
+        Err(Error::Repository(
+            "Provider history reset is not supported".into(),
+        ))
+    }
+
     // =========================================================================
     // Quote CRUD Operations
     // =========================================================================
@@ -1656,7 +1671,7 @@ where
                     upper
                 };
                 if isin.starts_with("US912") {
-                    let http = reqwest::Client::new();
+                    let http = wealthfolio_http::client();
                     wealthfolio_market_data::provider::us_treasury_calc::UsTreasuryCalcProvider::fetch_bond_details(&http, &isin).await
                         .map(|details| {
                             let spec = crate::assets::BondSpec {
@@ -1905,6 +1920,23 @@ where
     // =========================================================================
     // Sync Operations
     // =========================================================================
+
+    async fn reset_provider_history(
+        &self,
+        asset_id: &str,
+    ) -> Result<super::ResetProviderHistoryResult> {
+        self.get_sync_service()
+            .await?
+            .reset_provider_history(asset_id)
+            .await
+    }
+
+    async fn reset_all_provider_history(&self) -> Result<super::ResetAllProviderHistoryResult> {
+        self.get_sync_service()
+            .await?
+            .reset_all_provider_history()
+            .await
+    }
 
     async fn sync(&self, mode: SyncMode, asset_ids: Option<Vec<String>>) -> Result<SyncResult> {
         let sync_service = self.get_sync_service().await?;

@@ -406,10 +406,12 @@ pub trait ActivityServiceTrait: Send + Sync {
     /// Moves every activity of `source_asset_id` onto `target_asset_id` and
     /// deletes the source asset. See `AssetServiceTrait::merge_assets`.
     async fn merge_assets(&self, source_asset_id: &str, target_asset_id: &str) -> Result<u32>;
+    /// Returns the internal transfer pair for the activity, or `None` when the
+    /// activity exists but is not part of a valid internal transfer pair.
     fn get_transfer_pair_for_activity(
         &self,
         activity_id: String,
-    ) -> Result<InternalTransferPairResponse>;
+    ) -> Result<Option<InternalTransferPairResponse>>;
     fn find_transfer_match_candidates(
         &self,
         request: TransferMatchCandidateRequest,

@@ -22,10 +22,21 @@
     "deleting": "Deleting..."
   },
   "refreshDialog": {
-    "title": "Refresh history",
-    "description_named": "This will delete and replace all provider quotes with fresh data for {{name}}. Manual quotes will be preserved. Continue?",
-    "description_generic": "This will delete and replace all provider quotes with fresh data. Manual quotes will be preserved. Continue?",
+    "title": "Refresh full history",
+    "description_named": "This will fetch fresh history for {{name}} and merge it with existing prices. Older history, manual prices, and broker prices will be preserved. Continue?",
+    "description_generic": "This will fetch fresh history and merge it with existing prices. Older history, manual prices, and broker prices will be preserved. Continue?",
     "refresh": "Refresh"
+  },
+  "resetDialog": {
+    "globalDescription": "Replace provider prices for all eligible assets, including currency pairs? Each asset is replaced only after its history is fetched and validated. Replacement history may be shorter. Manual and broker prices are preserved. Failed assets keep their existing history; successful replacements are not rolled back.",
+    "globalResult": "Replaced: {{succeeded}}. Failed: {{failed}}. Skipped: {{skipped}}.",
+    "title": "Reset provider history",
+    "description": "Replace all provider prices for {{name}} with freshly fetched history? The replacement may be shorter. Manual and broker prices will be preserved. Existing history is kept if fetching or validation fails.",
+    "confirm": "Reset provider history",
+    "resetting": "Resetting…",
+    "success": "Provider history replaced",
+    "complete": "Prices were replaced. Portfolio recalculation has been requested.",
+    "uncertain": "The response was interrupted; prices may already have been replaced. Check the quote history and refresh the page before considering another reset."
   },
   "createSecurity": {
     "title": "Add Security",
@@ -177,7 +188,7 @@
     "record_transaction": "Record Transaction",
     "valuation": "Valuation",
     "update_price": "Update Price",
-    "refresh_history": "Refresh History",
+    "refresh_history": "Refresh full history",
     "edit": "Edit",
     "update_value": "Update Value",
     "edit_details": "Edit Details",

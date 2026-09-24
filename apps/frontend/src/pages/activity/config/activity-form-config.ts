@@ -142,7 +142,7 @@ export const ACTIVITY_FORM_CONFIG: Record<
           activity?.assetQuoteMode === QuoteMode.MANUAL ? QuoteMode.MANUAL : QuoteMode.MARKET,
         // Advanced options
         currency: activity?.currency,
-        fxRate: activity?.fxRate ?? undefined,
+        fxRate: activity?.fxRate == null ? undefined : Number(activity.fxRate),
         exchangeMic: activity?.exchangeMic,
       };
 
@@ -240,7 +240,7 @@ export const ACTIVITY_FORM_CONFIG: Record<
           activity?.assetQuoteMode === QuoteMode.MANUAL ? QuoteMode.MANUAL : QuoteMode.MARKET,
         // Advanced options
         currency: activity?.currency,
-        fxRate: activity?.fxRate ?? undefined,
+        fxRate: activity?.fxRate == null ? undefined : Number(activity.fxRate),
         exchangeMic: activity?.exchangeMic,
       };
 
@@ -328,7 +328,7 @@ export const ACTIVITY_FORM_CONFIG: Record<
       amount: absNum(activity?.amount),
       // Advanced options
       currency: activity?.currency,
-      fxRate: activity?.fxRate ?? undefined,
+      fxRate: activity?.fxRate == null ? undefined : Number(activity.fxRate),
     }),
     toPayload: (data) => {
       const d = data as DepositFormValues;
@@ -351,7 +351,7 @@ export const ACTIVITY_FORM_CONFIG: Record<
       amount: absNum(activity?.amount),
       // Advanced options
       currency: activity?.currency,
-      fxRate: activity?.fxRate ?? undefined,
+      fxRate: activity?.fxRate == null ? undefined : Number(activity.fxRate),
     }),
     toPayload: (data) => {
       const d = data as WithdrawalFormValues;
@@ -379,7 +379,7 @@ export const ACTIVITY_FORM_CONFIG: Record<
       quantity: absNum(activity?.quantity),
       // Advanced options
       currency: activity?.currency,
-      fxRate: activity?.fxRate ?? undefined,
+      fxRate: activity?.fxRate == null ? undefined : Number(activity.fxRate),
       subtype: activity?.subtype ?? null,
       exchangeMic: activity?.exchangeMic,
     }),
@@ -530,6 +530,7 @@ export const ACTIVITY_FORM_CONFIG: Record<
         assetId: d.symbol,
         ...selectedExistingAsset(d.symbol, d.existingAssetId, d.symbolInstrumentType),
         amount: d.splitRatio,
+        fxRate: d.fxRate,
         comment: d.comment,
         subtype: d.subtype ?? null,
         currency: d.currency,
@@ -556,6 +557,7 @@ export const ACTIVITY_FORM_CONFIG: Record<
     toPayload: (data) => {
       const d = data as FeeFormValues;
       return {
+        fxRate: d.fxRate,
         accountId: d.accountId,
         activityDate: d.activityDate,
         amount: d.amount,
@@ -616,7 +618,7 @@ export const ACTIVITY_FORM_CONFIG: Record<
       ...getBaseDefaults(activity, accounts),
       amount: absNum(activity?.amount),
       currency: activity?.currency,
-      fxRate: activity?.fxRate ?? undefined,
+      fxRate: activity?.fxRate == null ? undefined : Number(activity.fxRate),
       subtype: activity?.subtype ?? null,
     }),
     toPayload: (data) => {
@@ -647,7 +649,7 @@ export const ACTIVITY_FORM_CONFIG: Record<
         quantity: isSecurity ? (absNum(activity?.quantity) ?? null) : null,
         unitPrice: isSecurity ? (absNum(activity?.unitPrice) ?? null) : null,
         currency: activity?.currency,
-        fxRate: activity?.fxRate ?? undefined,
+        fxRate: activity?.fxRate == null ? undefined : Number(activity.fxRate),
         subtype: activity?.subtype ?? null,
         quoteMode:
           activity?.assetQuoteMode === QuoteMode.MANUAL ? QuoteMode.MANUAL : QuoteMode.MARKET,
@@ -705,6 +707,7 @@ export const ACTIVITY_FORM_CONFIG: Record<
     toPayload: (data) => {
       const d = data as TaxFormValues;
       return {
+        fxRate: d.fxRate,
         accountId: d.accountId,
         activityDate: d.activityDate,
         amount: d.amount,

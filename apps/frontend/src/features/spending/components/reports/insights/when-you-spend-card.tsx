@@ -12,7 +12,7 @@ import type { Activity } from "@/lib/types";
 import { cn } from "@/lib/utils";
 import { useAmountFormatting } from "@wealthfolio/ui";
 
-import { getActivitySpendingAmount } from "../../../lib/constants";
+import { getVisibleSpendingAmount } from "../../../lib/constants";
 import { createZonedDayHourFormatter, type ZonedDayHour } from "../../../lib/timezone";
 
 const CARD_CLASS = "border-border/60 bg-card/40 rounded-2xl border p-5 backdrop-blur-xl";
@@ -31,6 +31,7 @@ const HOUR_LABELS = ["12a", "3a", "6a", "9a", "12p", "3p", "6p", "9p"];
 
 export interface WhenYouSpendCardProps {
   activities: Activity[];
+  customRange?: boolean;
   accountTypeById?: Map<string, string>;
   dailySpendByDate?: Map<string, number>;
   currency: string;
@@ -40,6 +41,7 @@ export interface WhenYouSpendCardProps {
 
 export const WhenYouSpendCard: FC<WhenYouSpendCardProps> = ({
   activities,
+  customRange = false,
   accountTypeById,
   dailySpendByDate,
   currency,
@@ -62,10 +64,20 @@ export const WhenYouSpendCard: FC<WhenYouSpendCardProps> = ({
           <h3 className="text-foreground text-base font-semibold tracking-tight">
             {t("spending:whenYouSpend.title")}
           </h3>
-          <p className="text-muted-foreground text-xs">{t("spending:whenYouSpend.subtitle")}</p>
+          <p className="text-muted-foreground text-xs">
+            {t(
+              customRange
+                ? "spending:whenYouSpend.customSubtitle"
+                : "spending:whenYouSpend.subtitle",
+            )}
+          </p>
         </header>
         <div className="text-muted-foreground py-8 text-center text-sm">
-          {t("spending:whenYouSpend.noActivity")}
+          {t(
+            customRange
+              ? "spending:whenYouSpend.customNoActivity"
+              : "spending:whenYouSpend.noActivity",
+          )}
         </div>
       </div>
     );
@@ -80,8 +92,16 @@ export const WhenYouSpendCard: FC<WhenYouSpendCardProps> = ({
           </h3>
           <p className="text-muted-foreground text-xs">
             {isPhone
-              ? t("spending:whenYouSpend.subtitleShort")
-              : t("spending:whenYouSpend.subtitle")}
+              ? t(
+                  customRange
+                    ? "spending:whenYouSpend.customSubtitleShort"
+                    : "spending:whenYouSpend.subtitleShort",
+                )
+              : t(
+                  customRange
+                    ? "spending:whenYouSpend.customSubtitle"
+                    : "spending:whenYouSpend.subtitle",
+                )}
           </p>
         </div>
         {!isPhone && (
@@ -126,7 +146,11 @@ export const WhenYouSpendCard: FC<WhenYouSpendCardProps> = ({
       <div className="border-border/40 mt-4 flex items-center justify-between border-t pt-3 text-[11px]">
         {!isPhone && (
           <span className="text-muted-foreground/70">
-            {t("spending:whenYouSpend.legendIntro")}{" "}
+            {t(
+              customRange
+                ? "spending:whenYouSpend.customLegendIntro"
+                : "spending:whenYouSpend.legendIntro",
+            )}{" "}
             <span className="dark:hidden">{t("spending:whenYouSpend.darker")}</span>
             <span className="hidden dark:inline">{t("spending:whenYouSpend.brighter")}</span>{" "}
             {t("spending:whenYouSpend.moreSpend")}
@@ -262,7 +286,7 @@ interface WeekdayHourGrid {
 
 function buildWeekdayHourGrid(
   activities: Activity[],
-  accountTypeById?: Map<string, string>,
+  accountTypeById: Map<string, string> | undefined,
   dailySpendByDate?: Map<string, number>,
   cols = 24,
   timezone?: string | null,
@@ -278,7 +302,7 @@ function buildWeekdayHourGrid(
     : undefined;
 
   for (const a of activities) {
-    const rawAmount = getActivitySpendingAmount(a, accountTypeById?.get(a.accountId));
+    const rawAmount = getVisibleSpendingAmount(a, accountTypeById?.get(a.accountId));
     if (rawAmount === 0) continue;
     const date = new Date(a.activityDate);
     const zoned = getZonedDayHour(date);
@@ -323,12 +347,12 @@ function buildWeekdayHourGrid(
 
 function buildRawSpendByDate(
   activities: Activity[],
-  accountTypeById?: Map<string, string>,
+  accountTypeById: Map<string, string> | undefined,
   getZonedDayHour: (date: Date) => ZonedDayHour | null = createZonedDayHourFormatter(),
 ): Map<string, number> {
   const totals = new Map<string, number>();
   for (const a of activities) {
-    const amount = getActivitySpendingAmount(a, accountTypeById?.get(a.accountId));
+    const amount = getVisibleSpendingAmount(a, accountTypeById?.get(a.accountId));
     if (amount === 0) continue;
     const date = new Date(a.activityDate);
     const zoned = getZonedDayHour(date);
