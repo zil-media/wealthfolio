@@ -4,7 +4,7 @@ use crate::{error::ApiResult, main_lib::AppState};
 use axum::{
     extract::{Path, Query, State},
     http::StatusCode,
-    routing::{delete, get, put},
+    routing::{delete, get, post, put},
     Json, Router,
 };
 use wealthfolio_core::assets::{
@@ -77,6 +77,24 @@ async fn delete_asset(
     Ok(StatusCode::NO_CONTENT)
 }
 
+#[derive(serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct MergeAssetsBody {
+    source_id: String,
+    target_id: String,
+}
+
+async fn merge_assets(
+    State(state): State<Arc<AppState>>,
+    Json(body): Json<MergeAssetsBody>,
+) -> ApiResult<Json<u32>> {
+    let activities_migrated = state
+        .activity_service
+        .merge_assets(&body.source_id, &body.target_id)
+        .await?;
+    Ok(Json(activities_migrated))
+}
+
 async fn list_asset_logos(
     State(state): State<Arc<AppState>>,
 ) -> ApiResult<Json<Vec<AssetLogoSummary>>> {
@@ -114,6 +132,7 @@ pub fn router() -> Router<Arc<AppState>> {
     Router::new()
         .route("/assets", get(list_assets).post(create_asset))
         .route("/assets/{id}", delete(delete_asset))
+        .route("/assets/merge", post(merge_assets))
         .route("/assets/profile", get(get_asset_profile))
         .route("/assets/profile/{id}", put(update_asset_profile))
         .route("/assets/pricing-mode/{id}", put(update_quote_mode))

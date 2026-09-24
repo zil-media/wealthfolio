@@ -89,6 +89,15 @@ export const deleteAsset = async (id: string): Promise<void> => {
   }
 };
 
+export const mergeAssets = async (sourceId: string, targetId: string): Promise<number> => {
+  try {
+    return await invoke<number>("merge_assets", { sourceId, targetId });
+  } catch (error) {
+    logger.error("Error merging assets.");
+    throw error;
+  }
+};
+
 export const updateQuoteMode = async (assetId: string, quoteMode: string): Promise<Asset> => {
   try {
     return await invoke<Asset>("update_quote_mode", { id: assetId, quoteMode });
