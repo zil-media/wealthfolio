@@ -16,10 +16,11 @@ use chrono::{DateTime, NaiveDate, Utc};
 use rig::tool::ToolDyn;
 use rust_decimal::Decimal;
 use std::sync::Arc;
+use std::sync::RwLock;
 use wealthfolio_agent_tools::AgentTool;
 use wealthfolio_ai::env::test_env::{
-    MockAccountService, MockAssetService, MockCashActivityService, MockEnvironment,
-    MockTaxonomyService,
+    MockAccountService, MockActivityService, MockAssetService, MockCashActivityService,
+    MockEnvironment, MockHoldingsService, MockQuoteService, MockTaxonomyService,
 };
 use wealthfolio_ai::tools::{
     GetAccounts, GetAssetAllocation, GetAssetTaxonomyAssignments, GetCashBalances, GetGoals,
@@ -28,8 +29,10 @@ use wealthfolio_ai::tools::{
     RecordActivity, RigAgentTool, SearchActivities,
 };
 use wealthfolio_core::accounts::{Account, TrackingMode};
-use wealthfolio_core::activities::{Activity, ActivityStatus};
+use wealthfolio_core::activities::{Activity, ActivityDetails, ActivityStatus};
 use wealthfolio_core::assets::{Asset, AssetKind, InstrumentType, QuoteMode};
+use wealthfolio_core::holdings::{Holding, HoldingType, Instrument, MonetaryValue};
+use wealthfolio_core::quotes::SymbolSearchResult;
 use wealthfolio_core::taxonomies::{
     AssetTaxonomyAssignment, Category, Taxonomy, TaxonomyWithCategories,
 };
@@ -706,6 +709,215 @@ output_test_dyn_env!(
             { "activityType": "DEPOSIT", "activityDate": "2026-01-17", "amount": 1000.0 },
             { "activityType": "DEPOSIT", "activityDate": "2026-01-17" }
         ]
+    }
+);
+
+/// A holding fixture; only the fields get_holdings reads are meaningful.
+fn fixture_holding(id: &str, symbol: &str, holding_type: HoldingType, value: i64) -> Holding {
+    let is_cash = holding_type == HoldingType::Cash;
+    Holding {
+        id: id.to_string(),
+        account_id: "acc-1".to_string(),
+        holding_type,
+        is_closed: false,
+        instrument: (!is_cash).then(|| Instrument {
+            id: format!("asset-{symbol}"),
+            symbol: symbol.to_string(),
+            name: None,
+            currency: "USD".to_string(),
+            notes: None,
+            pricing_mode: "MARKET".to_string(),
+            preferred_provider: None,
+            exchange_mic: None,
+            instrument_type: None,
+            classifications: None,
+        }),
+        asset_kind: None,
+        quantity: Decimal::ONE,
+        open_date: None,
+        lots: None,
+        contract_multiplier: Decimal::ONE,
+        local_currency: "USD".to_string(),
+        base_currency: "USD".to_string(),
+        fx_rate: None,
+        market_value: MonetaryValue {
+            local: Decimal::from(value),
+            base: Decimal::from(value),
+        },
+        cost_basis: None,
+        price: None,
+        purchase_price: None,
+        unrealized_gain: None,
+        unrealized_gain_pct: None,
+        realized_gain: None,
+        realized_gain_pct: None,
+        total_gain: None,
+        total_gain_pct: None,
+        income: None,
+        total_return: None,
+        total_return_pct: None,
+        return_basis: None,
+        day_change: None,
+        day_change_pct: None,
+        prev_close_value: None,
+        weight: Decimal::ZERO,
+        as_of_date: NaiveDate::from_ymd_opt(2026, 7, 13).unwrap(),
+        metadata: None,
+        source_account_ids: Vec::new(),
+    }
+}
+
+/// Three securities plus one cash row (cash is excluded from the output and
+/// must not count toward pagination totals).
+fn holdings_env() -> Arc<MockEnvironment> {
+    let mut env = MockEnvironment::new();
+    env.account_service = Arc::new(MockAccountService {
+        accounts: vec![fixture_account("acc-1", "Brokerage", "SECURITIES", "USD")],
+    });
+    env.holdings_service = Arc::new(MockHoldingsService {
+        holdings: vec![
+            fixture_holding("h-1", "AAA", HoldingType::Security, 300),
+            fixture_holding("h-2", "BBB", HoldingType::Security, 200),
+            fixture_holding("h-cash", "CASH", HoldingType::Cash, 50),
+            fixture_holding("h-3", "CCC", HoldingType::Security, 100),
+        ],
+    });
+    Arc::new(env)
+}
+
+output_test_dyn_env!(
+    output_get_holdings_page_1,
+    GetHoldings,
+    holdings_env(),
+    { "viewMode": "table", "pageSize": 2 }
+);
+output_test_dyn_env!(
+    output_get_holdings_page_2,
+    GetHoldings,
+    holdings_env(),
+    { "viewMode": "table", "page": 2, "pageSize": 2 }
+);
+output_test_dyn_env!(
+    output_get_holdings_all_fit,
+    GetHoldings,
+    holdings_env(),
+    { "viewMode": "table" }
+);
+
+/// Two activities on distinct assets that share the symbol "XS123".
+fn fixture_activity_details(id: &str, asset_id: &str, created_at: &str) -> ActivityDetails {
+    ActivityDetails {
+        id: id.to_string(),
+        account_id: "acc-1".to_string(),
+        asset_id: asset_id.to_string(),
+        activity_type: "BUY".to_string(),
+        subtype: None,
+        status: ActivityStatus::Posted,
+        date: "2024-03-01T00:00:00Z".to_string(),
+        quantity: Some("10".to_string()),
+        unit_price: Some("99.5".to_string()),
+        currency: "EUR".to_string(),
+        fee: Some("0".to_string()),
+        tax: None,
+        amount: Some("995".to_string()),
+        needs_review: false,
+        comment: None,
+        fx_rate: None,
+        created_at: created_at.to_string(),
+        updated_at: created_at.to_string(),
+        account_name: "Brokerage".to_string(),
+        account_currency: "USD".to_string(),
+        asset_symbol: "XS123".to_string(),
+        asset_name: Some("Corp Bond".to_string()),
+        exchange_mic: None,
+        asset_pricing_mode: "MANUAL".to_string(),
+        instrument_type: Some("BOND".to_string()),
+        asset_contract_multiplier: None,
+        source_system: None,
+        source_record_id: None,
+        source_group_id: None,
+        idempotency_key: None,
+        import_run_id: None,
+        is_user_modified: false,
+        metadata: None,
+    }
+}
+
+fn activities_env() -> Arc<MockEnvironment> {
+    let mut env = MockEnvironment::new();
+    env.account_service = Arc::new(MockAccountService {
+        accounts: vec![fixture_account("acc-1", "Brokerage", "SECURITIES", "USD")],
+    });
+    env.activity_service = Arc::new(MockActivityService {
+        activities: vec![
+            fixture_activity_details("act-1", "bond-a", "2024-03-01T10:00:00+00:00"),
+            fixture_activity_details("act-2", "bond-b", "2024-03-02T11:00:00+00:00"),
+        ],
+    });
+    Arc::new(env)
+}
+
+output_test_dyn_env!(
+    output_search_activities_asset_ids,
+    SearchActivities,
+    activities_env(),
+    { "pageSize": 1 }
+);
+output_test_dyn_env!(
+    output_search_activities_symbol_and_asset_id_conflict,
+    SearchActivities,
+    activities_env(),
+    { "symbol": "XS123", "assetId": "bond-a" }
+);
+
+/// The symbol search resolves to an existing custom MANUAL-priced bond.
+fn existing_manual_bond_env() -> Arc<MockEnvironment> {
+    let mut env = MockEnvironment::new();
+    env.account_service = Arc::new(MockAccountService {
+        accounts: vec![fixture_account("acc-1", "Main Broker", "SECURITIES", "USD")],
+    });
+    env.asset_service = Arc::new(MockAssetService {
+        assets: vec![Asset {
+            id: "bond-a".to_string(),
+            kind: AssetKind::Investment,
+            name: Some("Corp Bond 2030".to_string()),
+            display_code: Some("XS123".to_string()),
+            is_active: true,
+            quote_mode: QuoteMode::Manual,
+            quote_ccy: "EUR".to_string(),
+            instrument_type: Some(InstrumentType::Bond),
+            created_at: fixture_ts(),
+            updated_at: fixture_ts(),
+            ..Default::default()
+        }],
+    });
+    env.quote_service = Arc::new(MockQuoteService {
+        search_results: RwLock::new(vec![SymbolSearchResult {
+            symbol: "XS123".to_string(),
+            short_name: "Corp Bond 2030".to_string(),
+            long_name: "Corp Bond 2030".to_string(),
+            quote_type: "BOND".to_string(),
+            currency: Some("EUR".to_string()),
+            quote_mode: Some("MANUAL".to_string()),
+            is_existing: true,
+            existing_asset_id: Some("bond-a".to_string()),
+            score: 100.0,
+            ..Default::default()
+        }]),
+    });
+    Arc::new(env)
+}
+
+output_test_dyn_env!(
+    output_record_activity_existing_manual_bond,
+    RecordActivity,
+    existing_manual_bond_env(),
+    {
+        "activityType": "BUY",
+        "symbol": "XS123",
+        "activityDate": "2026-01-17",
+        "quantity": 10.0,
+        "unitPrice": 99.5
     }
 );
 

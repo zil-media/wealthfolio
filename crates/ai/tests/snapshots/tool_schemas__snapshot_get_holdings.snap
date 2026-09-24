@@ -1,6 +1,5 @@
 ---
 source: crates/ai/tests/tool_schemas.rs
-assertion_line: 91
 expression: snapshot
 ---
 {
@@ -9,6 +8,14 @@ expression: snapshot
     "properties": {
       "accountId": {
         "type": "string"
+      },
+      "page": {
+        "default": 1,
+        "type": "integer"
+      },
+      "pageSize": {
+        "default": 100,
+        "type": "integer"
       },
       "viewMode": {
         "default": "treemap",

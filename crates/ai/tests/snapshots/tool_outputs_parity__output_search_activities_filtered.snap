@@ -7,6 +7,7 @@ expression: result
     "accountScope": "all",
     "activities": [],
     "count": 0,
+    "hasMore": false,
     "page": 1,
     "pageSize": 25,
     "totalPages": 0,
