@@ -234,5 +234,11 @@
   "category_breakdown": "Category Breakdown",
   "personal_assets": "Personal Assets",
   "health_filter_active": "Showing holdings flagged by Health Center",
-  "closing_cash_flow": "Closing Cash Flow"
+  "closing_cash_flow": "Closing Cash Flow",
+  "live": "Live",
+  "live_hint": "Refresh prices every {{seconds}} s and show today's chart",
+  "live_updated": "Live prices · updated {{time}} · every {{seconds}} s",
+  "live_loading": "Loading live prices…",
+  "live_error": "Live prices unavailable right now. Showing the last calculated values.",
+  "intraday": "Today"
 }

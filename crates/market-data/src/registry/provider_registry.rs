@@ -19,8 +19,8 @@ use super::{
 };
 use crate::errors::{MarketDataError, RetryClass};
 use crate::models::{
-    AssetProfile, DividendEvent, InstrumentId, ProviderId, Quote, QuoteContext, SearchResult,
-    SplitEvent,
+    AssetProfile, DividendEvent, InstrumentId, IntradaySeries, ProviderId, Quote, QuoteContext,
+    SearchResult, SplitEvent,
 };
 use crate::provider::MarketDataProvider;
 use crate::resolver::{check_profile, SymbolResolver};
@@ -313,6 +313,52 @@ impl ProviderRegistry {
                         self.circuit_breaker.record_failure(&provider_id);
                     }
 
+                    last_error = Some(e);
+                }
+            }
+        }
+
+        Err(last_error.unwrap_or(MarketDataError::AllProvidersFailed))
+    }
+
+    /// Fetch today's intraday price path. Display-only: nothing is validated or stored.
+    pub async fn fetch_intraday_series(
+        &self,
+        context: &QuoteContext,
+    ) -> Result<IntradaySeries, MarketDataError> {
+        let providers = self.ordered_providers(context, false);
+        if providers.is_empty() {
+            return Err(MarketDataError::NoProvidersAvailable);
+        }
+
+        let mut last_error: Option<MarketDataError> = None;
+        for provider in providers {
+            let provider_id: ProviderId = Cow::Borrowed(provider.id());
+            if !self.circuit_breaker.is_allowed(&provider_id) {
+                continue;
+            }
+            let Ok(resolved) = self.resolver.resolve(&provider_id, context) else {
+                continue;
+            };
+
+            self.rate_limiter.acquire(&provider_id).await;
+
+            match provider
+                .get_intraday_series(context, resolved.instrument)
+                .await
+            {
+                Ok(series) => {
+                    self.circuit_breaker.record_success(&provider_id);
+                    return Ok(series);
+                }
+                Err(MarketDataError::NotSupported { .. }) => continue,
+                Err(e) => {
+                    if matches!(
+                        e.retry_class(),
+                        RetryClass::FailoverWithPenalty | RetryClass::CircuitOpen
+                    ) {
+                        self.circuit_breaker.record_failure(&provider_id);
+                    }
                     last_error = Some(e);
                 }
             }

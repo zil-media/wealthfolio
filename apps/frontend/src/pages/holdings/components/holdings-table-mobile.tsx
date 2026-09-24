@@ -1,8 +1,11 @@
+import { IntradaySparkline } from "@/components/intraday-sparkline";
+import { LiveVisibilityProbe } from "@/components/live-visibility-probe";
+import type { LiveVisibilityRegistry } from "@/lib/live-visibility";
 import { TickerAvatar } from "@/components/ticker-avatar";
 import { useBalancePrivacy } from "@/hooks/use-balance-privacy";
 import { HoldingType } from "@/lib/constants";
 import { formatOptionSubtitle, parseOccSymbol } from "@/lib/occ-symbol";
-import { Account, AccountScope, Holding } from "@/lib/types";
+import { Account, AccountScope, Holding, IntradayQuote } from "@/lib/types";
 import { cn } from "@/lib/utils";
 import {
   AmountDisplay,
@@ -54,6 +57,10 @@ interface HoldingsTableMobileProps {
   showClosedPositions?: boolean;
   hasHiddenPositions?: boolean;
   toolbarActions?: ReactNode;
+  /** Intraday quotes by asset id while live mode is on. */
+  liveQuotes?: Map<string, IntradayQuote>;
+  /** Present while live mode is on: draws today's chart in each row and reports visible rows. */
+  liveVisibility?: LiveVisibilityRegistry;
 }
 
 export const HoldingsTableMobile = ({
@@ -78,6 +85,8 @@ export const HoldingsTableMobile = ({
   showClosedPositions = true,
   hasHiddenPositions = false,
   toolbarActions,
+  liveQuotes,
+  liveVisibility,
 }: HoldingsTableMobileProps) => {
   const numberFormatting = useNumberFormatting();
   const dateFormatting = useDateFormatting();
@@ -213,6 +222,9 @@ export const HoldingsTableMobile = ({
                 ? formatOptionSubtitle(parsedOption, formatting)
                 : (holding.instrument?.name ?? null);
             const isNavigable = !isCash && holding.instrument?.symbol;
+            const liveAssetId =
+              liveVisibility && !isCash && !isClosed ? holding.instrument?.id : undefined;
+            const liveQuote = liveAssetId ? liveQuotes?.get(liveAssetId) : undefined;
 
             return (
               <Card
@@ -246,6 +258,15 @@ export const HoldingsTableMobile = ({
                       )}
                     </div>
                   </div>
+                  {liveAssetId && liveVisibility && (
+                    <LiveVisibilityProbe
+                      assetId={liveAssetId}
+                      registry={liveVisibility}
+                      className="mx-2 h-7 w-16 shrink-0"
+                    >
+                      {liveQuote && <IntradaySparkline quote={liveQuote} width={64} height={28} />}
+                    </LiveVisibilityProbe>
+                  )}
                   <div className="ml-2 text-right">
                     {isClosed ? (
                       <p className="text-muted-foreground font-medium">—</p>

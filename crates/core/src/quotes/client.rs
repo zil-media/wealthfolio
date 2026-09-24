@@ -32,7 +32,7 @@ use log::{debug, info, warn};
 use crate::assets::{canonicalize_market_identity, Asset, InstrumentType, ProviderProfile};
 use crate::errors::Result;
 use crate::quotes::constants::*;
-use crate::quotes::model::SymbolSearchResult;
+use crate::quotes::model::{IntradayPricePoint, IntradayQuote, SymbolSearchResult};
 use crate::quotes::Quote;
 use crate::secrets::SecretStore;
 
@@ -394,6 +394,34 @@ impl MarketDataClient {
             .map_err(MarketDataClientError::from)?;
 
         Ok(Self::convert_quote(market_quote, &asset.id))
+    }
+
+    /// Fetch today's intraday price path for an asset (display only, not stored).
+    pub async fn fetch_intraday(&self, asset: &Asset) -> Result<IntradayQuote> {
+        let context = self.build_quote_context(asset)?;
+        let series = self
+            .registry
+            .fetch_intraday_series(&context)
+            .await
+            .map_err(MarketDataClientError::from)?;
+
+        Ok(IntradayQuote {
+            asset_id: asset.id.clone(),
+            currency: series.currency,
+            last_price: series.last_price,
+            last_price_at: series.last_price_at,
+            previous_close: series.previous_close,
+            session_start: series.session_start,
+            session_end: series.session_end,
+            points: series
+                .points
+                .into_iter()
+                .map(|point| IntradayPricePoint {
+                    timestamp: point.timestamp,
+                    price: point.price,
+                })
+                .collect(),
+        })
     }
 
     /// Build a QuoteContext from an Asset.

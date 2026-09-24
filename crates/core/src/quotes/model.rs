@@ -139,3 +139,27 @@ pub struct ResolvedQuote {
     pub price: Option<Decimal>,
     pub resolved_provider_id: Option<String>,
 }
+
+/// One intraday price sample for the live holdings view.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct IntradayPricePoint {
+    pub timestamp: DateTime<Utc>,
+    pub price: Decimal,
+}
+
+/// Today's price path for an asset. Fetched on demand and never stored.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct IntradayQuote {
+    pub asset_id: String,
+    pub currency: String,
+    pub last_price: Decimal,
+    pub last_price_at: Option<DateTime<Utc>>,
+    /// Previous session close: the baseline for today's change.
+    pub previous_close: Option<Decimal>,
+    pub points: Vec<IntradayPricePoint>,
+    /// Regular session bounds (current or most recent session), when the provider knows them.
+    pub session_start: Option<DateTime<Utc>>,
+    pub session_end: Option<DateTime<Utc>>,
+}

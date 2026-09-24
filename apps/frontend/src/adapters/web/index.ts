@@ -213,6 +213,7 @@ export {
   getAssets,
   getExchanges,
   getLatestQuotes,
+  getIntradayQuotes,
   getMarketDataProviders,
   getMarketDataProviderSettings,
   getQuoteHistory,

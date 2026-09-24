@@ -14,8 +14,8 @@ use axum::{
 use wealthfolio_core::assets::InstrumentType;
 use wealthfolio_core::portfolio::{snapshot::SnapshotRecalcMode, valuation::ValuationRecalcMode};
 use wealthfolio_core::quotes::{
-    FetchDividendsParams, LatestQuoteSnapshot, MarketSyncMode, ProviderInfo, Quote, QuoteImport,
-    SymbolSearchResult,
+    FetchDividendsParams, IntradayQuote, LatestQuoteSnapshot, MarketSyncMode, ProviderInfo, Quote,
+    QuoteImport, SymbolSearchResult,
 };
 use wealthfolio_market_data::{DividendEvent, ExchangeInfo};
 
@@ -274,6 +274,17 @@ async fn get_latest_quotes(
     Ok(Json(quotes))
 }
 
+async fn get_intraday_quotes(
+    State(state): State<Arc<AppState>>,
+    Json(body): Json<LatestQuotesBody>,
+) -> ApiResult<Json<Vec<IntradayQuote>>> {
+    let quotes = state
+        .quote_service
+        .get_intraday_quotes(&body.asset_ids)
+        .await?;
+    Ok(Json(quotes))
+}
+
 #[derive(serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct ResolveSymbolQuoteQuery {
@@ -322,6 +333,7 @@ pub fn router() -> Router<Arc<AppState>> {
         .route("/market-data/quotes/history", get(get_quote_history))
         .route("/market-data/dividends", get(fetch_dividends))
         .route("/market-data/quotes/latest", post(get_latest_quotes))
+        .route("/market-data/quotes/intraday", post(get_intraday_quotes))
         .route("/market-data/quotes/{symbol}", put(update_quote))
         .route("/market-data/quotes/id/{id}", delete(delete_quote))
         .route("/market-data/quotes/check", post(check_quotes_import))

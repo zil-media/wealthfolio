@@ -862,6 +862,25 @@ export interface Quote {
   notes?: string | null;
 }
 
+export interface IntradayPricePoint {
+  timestamp: string;
+  price: number;
+}
+
+/** Today's price path for an asset. Fetched on demand for the live holdings view, never stored. */
+export interface IntradayQuote {
+  assetId: string;
+  currency: string;
+  lastPrice: number;
+  lastPriceAt?: string | null;
+  /** Previous session close: the baseline for today's change. */
+  previousClose?: number | null;
+  points: IntradayPricePoint[];
+  /** Regular session bounds, when the provider knows them. */
+  sessionStart?: string | null;
+  sessionEnd?: string | null;
+}
+
 export interface LatestQuoteSnapshot {
   quote?: Quote | null;
   isStale: boolean;

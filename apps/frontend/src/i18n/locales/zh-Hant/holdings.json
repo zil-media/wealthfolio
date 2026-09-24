@@ -234,5 +234,11 @@
   "category_breakdown": "類別明細",
   "personal_assets": "個人資產",
   "health_filter_active": "正在顯示健康中心標記的持有部位",
-  "closing_cash_flow": "平倉現金流"
+  "closing_cash_flow": "平倉現金流",
+  "live": "即時",
+  "live_hint": "每 {{seconds}} 秒更新價格並顯示今日走勢",
+  "live_updated": "即時價格 · 更新於 {{time}} · 每 {{seconds}} 秒",
+  "live_loading": "正在載入即時價格…",
+  "live_error": "目前無法取得即時價格，顯示最後計算的數值。",
+  "intraday": "今日"
 }

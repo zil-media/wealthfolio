@@ -161,3 +161,27 @@ mod tests {
         assert_eq!(quote.volume, Some(dec!(1000000)));
     }
 }
+
+/// One intraday price point (e.g. a 5-minute bar close).
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct IntradayPoint {
+    pub timestamp: DateTime<Utc>,
+    pub price: Decimal,
+}
+
+/// Today's intraday price path for an instrument, for display only (never stored).
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct IntradaySeries {
+    /// Bars in ascending time order; may be empty before the session opens.
+    pub points: Vec<IntradayPoint>,
+    /// Latest traded price reported by the provider.
+    pub last_price: Decimal,
+    /// When `last_price` was reported.
+    pub last_price_at: Option<DateTime<Utc>>,
+    /// Previous session's close, the baseline for today's change.
+    pub previous_close: Option<Decimal>,
+    pub currency: String,
+    /// Regular session bounds reported by the provider (current or most recent session).
+    pub session_start: Option<DateTime<Utc>>,
+    pub session_end: Option<DateTime<Utc>>,
+}

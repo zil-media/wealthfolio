@@ -31,6 +31,9 @@ import {
   AlternativeAssetKind,
 } from "@/lib/types";
 import { canAddHoldings } from "@/lib/activity-restrictions";
+import { LivePricesToggle } from "@/components/live-prices-toggle";
+import { useLiveHoldings } from "@/hooks/use-live-holdings";
+import { LiveVisibilityRegistry } from "@/lib/live-visibility";
 import { useIsMobileViewport } from "@/hooks/use-platform";
 import { HoldingsTable } from "./components/holdings-table";
 import { HoldingsTableMobile } from "./components/holdings-table-mobile";
@@ -420,6 +423,22 @@ export const HoldingsPage = () => {
   const hasMobileInvestmentsToolbar =
     isMobileViewport && currentTab === "investments" && !hasNoInvestments;
 
+  // Live mode: poll intraday prices for the positions on screen (display only).
+  const [isLive, setIsLive] = useState(false);
+  const [liveVisibility] = useState(() => new LiveVisibilityRegistry());
+  const isLiveActive = isLive && currentTab === "investments" && !isEditMode;
+  const live = useLiveHoldings(filteredHoldings, isLiveActive, liveVisibility);
+  const renderLiveToggle = (className?: string) => (
+    <LivePricesToggle
+      className={className}
+      enabled={isLive}
+      onToggle={() => setIsLive((value) => !value)}
+      updatedAt={live.updatedAt}
+      isFetching={live.isFetching}
+      hasError={live.error != null}
+    />
+  );
+
   // Action palette groups
   const actionPaletteGroups: ActionPaletteGroup[] = useMemo(
     () => [
@@ -523,7 +542,10 @@ export const HoldingsPage = () => {
           {/* Desktop View */}
           <div className="hidden md:block">
             <HoldingsTable
-              holdings={filteredHoldings ?? []}
+              holdings={live.holdings}
+              liveQuotes={live.quotesByAssetId}
+              liveVisibility={isLiveActive ? liveVisibility : undefined}
+              liveControl={renderLiveToggle()}
               isLoading={isDataLoading}
               visibilityFilters={effectiveVisibilityFilters}
               setVisibilityFilters={handleVisibilityFiltersChange}
@@ -543,7 +565,9 @@ export const HoldingsPage = () => {
           {/* Mobile View */}
           <div className="block md:hidden">
             <HoldingsTableMobile
-              holdings={filteredHoldings ?? []}
+              holdings={live.holdings}
+              liveQuotes={live.quotesByAssetId}
+              liveVisibility={isLiveActive ? liveVisibility : undefined}
               isLoading={isDataLoading}
               selectedTypes={selectedTypes}
               setSelectedTypes={setSelectedTypes}
@@ -564,21 +588,24 @@ export const HoldingsPage = () => {
               hasHiddenPositions={hasHiddenInvestmentPositions}
               toolbarActions={
                 isMobileViewport && currentTab === "investments" ? (
-                  <ActionPalette
-                    open={isActionPaletteOpen}
-                    onOpenChange={setIsActionPaletteOpen}
-                    groups={actionPaletteGroups}
-                    trigger={
-                      <Button
-                        variant="outline"
-                        size="icon"
-                        className="size-10 shrink-0 rounded-full"
-                        aria-label={t("holdings:open_actions")}
-                      >
-                        <Icons.DotsThreeVertical className="h-5 w-5" weight="fill" />
-                      </Button>
-                    }
-                  />
+                  <>
+                    {renderLiveToggle("h-10 rounded-full px-4")}
+                    <ActionPalette
+                      open={isActionPaletteOpen}
+                      onOpenChange={setIsActionPaletteOpen}
+                      groups={actionPaletteGroups}
+                      trigger={
+                        <Button
+                          variant="outline"
+                          size="icon"
+                          className="size-10 shrink-0 rounded-full"
+                          aria-label={t("holdings:open_actions")}
+                        >
+                          <Icons.DotsThreeVertical className="h-5 w-5" weight="fill" />
+                        </Button>
+                      }
+                    />
+                  </>
                 ) : undefined
               }
             />

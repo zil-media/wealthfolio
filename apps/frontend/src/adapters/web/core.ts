@@ -161,6 +161,7 @@ export const COMMANDS: CommandMap = {
   get_quote_history: { method: "GET", path: "/market-data/quotes/history" },
   fetch_dividends: { method: "GET", path: "/market-data/dividends" },
   get_latest_quotes: { method: "POST", path: "/market-data/quotes/latest" },
+  get_intraday_quotes: { method: "POST", path: "/market-data/quotes/intraday" },
   update_quote: { method: "PUT", path: "/market-data/quotes" },
   delete_quote: { method: "DELETE", path: "/market-data/quotes/id" },
   check_quotes_import: { method: "POST", path: "/market-data/quotes/check" },
@@ -1107,7 +1108,8 @@ export const invoke = async <T>(command: string, payload?: Record<string, unknow
       url += `?${params.toString()}`;
       break;
     }
-    case "get_latest_quotes": {
+    case "get_latest_quotes":
+    case "get_intraday_quotes": {
       const { assetIds } = payload as { assetIds: string[] };
       body = JSON.stringify({ assetIds });
       break;

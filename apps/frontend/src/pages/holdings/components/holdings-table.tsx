@@ -19,18 +19,21 @@ import {
 } from "@wealthfolio/ui/components/ui/dropdown-menu";
 import { Icons } from "@wealthfolio/ui/components/ui/icons";
 
+import { IntradaySparkline } from "@/components/intraday-sparkline";
+import { LiveVisibilityProbe } from "@/components/live-visibility-probe";
+import type { LiveVisibilityRegistry } from "@/lib/live-visibility";
 import { TickerAvatar } from "@/components/ticker-avatar";
 import { HoldingPerformancePercent } from "@/components/holding-performance-percent";
 import { useBalancePrivacy } from "@/hooks/use-balance-privacy";
 import { HoldingType } from "@/lib/constants";
 import { getBaseHoldingPerformancePercent } from "@/lib/holding-performance";
 import { useSettingsContext } from "@/lib/settings-provider";
-import { Holding, MonetaryValue } from "@/lib/types";
+import { Holding, IntradayQuote, MonetaryValue } from "@/lib/types";
 import { AmountDisplay, PriceDisplay, QuantityDisplay } from "@wealthfolio/ui";
 import { Skeleton } from "@wealthfolio/ui/components/ui/skeleton";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@wealthfolio/ui/components/ui/tooltip";
 import type { TFunction } from "i18next";
-import { useState } from "react";
+import { useState, type ReactNode } from "react";
 import { useTranslation } from "react-i18next";
 import { useNavigate, type NavigateFunction } from "react-router-dom";
 import { HoldingsStatusSegmentedControl } from "./holdings-status-control";
@@ -130,6 +133,9 @@ export const HoldingsTable = ({
   visibilityFilters,
   setVisibilityFilters,
   showClosedPositions = true,
+  liveQuotes,
+  liveVisibility,
+  liveControl,
 }: {
   holdings: Holding[];
   isLoading: boolean;
@@ -137,6 +143,12 @@ export const HoldingsTable = ({
   visibilityFilters?: HoldingsVisibilityFilter[];
   setVisibilityFilters?: (value: HoldingsVisibilityFilter[]) => void;
   showClosedPositions?: boolean;
+  /** Intraday quotes by asset id while live mode is on. */
+  liveQuotes?: Map<string, IntradayQuote>;
+  /** Present while live mode is on: adds today's chart column and reports visible rows. */
+  liveVisibility?: LiveVisibilityRegistry;
+  /** Live mode toggle rendered in the toolbar. */
+  liveControl?: ReactNode;
 }) => {
   const { t, i18n } = useTranslation();
   const formatting = useNumberFormatting();
@@ -201,6 +213,8 @@ export const HoldingsTable = ({
     dateFormatting,
     navigate,
     onClassify,
+    liveQuotes,
+    liveVisibility,
   ).filter((column) => {
     if (!("id" in column) || column.id == null) return false;
     return isClosedView
@@ -251,6 +265,7 @@ export const HoldingsTable = ({
         }
         toolbarActions={
           <div className="mr-2 flex items-center gap-2">
+            {liveControl}
             {hasMultipleCurrencies && (
               <Tooltip>
                 <TooltipTrigger asChild>
@@ -295,6 +310,8 @@ const getColumns = (
   dateFormatting: Pick<FormattingApi, "formatCalendarDate">,
   navigate: NavigateFunction,
   onClassify?: (holding: Holding) => void,
+  liveQuotes?: Map<string, IntradayQuote>,
+  liveVisibility?: LiveVisibilityRegistry,
 ): ColumnDef<Holding>[] => [
   {
     id: "symbol",
@@ -615,6 +632,35 @@ const getColumns = (
       );
     },
   },
+  ...(liveVisibility
+    ? [
+        {
+          id: "intraday",
+          enableHiding: false,
+          enableSorting: false,
+          header: () => (
+            <div className="text-muted-foreground px-4 text-right text-sm font-medium">
+              {t("holdings:intraday")}
+            </div>
+          ),
+          meta: { label: t("holdings:intraday") },
+          cell: ({ row }) => {
+            const assetId = row.original.instrument?.id;
+            if (!assetId || isCashHolding(row.original)) return null;
+            const quote = liveQuotes?.get(assetId);
+            return (
+              <LiveVisibilityProbe
+                assetId={assetId}
+                registry={liveVisibility}
+                className="flex h-[30px] justify-end px-4"
+              >
+                {quote && <IntradaySparkline quote={quote} />}
+              </LiveVisibilityProbe>
+            );
+          },
+        } satisfies ColumnDef<Holding>,
+      ]
+    : []),
   {
     id: "avgPrice",
     accessorFn: (row) => getAveragePrice(row) ?? 0,

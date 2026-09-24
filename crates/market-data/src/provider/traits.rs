@@ -8,7 +8,8 @@ use chrono::{DateTime, Utc};
 
 use crate::errors::MarketDataError;
 use crate::models::{
-    AssetProfile, DividendEvent, ProviderInstrument, Quote, QuoteContext, SearchResult, SplitEvent,
+    AssetProfile, DividendEvent, IntradaySeries, ProviderInstrument, Quote, QuoteContext,
+    SearchResult, SplitEvent,
 };
 
 use super::capabilities::{ProviderCapabilities, RateLimit};
@@ -115,6 +116,20 @@ pub trait MarketDataProvider: Send + Sync {
         start: DateTime<Utc>,
         end: DateTime<Utc>,
     ) -> Result<Vec<Quote>, MarketDataError>;
+
+    /// Fetch today's intraday price path (display only, never persisted).
+    /// Default implementation returns `NotSupported`.
+    async fn get_intraday_series(
+        &self,
+        context: &QuoteContext,
+        instrument: ProviderInstrument,
+    ) -> Result<IntradaySeries, MarketDataError> {
+        let _ = (context, instrument);
+        Err(MarketDataError::NotSupported {
+            operation: "intraday".to_string(),
+            provider: self.id().to_string(),
+        })
+    }
 
     /// Search for symbols matching the query.
     ///

@@ -235,5 +235,11 @@
   "category_breakdown": "Desglose por categoría",
   "personal_assets": "Activos personales",
   "health_filter_active": "Se muestran las posiciones marcadas por el Centro de salud",
-  "closing_cash_flow": "Flujo de caja al cierre"
+  "closing_cash_flow": "Flujo de caja al cierre",
+  "live": "En vivo",
+  "live_hint": "Actualizar precios cada {{seconds}} s y mostrar el gráfico del día",
+  "live_updated": "Precios en vivo · actualizado {{time}} · cada {{seconds}} s",
+  "live_loading": "Cargando precios en vivo…",
+  "live_error": "Precios en vivo no disponibles ahora. Se muestran los últimos valores calculados.",
+  "intraday": "Hoy"
 }

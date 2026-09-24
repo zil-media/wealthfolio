@@ -8,7 +8,7 @@
 //! - Quote import/export
 
 use async_trait::async_trait;
-use chrono::{Duration, NaiveDate, TimeZone, Utc};
+use chrono::{DateTime, Duration, NaiveDate, TimeZone, Utc};
 use log::{debug, info};
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::sync::Arc;
@@ -19,7 +19,7 @@ use crate::utils::time_utils;
 use super::client::{MarketDataClient, ProviderConfig};
 use super::constants::{DATA_SOURCE_CUSTOM_SCRAPER, DATA_SOURCE_MANUAL, MAX_SYNC_ERRORS};
 use super::import::{ImportValidationStatus, QuoteConverter, QuoteImport, QuoteValidator};
-use super::model::{LatestQuotePair, Quote, ResolvedQuote, SymbolSearchResult};
+use super::model::{IntradayQuote, LatestQuotePair, Quote, ResolvedQuote, SymbolSearchResult};
 use super::store::{ProviderSettingsStore, QuoteStore};
 use super::sync::{QuoteSyncService, QuoteSyncServiceTrait, SyncResult};
 use super::sync_state::{QuoteSyncState, SymbolSyncPlan, SyncCategory, SyncMode, SyncStateStore};
@@ -535,6 +535,14 @@ pub trait QuoteServiceTrait: Send + Sync {
     /// An empty asset ID list is treated as sync nothing.
     async fn resync(&self, asset_ids: Option<Vec<String>>) -> Result<SyncResult>;
 
+    /// Today's intraday price path for each asset a provider can price live.
+    /// Display only: nothing is stored. Manual assets and assets no provider can
+    /// price intraday are left out rather than failing the whole request.
+    async fn get_intraday_quotes(&self, asset_ids: &[String]) -> Result<Vec<IntradayQuote>> {
+        let _ = asset_ids;
+        Ok(Vec::new())
+    }
+
     /// Refresh sync state from holdings/activities.
     async fn refresh_sync_state(&self) -> Result<()>;
 
@@ -657,6 +665,39 @@ where
     /// Sync service.
     #[allow(clippy::type_complexity)]
     sync_service: Arc<RwLock<Option<Arc<QuoteSyncService<Q, S, A, R>>>>>,
+    /// Intraday answers per asset (None = provider had nothing), shared by every client.
+    intraday_cache: Arc<std::sync::Mutex<HashMap<String, CachedIntraday>>>,
+}
+
+struct CachedIntraday {
+    expires_at: std::time::Instant,
+    quote: Option<IntradayQuote>,
+}
+
+/// Re-ask a provider this often while the asset's market is open.
+const INTRADAY_OPEN_TTL: std::time::Duration = std::time::Duration::from_secs(20);
+/// Longest wait while the market is closed or the provider had no answer.
+const INTRADAY_IDLE_TTL: std::time::Duration = std::time::Duration::from_secs(15 * 60);
+
+/// How long an intraday answer stays good. Prices only move while the regular session is
+/// open, so a closed market is re-checked rarely; before the open, the entry lasts until it.
+pub(crate) fn intraday_cache_ttl(
+    quote: Option<&IntradayQuote>,
+    now: DateTime<Utc>,
+) -> std::time::Duration {
+    let Some(quote) = quote else {
+        return INTRADAY_IDLE_TTL;
+    };
+    match (quote.session_start, quote.session_end) {
+        (Some(start), Some(end)) if now >= start && now <= end => INTRADAY_OPEN_TTL,
+        (Some(start), _) if now < start => (start - now)
+            .to_std()
+            .unwrap_or(INTRADAY_OPEN_TTL)
+            .clamp(INTRADAY_OPEN_TTL, INTRADAY_IDLE_TTL),
+        (Some(_), Some(_)) => INTRADAY_IDLE_TTL,
+        // Session unknown: treat as trading.
+        _ => INTRADAY_OPEN_TTL,
+    }
 }
 
 impl<Q, S, PS, A, R> QuoteService<Q, S, PS, A, R>
@@ -740,6 +781,7 @@ where
             secret_store,
             custom_provider_repo,
             sync_service: Arc::new(RwLock::new(Some(Arc::new(sync_service)))),
+            intraday_cache: Arc::new(std::sync::Mutex::new(HashMap::new())),
         })
     }
 
@@ -1909,6 +1951,67 @@ where
     async fn sync(&self, mode: SyncMode, asset_ids: Option<Vec<String>>) -> Result<SyncResult> {
         let sync_service = self.get_sync_service().await?;
         sync_service.sync(mode, asset_ids).await
+    }
+
+    async fn get_intraday_quotes(&self, asset_ids: &[String]) -> Result<Vec<IntradayQuote>> {
+        let now = std::time::Instant::now();
+        let mut cached: HashMap<String, Option<IntradayQuote>> = HashMap::new();
+        let mut missing: Vec<String> = Vec::new();
+        {
+            let mut cache = self
+                .intraday_cache
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner());
+            cache.retain(|_, entry| entry.expires_at > now);
+            for id in asset_ids {
+                match cache.get(id) {
+                    Some(entry) => {
+                        cached.insert(id.clone(), entry.quote.clone());
+                    }
+                    None => missing.push(id.clone()),
+                }
+            }
+        }
+
+        if !missing.is_empty() {
+            let assets = self.asset_repo.list_by_asset_ids(&missing)?;
+            let client = self.client.read().await;
+            let results = futures::future::join_all(assets.iter().map(|asset| async {
+                if asset.quote_mode == QuoteMode::Manual {
+                    return None;
+                }
+                match client.fetch_intraday(asset).await {
+                    Ok(quote) => Some(quote),
+                    Err(e) => {
+                        debug!("No intraday prices for {}: {}", asset.id, e);
+                        None
+                    }
+                }
+            }))
+            .await;
+
+            let fetched_at = Utc::now();
+            let mut cache = self
+                .intraday_cache
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner());
+            for (asset, quote) in assets.iter().zip(results) {
+                let ttl = intraday_cache_ttl(quote.as_ref(), fetched_at);
+                cache.insert(
+                    asset.id.clone(),
+                    CachedIntraday {
+                        expires_at: now + ttl,
+                        quote: quote.clone(),
+                    },
+                );
+                cached.insert(asset.id.clone(), quote);
+            }
+        }
+
+        Ok(asset_ids
+            .iter()
+            .filter_map(|id| cached.remove(id).flatten())
+            .collect())
     }
 
     async fn resync(&self, asset_ids: Option<Vec<String>>) -> Result<SyncResult> {
@@ -4712,5 +4815,66 @@ mod tests {
     fn test_extract_provider_id_from_sync_error_unknown_format() {
         let error = "Market data operation failed: All providers failed";
         assert_eq!(extract_provider_id_from_sync_error(error), None);
+    }
+}
+
+#[cfg(test)]
+mod intraday_cache_ttl_tests {
+    use super::{intraday_cache_ttl, INTRADAY_IDLE_TTL, INTRADAY_OPEN_TTL};
+    use crate::quotes::IntradayQuote;
+    use chrono::{DateTime, Duration, TimeZone, Utc};
+    use rust_decimal::Decimal;
+
+    fn quote(start: Option<DateTime<Utc>>, end: Option<DateTime<Utc>>) -> IntradayQuote {
+        IntradayQuote {
+            asset_id: "AAPL".into(),
+            currency: "USD".into(),
+            last_price: Decimal::ONE,
+            last_price_at: None,
+            previous_close: None,
+            points: vec![],
+            session_start: start,
+            session_end: end,
+        }
+    }
+
+    #[test]
+    fn short_while_the_session_is_open() {
+        let open = Utc.with_ymd_and_hms(2026, 9, 24, 13, 30, 0).unwrap();
+        let close = open + Duration::minutes(390);
+        let q = quote(Some(open), Some(close));
+        assert_eq!(
+            intraday_cache_ttl(Some(&q), open + Duration::hours(1)),
+            INTRADAY_OPEN_TTL
+        );
+    }
+
+    #[test]
+    fn long_after_the_close_and_until_the_open_before_it() {
+        let open = Utc.with_ymd_and_hms(2026, 9, 24, 13, 30, 0).unwrap();
+        let close = open + Duration::minutes(390);
+        let q = quote(Some(open), Some(close));
+        assert_eq!(
+            intraday_cache_ttl(Some(&q), close + Duration::minutes(1)),
+            INTRADAY_IDLE_TTL
+        );
+        assert_eq!(
+            intraday_cache_ttl(Some(&q), open - Duration::minutes(5)),
+            std::time::Duration::from_secs(5 * 60)
+        );
+        assert_eq!(
+            intraday_cache_ttl(Some(&q), open - Duration::hours(3)),
+            INTRADAY_IDLE_TTL
+        );
+    }
+
+    #[test]
+    fn failures_back_off_and_unknown_sessions_stay_short() {
+        let now = Utc::now();
+        assert_eq!(intraday_cache_ttl(None, now), INTRADAY_IDLE_TTL);
+        assert_eq!(
+            intraday_cache_ttl(Some(&quote(None, None)), now),
+            INTRADAY_OPEN_TTL
+        );
     }
 }

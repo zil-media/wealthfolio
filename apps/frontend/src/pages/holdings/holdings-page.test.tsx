@@ -26,6 +26,17 @@ vi.mock("@/hooks/use-calculate-portfolio", () => ({
   useUpdatePortfolioMutation: () => ({ mutate: vi.fn() }),
 }));
 vi.mock("@/hooks/use-platform", () => ({ useIsMobileViewport: () => false }));
+vi.mock("@/hooks/use-live-holdings", () => ({
+  LIVE_REFRESH_MS: 30_000,
+  useLiveHoldings: (holdings: unknown[]) => ({
+    holdings,
+    quotesByAssetId: undefined,
+    updatedAt: null,
+    isFetching: false,
+    error: null,
+  }),
+}));
+vi.mock("@/components/live-prices-toggle", () => ({ LivePricesToggle: () => null }));
 vi.mock("@/lib/settings-provider", () => ({
   useSettingsContext: () => ({ settings: { baseCurrency: "USD" } }),
 }));

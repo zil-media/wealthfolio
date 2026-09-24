@@ -11,8 +11,8 @@ use crate::{
 use log::{debug, error, warn};
 use tauri::{AppHandle, State};
 use wealthfolio_core::quotes::{
-    service::ProviderInfo, FetchDividendsParams, LatestQuoteSnapshot, MarketSyncMode, Quote,
-    QuoteImport, SymbolSearchResult,
+    service::ProviderInfo, FetchDividendsParams, IntradayQuote, LatestQuoteSnapshot,
+    MarketSyncMode, Quote, QuoteImport, SymbolSearchResult,
 };
 use wealthfolio_market_data::{DividendEvent, ExchangeInfo};
 
@@ -141,6 +141,18 @@ pub async fn get_latest_quotes(
     state
         .quote_service()
         .get_latest_quotes_snapshot(&asset_ids)
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub async fn get_intraday_quotes(
+    asset_ids: Vec<String>,
+    state: State<'_, Arc<ServiceContext>>,
+) -> Result<Vec<IntradayQuote>, String> {
+    state
+        .quote_service()
+        .get_intraday_quotes(&asset_ids)
+        .await
         .map_err(|e| e.to_string())
 }
 

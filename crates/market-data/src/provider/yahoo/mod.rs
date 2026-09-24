@@ -25,8 +25,8 @@ use yahoo_finance_api as yahoo;
 
 use crate::errors::MarketDataError;
 use crate::models::{
-    to_iso_alpha2, AssetProfile, Coverage, DividendEvent, InstrumentKind, ProviderInstrument,
-    Quote, QuoteContext, SearchResult, SplitEvent,
+    to_iso_alpha2, AssetProfile, Coverage, DividendEvent, InstrumentKind, IntradayPoint,
+    IntradaySeries, ProviderInstrument, Quote, QuoteContext, SearchResult, SplitEvent,
 };
 use crate::provider::{MarketDataProvider, ProviderCapabilities, RateLimit};
 use crate::resolver::{yahoo_equity_search_queries, yahoo_exchange_to_mic, ResolverChain};
@@ -907,6 +907,13 @@ impl YahooProvider {
 // MarketDataProvider Implementation
 // ============================================================================
 
+/// Yahoo reports session bounds as unix seconds, 0 when unknown.
+fn session_bound(seconds: u32) -> Option<DateTime<Utc>> {
+    (seconds > 0)
+        .then(|| Utc.timestamp_opt(i64::from(seconds), 0).single())
+        .flatten()
+}
+
 #[async_trait]
 impl MarketDataProvider for YahooProvider {
     fn id(&self) -> &'static str {
@@ -965,6 +972,64 @@ impl MarketDataProvider for YahooProvider {
 
         // Fallback to quoteSummary price data
         self.fetch_latest_quote_backup(&symbol, context).await
+    }
+
+    async fn get_intraday_series(
+        &self,
+        context: &QuoteContext,
+        instrument: ProviderInstrument,
+    ) -> Result<IntradaySeries, MarketDataError> {
+        let symbol = self.extract_symbol(&instrument)?;
+        if symbol.starts_with("CASH:") {
+            return Err(MarketDataError::NotSupported {
+                operation: "intraday".to_string(),
+                provider: self.id().to_string(),
+            });
+        }
+
+        // 5-minute bars over the current session; chartPreviousClose is yesterday's close.
+        let response = self
+            .connector
+            .get_quote_range(&symbol, "5m", "1d")
+            .await
+            .map_err(|e| self.convert_yahoo_error(e, &symbol))?;
+        let metadata = response
+            .metadata()
+            .map_err(|e| self.convert_yahoo_error(e, &symbol))?;
+
+        let points: Vec<IntradayPoint> = response
+            .quotes()
+            .unwrap_or_default()
+            .into_iter()
+            .filter_map(|bar| {
+                let timestamp = Utc.timestamp_opt(bar.timestamp, 0).single()?;
+                let price = Decimal::from_f64_retain(bar.close)?;
+                (price > Decimal::ZERO).then_some(IntradayPoint { timestamp, price })
+            })
+            .collect();
+
+        let last_price = metadata
+            .regular_market_price
+            .and_then(Decimal::from_f64_retain)
+            .or_else(|| points.last().map(|point| point.price))
+            .ok_or_else(|| MarketDataError::SymbolNotFound(symbol.clone()))?;
+
+        Ok(IntradaySeries {
+            points,
+            last_price,
+            last_price_at: metadata
+                .regular_market_time
+                .and_then(|seconds| Utc.timestamp_opt(i64::from(seconds), 0).single()),
+            previous_close: metadata
+                .chart_previous_close
+                .or(metadata.previous_close)
+                .and_then(Decimal::from_f64_retain),
+            session_start: session_bound(metadata.current_trading_period.regular.start),
+            session_end: session_bound(metadata.current_trading_period.regular.end),
+            currency: metadata
+                .currency
+                .unwrap_or_else(|| self.get_currency(context)),
+        })
     }
 
     async fn get_historical_quotes(

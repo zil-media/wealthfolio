@@ -4,6 +4,7 @@ import type {
   Asset,
   Quote,
   LatestQuoteSnapshot,
+  IntradayQuote,
   NewAsset,
   UpdateAssetProfile,
   MarketDataProviderInfo,
@@ -58,6 +59,15 @@ export const getLatestQuotes = async (
     return await invoke<Record<string, LatestQuoteSnapshot>>("get_latest_quotes", { assetIds });
   } catch (error) {
     logger.error("Error loading latest quotes.");
+    throw error;
+  }
+};
+
+export const getIntradayQuotes = async (assetIds: string[]): Promise<IntradayQuote[]> => {
+  try {
+    return await invoke<IntradayQuote[]>("get_intraday_quotes", { assetIds });
+  } catch (error) {
+    logger.error("Error loading intraday quotes.");
     throw error;
   }
 };
