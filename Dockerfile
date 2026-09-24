@@ -13,18 +13,22 @@ ENV CONNECT_AUTH_URL=${CONNECT_AUTH_URL}
 ENV CONNECT_AUTH_PUBLISHABLE_KEY=${CONNECT_AUTH_PUBLISHABLE_KEY}
 
 WORKDIR /app
-COPY package.json pnpm-lock.yaml pnpm-workspace.yaml ./
-COPY . .
 ENV CI=1
 ENV BUILD_TARGET=web
-RUN npm install -g pnpm@9.9.0 && pnpm install --frozen-lockfile
+RUN npm install -g pnpm@9.9.0
+# Download dependencies from the lockfile alone, so this layer survives
+# source-only changes (`COPY . .` below would otherwise invalidate it).
+COPY pnpm-lock.yaml pnpm-workspace.yaml ./
+RUN pnpm fetch
+COPY . .
+RUN pnpm install --frozen-lockfile --offline
 # Build only the main app to avoid building workspace addons in this image
 RUN pnpm --filter frontend... build && mv dist /web-dist
 
 # Stage 2: build server with cross-compilation
 FROM --platform=$BUILDPLATFORM tonistiigi/xx AS xx
 
-FROM --platform=$BUILDPLATFORM ${RUST_IMAGE} AS backend
+FROM --platform=$BUILDPLATFORM ${RUST_IMAGE} AS backend-base
 # Copy xx scripts to handle cross-compilation
 COPY --from=xx / /
 ARG TARGETPLATFORM
@@ -50,23 +54,32 @@ RUN xx-apk add --no-cache musl-dev gcc openssl-dev openssl-libs-static sqlite-de
 
 # Install rust target
 RUN rustup target add $(xx-cargo --print-target-triple)
+ENV CARGO_REGISTRIES_CRATES_IO_PROTOCOL=sparse
+ENV OPENSSL_STATIC=1
+RUN cargo install cargo-chef --locked --version 0.1.78
 
-# Leverage Docker layer caching for dependencies
+# Workspace sources, with apps/tauri stubbed so the workspace resolves (not
+# built in Docker).
+FROM backend-base AS workspace
 COPY Cargo.toml Cargo.lock ./
 COPY crates ./crates
 COPY apps/server ./apps/server
-# Stub out apps/tauri so the workspace resolves (not built in Docker)
 COPY apps/tauri/Cargo.toml apps/tauri/Cargo.toml
 RUN mkdir -p apps/tauri/src && echo "fn main(){}" > apps/tauri/src/main.rs && echo "" > apps/tauri/src/lib.rs
-RUN mkdir -p apps/server/src && \
-    echo "fn main(){}" > apps/server/src/main.rs && \
-    xx-cargo fetch --locked --manifest-path apps/server/Cargo.toml
+
+# The recipe captures only manifests and the lockfile, so it is unchanged by
+# source-only edits.
+FROM workspace AS planner
+RUN cargo chef prepare --recipe-path /recipe.json
+
+FROM backend-base AS backend
+# Compile dependencies in their own layer, keyed on the recipe: a source-only
+# change reuses it instead of recompiling every crate.
+COPY --from=planner /recipe.json /recipe.json
+RUN xx-cargo chef cook --locked --release --package wealthfolio-server --recipe-path /recipe.json
 
 # Now copy full sources
-COPY crates ./crates
-COPY apps/server ./apps/server
-ENV CARGO_REGISTRIES_CRATES_IO_PROTOCOL=sparse
-ENV OPENSSL_STATIC=1
+COPY --from=workspace /app ./
 # Build using xx-cargo which handles target flags
 RUN xx-cargo build --locked --release --manifest-path apps/server/Cargo.toml && \
     # Move the binary to a predictable location because the target dir changes with --target
