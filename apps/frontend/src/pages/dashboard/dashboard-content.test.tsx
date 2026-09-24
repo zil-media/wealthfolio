@@ -20,6 +20,31 @@ vi.mock("@/components/history-chart", () => ({
   HistoryChart: () => <div>history-chart</div>,
 }));
 
+vi.mock("@/hooks/use-benchmark-comparison", () => ({
+  useBenchmarkSelection: () => ({
+    benchmarks: [],
+    addBenchmark: vi.fn(),
+    removeBenchmark: vi.fn(),
+  }),
+  useBenchmarkComparison: () => ({ neutral: [], series: [] }),
+}));
+
+vi.mock("@/components/benchmark-compare/benchmark-compare-bar", () => ({
+  BenchmarkCompareBar: () => null,
+}));
+
+vi.mock("@/components/benchmark-compare/benchmark-comparison-table", () => ({
+  BenchmarkComparisonTable: () => null,
+}));
+
+vi.mock("@/components/benchmark-compare/chart-mode-toggle", () => ({
+  ChartModeToggle: () => null,
+}));
+
+vi.mock("@/components/benchmark-compare/contribution-neutral-chart", () => ({
+  ContributionNeutralChart: () => null,
+}));
+
 vi.mock("@/hooks", () => ({
   useHapticFeedback: () => ({ triggerHaptic: vi.fn() }),
 }));

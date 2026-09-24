@@ -365,5 +365,25 @@
     "sidebar": "側邊欄",
     "floating": "浮動導覽列"
   },
-  "allocation_other_in_category": "其他{{category}}"
+  "allocation_other_in_category": "其他{{category}}",
+  "benchmark_compare": {
+    "mode_label": "圖表檢視",
+    "mode_value": "價值",
+    "mode_return": "報酬",
+    "mode_return_hint": "扣除存入與提領後的資本報酬率",
+    "your_portfolio": "你的投資組合",
+    "this_scope": "投資組合",
+    "vs": "對比",
+    "gain": "收益",
+    "deposit_excluded": "存入（已排除）",
+    "withdrawal_excluded": "提領（已排除）",
+    "remove": "移除 {{name}}",
+    "no_data": "無資料",
+    "return_on_capital": "資本報酬率",
+    "twr_or_index": "時間加權 / 指數",
+    "volatility": "波動率",
+    "max_drawdown": "最大回撤",
+    "difference": "差異",
+    "method_note": "資本報酬率 = 收益 ÷（期初價值 + 期間存入），因此存入不會計為報酬。每個指數都以相同日期重現你的期初價值與每筆存入或提領。指數價格不含股息。"
+  }
 }

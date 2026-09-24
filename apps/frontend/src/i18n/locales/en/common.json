@@ -365,5 +365,25 @@
     "sidebar": "Sidebar",
     "floating": "Floating Bar"
   },
-  "allocation_other_in_category": "Other {{category}}"
+  "allocation_other_in_category": "Other {{category}}",
+  "benchmark_compare": {
+    "mode_label": "Chart view",
+    "mode_value": "Value",
+    "mode_return": "Return",
+    "mode_return_hint": "Return on capital with deposits and withdrawals removed",
+    "your_portfolio": "Your portfolio",
+    "this_scope": "Portfolio",
+    "vs": "vs",
+    "gain": "Gain",
+    "deposit_excluded": "Deposit (excluded)",
+    "withdrawal_excluded": "Withdrawal (excluded)",
+    "remove": "Remove {{name}}",
+    "no_data": "No data",
+    "return_on_capital": "Return on capital",
+    "twr_or_index": "TWR / index",
+    "volatility": "Volatility",
+    "max_drawdown": "Max drawdown",
+    "difference": "Difference",
+    "method_note": "Return on capital = gain ÷ (opening value + deposits in the period), so deposits never count as return. Each index replays your opening value and every deposit or withdrawal on the same day. Index prices exclude dividends."
+  }
 }

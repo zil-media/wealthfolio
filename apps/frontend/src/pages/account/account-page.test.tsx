@@ -40,6 +40,31 @@ vi.mock("@/components/privacy-toggle", () => ({
   PrivacyToggle: () => <button>privacy-toggle</button>,
 }));
 
+vi.mock("@/hooks/use-benchmark-comparison", () => ({
+  useBenchmarkSelection: () => ({
+    benchmarks: [],
+    addBenchmark: vi.fn(),
+    removeBenchmark: vi.fn(),
+  }),
+  useBenchmarkComparison: () => ({ neutral: [], series: [] }),
+}));
+
+vi.mock("@/components/benchmark-compare/benchmark-compare-bar", () => ({
+  BenchmarkCompareBar: () => null,
+}));
+
+vi.mock("@/components/benchmark-compare/benchmark-comparison-table", () => ({
+  BenchmarkComparisonTable: () => null,
+}));
+
+vi.mock("@/components/benchmark-compare/chart-mode-toggle", () => ({
+  ChartModeToggle: () => null,
+}));
+
+vi.mock("@/components/benchmark-compare/contribution-neutral-chart", () => ({
+  ContributionNeutralChart: () => null,
+}));
+
 vi.mock("@/hooks/use-accounts", () => ({
   useAccounts: vi.fn(),
 }));
@@ -181,6 +206,7 @@ vi.mock("@wealthfolio/ui", () => {
     CardTitle: Passthrough,
     GainAmount: ({ value }: { value: number }) => <span>{`gain-amount:${value}`}</span>,
     GainPercent: ({ value }: { value: number }) => <span>{`gain-percent:${value}`}</span>,
+    usePersistentState: <T,>(_key: string, initial: T) => [initial, vi.fn()] as const,
     Icons: {
       Activity: Icon,
       ArrowRight: Icon,
