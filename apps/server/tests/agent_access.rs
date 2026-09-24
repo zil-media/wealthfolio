@@ -446,10 +446,11 @@ async fn mcp_pat_lifecycle() {
     assert!(purge["purged"].as_u64().unwrap() >= 1);
 }
 
-/// A write/suggest-scoped token sees the draft, suggest, commit, AND import
-/// tools via `tools/list` — proving scope-gated visibility extends past the
-/// read-only catalog. (Read-only tokens see 17; the full MCP catalog is
-/// 16 read + get_import_mapping + 5 draft/suggest + 3 commit + 2 import = 27.)
+/// A write/suggest-scoped token sees the draft, suggest, commit, import, AND
+/// manage tools via `tools/list` — proving scope-gated visibility extends past
+/// the read-only catalog. (Read-only tokens see 17; the full MCP catalog is
+/// 16 read + get_import_mapping + 5 draft/suggest + 3 commit + 2 import
+/// + 4 manage = 31.)
 #[tokio::test]
 async fn mcp_write_scoped_token_sees_write_tools() {
     let server = spawn_server(true, false).await;
@@ -489,8 +490,8 @@ async fn mcp_write_scoped_token_sees_write_tools() {
     let names: Vec<&str> = tools.iter().map(|t| t["name"].as_str().unwrap()).collect();
     assert_eq!(
         tools.len(),
-        27,
-        "full-scope token must see all 27 tools: {names:?}"
+        31,
+        "full-scope token must see all 31 tools: {names:?}"
     );
     assert!(
         names.contains(&"commit_activity_import"),
@@ -513,6 +514,14 @@ async fn mcp_write_scoped_token_sees_write_tools() {
         names.contains(&"commit_asset_classification_draft"),
         "classification commit tool visible"
     );
+    for manage in [
+        "update_activity",
+        "delete_activity",
+        "delete_asset",
+        "merge_assets",
+    ] {
+        assert!(names.contains(&manage), "{manage} visible");
+    }
 }
 
 #[tokio::test]
@@ -600,4 +609,286 @@ async fn mcp_disabled_returns_404() {
         .await
         .unwrap();
     assert_eq!(status_json["mcpEnabled"], false);
+}
+
+/// Authenticated JSON request against the REST API; returns (status, body).
+async fn api_json(
+    server: &TestServer,
+    cookie: &str,
+    method: reqwest::Method,
+    path: &str,
+    body: Option<serde_json::Value>,
+) -> (reqwest::StatusCode, serde_json::Value) {
+    let mut request = server
+        .client
+        .request(method, format!("{}/api/v1{path}", server.base))
+        .header(header::COOKIE, format!("wf_session={cookie}"));
+    if let Some(body) = body {
+        request = request.json(&body);
+    }
+    let response = request.send().await.unwrap();
+    let status = response.status();
+    let text = response.text().await.unwrap();
+    (
+        status,
+        serde_json::from_str(&text).unwrap_or(serde_json::Value::Null),
+    )
+}
+
+/// Calls an MCP tool; returns (isError, parsed JSON content or raw text).
+async fn mcp_call(
+    server: &TestServer,
+    pat: &str,
+    session: &str,
+    name: &str,
+    arguments: serde_json::Value,
+) -> (bool, serde_json::Value) {
+    let response = mcp_post(
+        server,
+        Some(pat),
+        Some(session),
+        serde_json::json!({
+            "jsonrpc": "2.0", "id": 9, "method": "tools/call",
+            "params": { "name": name, "arguments": arguments }
+        }),
+    )
+    .await;
+    assert_eq!(response.status(), 200);
+    let call = parse_sse_data(&response.text().await.unwrap());
+    let is_error = call["result"]["isError"] == serde_json::json!(true);
+    let text = call["result"]["content"][0]["text"]
+        .as_str()
+        .unwrap_or_default()
+        .to_string();
+    let content = serde_json::from_str(&text).unwrap_or(serde_json::Value::String(text));
+    (is_error, content)
+}
+
+/// The manage tools edit, delete, and merge real records end to end: confirm
+/// is enforced, patches leave other fields alone, delete_asset refuses an
+/// asset that still has activities, and merge_assets moves activities and
+/// removes the source (also reachable over the REST merge endpoint).
+#[tokio::test]
+async fn mcp_manage_tools_edit_delete_and_merge_records() {
+    let server = spawn_server(true, true).await;
+    let cookie = login(&server).await;
+
+    let scopes: Vec<&str> = READ_ONLY_SCOPES
+        .iter()
+        .copied()
+        .chain(["activities:draft", "activities:write"])
+        .collect();
+    let (status, created) = create_pat(
+        &server,
+        &cookie,
+        serde_json::json!({ "name": "manager", "scopes": scopes }),
+    )
+    .await;
+    assert_eq!(status, 201);
+    let pat = created["token"].as_str().unwrap().to_string();
+    let session = mcp_initialize(&server, &pat).await;
+
+    let (status, account) = api_json(
+        &server,
+        &cookie,
+        reqwest::Method::POST,
+        "/accounts",
+        Some(serde_json::json!({
+            "name": "Brokerage", "accountType": "SECURITIES", "group": null,
+            "currency": "USD", "isDefault": false, "isActive": true,
+            "platformId": null, "accountNumber": null, "meta": null,
+            "provider": null, "providerAccountId": null
+        })),
+    )
+    .await;
+    assert!(status.is_success(), "create account: {account}");
+    let account_id = account["id"].as_str().unwrap().to_string();
+
+    let mut asset_ids = Vec::new();
+    for code in ["DUPE", "KEEP", "SPARE"] {
+        let (status, asset) = api_json(
+            &server,
+            &cookie,
+            reqwest::Method::POST,
+            "/assets",
+            Some(serde_json::json!({
+                "kind": "INVESTMENT", "name": code, "displayCode": code,
+                "quoteMode": "MANUAL", "quoteCcy": "USD"
+            })),
+        )
+        .await;
+        assert!(status.is_success(), "create asset {code}: {asset}");
+        asset_ids.push(asset["id"].as_str().unwrap().to_string());
+    }
+    let (dupe_id, keep_id, spare_id) = (&asset_ids[0], &asset_ids[1], &asset_ids[2]);
+
+    let mut activity_ids = Vec::new();
+    for (asset_id, qty) in [(dupe_id, 10), (dupe_id, 5), (keep_id, 1)] {
+        let (status, activity) = api_json(
+            &server,
+            &cookie,
+            reqwest::Method::POST,
+            "/activities",
+            Some(serde_json::json!({
+                "accountId": account_id, "asset": { "id": asset_id },
+                "activityType": "BUY", "activityDate": "2024-01-15",
+                "quantity": qty, "unitPrice": 20, "fee": 1, "currency": "USD",
+                "notes": "original"
+            })),
+        )
+        .await;
+        assert!(status.is_success(), "create activity: {activity}");
+        activity_ids.push(activity["id"].as_str().unwrap().to_string());
+    }
+
+    // Unconfirmed mutations are refused.
+    let (is_error, _) = mcp_call(
+        &server,
+        &pat,
+        &session,
+        "delete_activity",
+        serde_json::json!({ "id": activity_ids[2] }),
+    )
+    .await;
+    assert!(is_error, "delete without confirm must fail");
+
+    // Patch only the fee; quantity, notes, asset stay as stored.
+    let (is_error, updated) = mcp_call(
+        &server,
+        &pat,
+        &session,
+        "update_activity",
+        serde_json::json!({ "id": activity_ids[0], "patch": { "fee": 2.5 }, "confirm": true }),
+    )
+    .await;
+    assert!(!is_error, "update_activity failed: {updated}");
+    assert_eq!(updated["updated"]["assetId"], serde_json::json!(dupe_id));
+    let (_, search) = api_json(
+        &server,
+        &cookie,
+        reqwest::Method::POST,
+        "/activities/search",
+        Some(serde_json::json!({
+            "page": 0, "pageSize": 50, "accountIdFilter": [account_id],
+            "activityTypeFilter": null, "assetIdKeyword": null, "sort": null
+        })),
+    )
+    .await;
+    let row = search["data"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|a| a["id"] == serde_json::json!(activity_ids[0]))
+        .expect("patched activity listed")
+        .clone();
+    assert_eq!(
+        row["fee"].as_str().map(|f| f.parse::<f64>().unwrap()),
+        Some(2.5)
+    );
+    assert_eq!(
+        row["quantity"].as_str().map(|q| q.parse::<f64>().unwrap()),
+        Some(10.0)
+    );
+    assert_eq!(
+        row["comment"].as_str().or(row["notes"].as_str()),
+        Some("original")
+    );
+
+    // An assetId patch must reference an existing asset.
+    let (is_error, _) = mcp_call(
+        &server,
+        &pat,
+        &session,
+        "update_activity",
+        serde_json::json!({
+            "id": activity_ids[0], "patch": { "assetId": "no-such-asset" }, "confirm": true
+        }),
+    )
+    .await;
+    assert!(is_error, "unknown assetId must be rejected");
+
+    // delete_asset refuses an asset that still has activities.
+    let (is_error, message) = mcp_call(
+        &server,
+        &pat,
+        &session,
+        "delete_asset",
+        serde_json::json!({ "id": dupe_id, "confirm": true }),
+    )
+    .await;
+    assert!(is_error);
+    assert!(message.to_string().contains("2 activities"), "{message}");
+
+    // Self-merge is refused over REST too.
+    let (status, _) = api_json(
+        &server,
+        &cookie,
+        reqwest::Method::POST,
+        "/assets/merge",
+        Some(serde_json::json!({ "sourceId": keep_id, "targetId": keep_id })),
+    )
+    .await;
+    assert_eq!(status, 400);
+
+    // Merge DUPE into KEEP: both activities move, DUPE disappears.
+    let (is_error, merged) = mcp_call(
+        &server,
+        &pat,
+        &session,
+        "merge_assets",
+        serde_json::json!({ "sourceId": dupe_id, "targetId": keep_id, "confirm": true }),
+    )
+    .await;
+    assert!(!is_error, "merge_assets failed: {merged}");
+    assert_eq!(merged["activitiesMigrated"], 2);
+    let (_, assets) = api_json(&server, &cookie, reqwest::Method::GET, "/assets", None).await;
+    let remaining: Vec<&str> = assets
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter_map(|a| a["id"].as_str())
+        .collect();
+    assert!(!remaining.contains(&dupe_id.as_str()), "source deleted");
+    assert!(remaining.contains(&keep_id.as_str()));
+
+    // An asset with no activities can be deleted; so can an activity.
+    let (is_error, deleted) = mcp_call(
+        &server,
+        &pat,
+        &session,
+        "delete_asset",
+        serde_json::json!({ "id": spare_id, "confirm": true }),
+    )
+    .await;
+    assert!(!is_error, "delete_asset failed: {deleted}");
+    let (is_error, deleted) = mcp_call(
+        &server,
+        &pat,
+        &session,
+        "delete_activity",
+        serde_json::json!({ "id": activity_ids[2], "confirm": true }),
+    )
+    .await;
+    assert!(!is_error, "delete_activity failed: {deleted}");
+    assert_eq!(deleted["deleted"]["assetId"], serde_json::json!(keep_id));
+
+    // Audit rows keep patch field names but never ids or values.
+    let (_, audit) = api_json(
+        &server,
+        &cookie,
+        reqwest::Method::GET,
+        "/agent-access/audit?pageSize=200",
+        None,
+    )
+    .await;
+    let audit_text = audit.to_string();
+    assert!(audit_text.contains("update_activity"));
+    assert!(
+        !audit_text.contains(&activity_ids[0]),
+        "activity id leaked to audit"
+    );
+    assert!(
+        !audit_text.contains(dupe_id.as_str()),
+        "asset id leaked to audit: {audit_text}"
+    );
 }

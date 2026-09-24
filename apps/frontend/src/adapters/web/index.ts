@@ -217,6 +217,7 @@ export {
   getMarketDataProviderSettings,
   getQuoteHistory,
   importManualQuotes,
+  mergeAssets,
   resolveSymbolQuote,
   searchTicker,
   syncHistoryQuotes,

@@ -577,6 +577,7 @@ pub fn run() {
             commands::asset::update_asset_profile,
             commands::asset::update_quote_mode,
             commands::asset::delete_asset,
+            commands::asset::merge_assets,
             commands::asset::create_asset,
             // Asset logo commands
             commands::asset_logo::get_asset_logo,

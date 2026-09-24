@@ -256,6 +256,15 @@ impl AssetServiceTrait for MockAssetService {
         unimplemented!("MockAssetService::merge_unknown_asset")
     }
 
+    async fn merge_assets(
+        &self,
+        _source_asset_id: &str,
+        _target_asset_id: &str,
+        _activity_repository: &dyn wealthfolio_core::activities::ActivityRepositoryTrait,
+    ) -> CoreResult<u32> {
+        unimplemented!("MockAssetService::merge_assets")
+    }
+
     async fn ensure_assets(
         &self,
         _specs: Vec<AssetSpec>,
@@ -478,6 +487,14 @@ impl ActivityServiceTrait for MockActivityService {
 
     async fn delete_activity(&self, _activity_id: String) -> CoreResult<Activity> {
         unimplemented!("MockActivityService::delete_activity")
+    }
+
+    async fn merge_assets(
+        &self,
+        _source_asset_id: &str,
+        _target_asset_id: &str,
+    ) -> CoreResult<u32> {
+        unimplemented!("MockActivityService::merge_assets")
     }
 
     fn get_transfer_pair_for_activity(

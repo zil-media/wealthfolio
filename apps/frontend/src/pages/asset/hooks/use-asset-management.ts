@@ -1,7 +1,8 @@
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 
-import { logger, createAsset, deleteAsset, updateAssetProfile } from "@/adapters";
+import { logger, createAsset, deleteAsset, mergeAssets, updateAssetProfile } from "@/adapters";
 import { toast } from "@wealthfolio/ui/components/ui/use-toast";
+import { useTranslation } from "react-i18next";
 import { QueryKeys } from "@/lib/query-keys";
 import { NewAsset, UpdateAssetProfile } from "@/lib/types";
 
@@ -9,12 +10,23 @@ interface UpdateAssetArgs {
   payload: UpdateAssetProfile;
 }
 
+interface MergeAssetsArgs {
+  sourceId: string;
+  targetId: string;
+}
+
 export const useAssetManagement = () => {
   const queryClient = useQueryClient();
+  const { t } = useTranslation();
 
-  const invalidateCaches = (assetId: string) => {
+  // `removed`: the asset no longer exists, so mark its data stale without
+  // refetching it (an open profile page would otherwise request a 404).
+  const invalidateCaches = (assetId: string, removed = false) => {
     queryClient.invalidateQueries({ queryKey: [QueryKeys.ASSETS] });
-    queryClient.invalidateQueries({ queryKey: [QueryKeys.ASSET_DATA, assetId] });
+    queryClient.invalidateQueries({
+      queryKey: [QueryKeys.ASSET_DATA, assetId],
+      refetchType: removed ? "none" : "active",
+    });
     queryClient.invalidateQueries({ queryKey: [QueryKeys.HOLDINGS] });
     queryClient.invalidateQueries({ queryKey: [QueryKeys.ACTIVITY_DATA] });
     queryClient.invalidateQueries({ queryKey: [QueryKeys.CURRENT_VALUATION] });
@@ -67,7 +79,7 @@ export const useAssetManagement = () => {
   const deleteAssetMutation = useMutation({
     mutationFn: (assetId: string) => deleteAsset(assetId),
     onSuccess: (_, assetId) => {
-      invalidateCaches(assetId);
+      invalidateCaches(assetId, true);
       queryClient.invalidateQueries({ queryKey: [QueryKeys.ASSET_LOGO_INDEX] });
       toast({
         title: "Security deleted",
@@ -94,5 +106,29 @@ export const useAssetManagement = () => {
     },
   });
 
-  return { createAssetMutation, updateAssetMutation, deleteAssetMutation };
+  const mergeAssetsMutation = useMutation({
+    mutationFn: ({ sourceId, targetId }: MergeAssetsArgs) => mergeAssets(sourceId, targetId),
+    onSuccess: (activitiesMigrated, { sourceId, targetId }) => {
+      invalidateCaches(sourceId, true);
+      invalidateCaches(targetId);
+      queryClient.invalidateQueries({ queryKey: ["activities", "byAsset"] });
+      queryClient.invalidateQueries({ queryKey: ["ticker-search"] });
+      queryClient.invalidateQueries({ queryKey: [QueryKeys.ASSET_LOGO_INDEX] });
+      toast({
+        title: t("asset:profile.merge_success"),
+        description: t("asset:profile.merge_success_description", { total: activitiesMigrated }),
+        variant: "success",
+      });
+    },
+    onError: (error) => {
+      logger.error(`Error merging assets: ${error}`);
+      toast({
+        title: t("asset:profile.merge_failed"),
+        description: error instanceof Error ? error.message : String(error),
+        variant: "destructive",
+      });
+    },
+  });
+
+  return { createAssetMutation, updateAssetMutation, deleteAssetMutation, mergeAssetsMutation };
 };

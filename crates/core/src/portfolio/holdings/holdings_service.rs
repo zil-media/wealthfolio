@@ -1917,6 +1917,15 @@ mod tests {
             unimplemented!("unused in holdings service tests")
         }
 
+        async fn merge_assets(
+            &self,
+            _source_asset_id: &str,
+            _target_asset_id: &str,
+            _activity_repository: &dyn crate::activities::ActivityRepositoryTrait,
+        ) -> Result<u32> {
+            unimplemented!()
+        }
+
         async fn ensure_assets(
             &self,
             _specs: Vec<AssetSpec>,

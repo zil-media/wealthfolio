@@ -146,6 +146,7 @@ export const COMMANDS: CommandMap = {
   get_assets: { method: "GET", path: "/assets" },
   create_asset: { method: "POST", path: "/assets" },
   delete_asset: { method: "DELETE", path: "/assets" },
+  merge_assets: { method: "POST", path: "/assets/merge" },
   get_asset_profile: { method: "GET", path: "/assets/profile" },
   update_asset_profile: { method: "PUT", path: "/assets/profile" },
   update_quote_mode: { method: "PUT", path: "/assets/pricing-mode" },
@@ -1004,6 +1005,11 @@ export const invoke = async <T>(command: string, payload?: Record<string, unknow
     case "delete_asset": {
       const { id } = payload as { id: string };
       url += `/${encodeURIComponent(id)}`;
+      break;
+    }
+    case "merge_assets": {
+      const { sourceId, targetId } = payload as { sourceId: string; targetId: string };
+      body = JSON.stringify({ sourceId, targetId });
       break;
     }
     case "calculate_deposits_for_contribution_limit": {

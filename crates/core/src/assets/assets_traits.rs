@@ -86,6 +86,19 @@ pub trait AssetServiceTrait: Send + Sync {
         activity_repository: &dyn crate::activities::ActivityRepositoryTrait,
     ) -> Result<u32>;
 
+    /// Merges `source_asset_id` into `target_asset_id` (e.g. a duplicate).
+    /// - Rejects merging an asset into itself or into/from a missing asset
+    /// - Reassigns all activities from source to target
+    /// - Deletes the source asset (its quotes, taxonomy assignments and logo go with it)
+    /// - Emits assets_merged and activities_changed (for recalculation)
+    /// Returns the number of activities migrated.
+    async fn merge_assets(
+        &self,
+        source_asset_id: &str,
+        target_asset_id: &str,
+        activity_repository: &dyn crate::activities::ActivityRepositoryTrait,
+    ) -> Result<u32>;
+
     /// Ensures multiple assets exist, creating any that are missing.
     /// Returns existing + created assets, plus any UNKNOWN→resolved merge candidates.
     ///
@@ -313,6 +326,15 @@ mod tests {
             &self,
             _resolved_asset_id: &str,
             _unknown_asset_id: &str,
+            _activity_repository: &dyn crate::activities::ActivityRepositoryTrait,
+        ) -> Result<u32> {
+            unimplemented!()
+        }
+
+        async fn merge_assets(
+            &self,
+            _source_asset_id: &str,
+            _target_asset_id: &str,
             _activity_repository: &dyn crate::activities::ActivityRepositoryTrait,
         ) -> Result<u32> {
             unimplemented!()

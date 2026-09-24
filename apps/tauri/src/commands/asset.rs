@@ -70,3 +70,16 @@ pub async fn delete_asset(id: String, state: State<'_, Arc<ServiceContext>>) -> 
         .await
         .map_err(|e| e.to_string())
 }
+
+#[tauri::command]
+pub async fn merge_assets(
+    source_id: String,
+    target_id: String,
+    state: State<'_, Arc<ServiceContext>>,
+) -> Result<u32, String> {
+    state
+        .activity_service()
+        .merge_assets(&source_id, &target_id)
+        .await
+        .map_err(|e| e.to_string())
+}

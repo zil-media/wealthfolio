@@ -55,6 +55,7 @@ import { useTranslation } from "react-i18next";
 import { useLocation, useNavigate, useParams } from "react-router-dom";
 import { toast } from "sonner";
 import { AlternativeAssetContent, useAlternativeAssetActions } from "./alternative-asset-content";
+import { DeleteAssetDialog, MergeAssetDialog } from "./asset-cleanup-dialogs";
 import { AssetSnapshotHistory, useHasManualSnapshots } from "./asset-account-holdings";
 import { resolveContractMultiplier } from "./asset-contract-multiplier";
 import AssetDetailCard from "./asset-detail-card";
@@ -1060,7 +1061,17 @@ export const AssetProfilePage = () => {
   const isLoading = isHoldingLoading || isQuotesLoading || isAssetProfileLoading;
   const [refreshConfirmOpen, setRefreshConfirmOpen] = useState(false);
   const [symbolCopied, setSymbolCopied] = useState(false);
+  const [deleteAssetOpen, setDeleteAssetOpen] = useState(false);
+  const [mergeAssetOpen, setMergeAssetOpen] = useState(false);
   const displayedSymbol = assetProfile?.displayCode ?? holding?.instrument?.symbol ?? assetId;
+  // The by-asset search is a keyword match, so keep only this asset's rows.
+  const ownActivityCount = assetActivities.filter(
+    (activity) => activity.assetId === assetId,
+  ).length;
+  const cleanupAssetRef = {
+    id: assetId,
+    label: assetProfile?.displayCode ?? assetProfile?.name ?? assetId,
+  };
 
   const handleUpdateQuotes = useCallback(() => {
     if (!profile?.id) return;
@@ -1406,6 +1417,20 @@ export const AssetProfilePage = () => {
                             label: t("asset:logo.change"),
                             onClick: () => setLogoDialogOpen(true),
                           },
+                          {
+                            icon: Icons.ArrowRightLeft,
+                            label: t("asset:profile.merge_into"),
+                            onClick: () => setMergeAssetOpen(true),
+                          },
+                          {
+                            icon: Icons.Trash,
+                            label: t("asset:profile.delete"),
+                            onClick: () => setDeleteAssetOpen(true),
+                            variant: "destructive",
+                            // Only an asset nothing references can be deleted;
+                            // merge it instead when it has activities.
+                            disabled: isActivitiesLoading || ownActivityCount > 0,
+                          },
                         ],
                       },
                     ] satisfies ActionPaletteGroup[])
@@ -1711,6 +1736,26 @@ export const AssetProfilePage = () => {
         instrumentType={holding?.instrument?.instrumentType ?? assetProfile?.instrumentType}
         name={assetProfile?.name ?? holding?.instrument?.name}
       />
+
+      {!isAltAsset && (
+        <>
+          <DeleteAssetDialog
+            open={deleteAssetOpen}
+            onOpenChange={setDeleteAssetOpen}
+            asset={cleanupAssetRef}
+            onDeleted={() => navigate("/settings/securities", { replace: true })}
+          />
+          <MergeAssetDialog
+            open={mergeAssetOpen}
+            onOpenChange={setMergeAssetOpen}
+            source={cleanupAssetRef}
+            activityCount={ownActivityCount}
+            onMerged={(targetId) =>
+              navigate(`/holdings/${encodeURIComponent(targetId)}`, { replace: true })
+            }
+          />
+        </>
+      )}
 
       {/* Alternative Asset Modals */}
       {isAltAsset && altHolding && altAssetActions.modals}

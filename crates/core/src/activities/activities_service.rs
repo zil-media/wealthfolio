@@ -4775,6 +4775,16 @@ impl ActivityServiceTrait for ActivityService {
         Ok(deleted)
     }
 
+    async fn merge_assets(&self, source_asset_id: &str, target_asset_id: &str) -> Result<u32> {
+        self.asset_service
+            .merge_assets(
+                source_asset_id,
+                target_asset_id,
+                self.activity_repository.as_ref(),
+            )
+            .await
+    }
+
     fn get_transfer_pair_for_activity(
         &self,
         activity_id: String,
