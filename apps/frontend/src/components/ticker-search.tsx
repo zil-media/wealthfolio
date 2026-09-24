@@ -52,6 +52,8 @@ interface SearchProps {
   onClear?: () => void;
   /** Hide the "Create custom (manual)" option in search results */
   hideCustomCreate?: boolean;
+  /** Only list assets that already exist in the database (implies hideCustomCreate) */
+  existingOnly?: boolean;
   /** Test ID for e2e testing */
   "data-testid"?: string;
 }
@@ -94,6 +96,14 @@ const SearchResults = memo(
     const hasResults = results && results.length > 0;
     const showNoResults = !isLoading && !hasResults && query.length > 1;
     const selectedKey = selectedResult ? getSearchResultKey(selectedResult) : null;
+    // Existing assets can share a symbol (e.g. a duplicate). Count them so
+    // those rows can show a short id to tell them apart.
+    const existingSymbolCounts = new Map<string, number>();
+    for (const result of results ?? []) {
+      if (!result.existingAssetId) continue;
+      const symbolKey = result.symbol.toUpperCase();
+      existingSymbolCounts.set(symbolKey, (existingSymbolCounts.get(symbolKey) ?? 0) + 1);
+    }
 
     return (
       <CommandList>
@@ -122,6 +132,11 @@ const SearchResults = memo(
             const displayName = ticker.longName || ticker.shortName || ticker.symbol;
             const itemKey = getSearchResultKey(ticker);
             const isSelected = selectedKey === itemKey;
+            const assetIdentity =
+              ticker.existingAssetId &&
+              (existingSymbolCounts.get(ticker.symbol.toUpperCase()) ?? 0) > 1
+                ? [ticker.quoteType, ticker.existingAssetId.slice(0, 8)].filter(Boolean).join(" · ")
+                : null;
             return (
               <CommandItem
                 key={itemKey}
@@ -132,6 +147,11 @@ const SearchResults = memo(
                 <div className="flex flex-col">
                   <span className="font-mono text-xs font-semibold uppercase">{ticker.symbol}</span>
                   <span className="text-muted-foreground line-clamp-1 text-xs">{displayName}</span>
+                  {assetIdentity && (
+                    <span className="text-muted-foreground font-mono text-[10px]">
+                      {assetIdentity}
+                    </span>
+                  )}
                 </div>
                 <div className="flex items-center gap-2">
                   <div className="flex flex-col items-end">
@@ -223,6 +243,7 @@ const TickerSearchInput = forwardRef<HTMLButtonElement, SearchProps>(
       quoteInfo,
       onClear,
       hideCustomCreate,
+      existingOnly,
       "data-testid": testId,
     },
     ref,
@@ -398,7 +419,9 @@ const TickerSearchInput = forwardRef<HTMLButtonElement, SearchProps>(
     });
 
     // Results are already sorted by backend (existing assets first, then by score)
-    const sortedTickers = data;
+    const sortedTickers = existingOnly
+      ? data?.filter((result) => result.isExisting && result.existingAssetId)
+      : data;
 
     const clearSelection = useCallback(() => {
       setSelected("");
@@ -583,7 +606,7 @@ const TickerSearchInput = forwardRef<HTMLButtonElement, SearchProps>(
                 selectedResult={selectedResult}
                 onSelect={handleSelectResult}
                 onCreateCustomAsset={handleCreateCustomAsset}
-                hideCustomCreate={hideCustomCreate}
+                hideCustomCreate={hideCustomCreate || existingOnly}
               />
             </Command>
           </PopoverContent>

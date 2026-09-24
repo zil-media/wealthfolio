@@ -12,6 +12,7 @@ export interface ActionPaletteItem {
   onClick: () => void;
   testId?: string;
   variant?: "default" | "destructive";
+  disabled?: boolean;
 }
 
 export interface ActionPaletteGroup {
@@ -114,6 +115,7 @@ export function ActionPalette({
                       <button
                         data-testid={item.testId}
                         onClick={() => handleItemClick(item)}
+                        disabled={item.disabled}
                         className={cn(
                           "flex w-full items-center gap-4 rounded-xl px-3 py-3",
                           "transition-colors duration-150",
@@ -121,6 +123,7 @@ export function ActionPalette({
                             ? "text-destructive hover:bg-destructive/10 active:bg-destructive/15"
                             : "text-foreground hover:bg-accent active:bg-accent/80",
                           "focus-visible:ring-ring focus:outline-none focus-visible:ring-2 focus-visible:ring-inset",
+                          "disabled:pointer-events-none disabled:opacity-50",
                         )}
                       >
                         <IconComponent
