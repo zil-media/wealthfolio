@@ -20,6 +20,8 @@ pub mod goals;
 pub mod health;
 pub mod holdings;
 pub mod income;
+pub mod manage_activity;
+pub mod manage_asset;
 pub mod net_worth;
 pub mod performance;
 pub mod portfolios;
@@ -102,6 +104,12 @@ pub use commit_asset_classification::{
     CommittedAssetClassificationAssignment,
 };
 
+// MCP-only edit/delete/merge tools for existing records.
+pub use manage_activity::{
+    ActivityPatch, DeleteActivity, DeleteActivityOutput, UpdateActivity, UpdateActivityOutput,
+};
+pub use manage_asset::{DeleteAsset, DeleteAssetOutput, MergeAssets, MergeAssetsOutput};
+
 // MCP-only CSV import tools (validate + dedup-safe import pipeline).
 pub use activity_import::{
     ActivityImportArgs, ActivityImportRow, CommitActivityImport, CommitActivityImportOutput,
@@ -157,6 +165,17 @@ pub fn commit_tools() -> Vec<Arc<dyn AgentTool>> {
         Arc::new(CommitActivityDraft),
         Arc::new(CommitActivityDrafts),
         Arc::new(CommitAssetClassificationDraft),
+    ]
+}
+
+/// The MCP-only tools that edit, delete, or merge existing activities and
+/// assets. Each requires `confirm: true`. Not exposed to the in-app assistant.
+pub fn manage_tools() -> Vec<Arc<dyn AgentTool>> {
+    vec![
+        Arc::new(UpdateActivity),
+        Arc::new(DeleteActivity),
+        Arc::new(DeleteAsset),
+        Arc::new(MergeAssets),
     ]
 }
 

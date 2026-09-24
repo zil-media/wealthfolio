@@ -35,13 +35,14 @@ impl AgentToolCatalog {
         Self::new(tools)
     }
 
-    /// The MCP catalog: read + draft/suggest + commit tools. Scope filtering at
+    /// The MCP catalog: read + draft/suggest + commit + manage tools. Scope filtering at
     /// the boundary (`execute`, `list_tools`) hides whatever a token can't reach.
     pub fn mcp_catalog() -> Self {
         let mut tools = crate::tools::v1_read_tools();
         tools.extend(crate::tools::draft_suggest_tools());
         tools.extend(crate::tools::commit_tools());
         tools.extend(crate::tools::import_tools());
+        tools.extend(crate::tools::manage_tools());
         Self::new(tools)
     }
 
@@ -209,6 +210,9 @@ mod tests {
         assert!(!names.contains(&"prepare_activity_import"));
         assert!(!names.contains(&"commit_activity_import"));
         assert!(!names.contains(&"get_import_mapping"));
+        for name in MANAGE_TOOLS {
+            assert!(!names.contains(&name), "{name} must stay MCP-only");
+        }
     }
 
     #[test]
@@ -221,6 +225,9 @@ mod tests {
         assert!(names.contains(&"get_import_mapping"));
         assert!(names.contains(&"prepare_activity_import"));
         assert!(names.contains(&"commit_activity_import"));
+        for name in MANAGE_TOOLS {
+            assert!(names.contains(&name), "{name} missing from MCP catalog");
+        }
         // Read-only token still sees exactly 16 read tools.
         assert_eq!(crate::tools::v1_read_tools().len(), 16);
     }
@@ -233,7 +240,10 @@ mod tests {
             "commit_activity_draft",
             "commit_activity_drafts",
             "commit_asset_classification_draft",
-        ] {
+        ]
+        .into_iter()
+        .chain(MANAGE_TOOLS)
+        {
             let err = catalog
                 .execute(Arc::new(PanicEnv), &granted, name, serde_json::json!({}))
                 .await
@@ -276,6 +286,78 @@ mod tests {
             matches!(err, AgentToolError::InvalidInput(_)),
             "oversized batch should be rejected with InvalidInput, got: {err}"
         );
+    }
+
+    const MANAGE_TOOLS: [&str; 4] = [
+        "update_activity",
+        "delete_activity",
+        "delete_asset",
+        "merge_assets",
+    ];
+
+    #[tokio::test]
+    async fn manage_tools_refuse_without_confirm_before_touching_env() {
+        // Write-scoped but unconfirmed (missing, false, or non-boolean) calls
+        // are rejected by the tool itself; PanicEnv proves no service is hit.
+        let catalog = AgentToolCatalog::mcp_catalog();
+        let granted = AgentScopeSet::from_strs(["activities:draft", "activities:write"]);
+        for name in MANAGE_TOOLS {
+            for confirm in [
+                None,
+                Some(serde_json::json!(false)),
+                Some(serde_json::json!("true")),
+            ] {
+                let mut args = serde_json::json!({
+                    "id": "x",
+                    "sourceId": "a",
+                    "targetId": "b",
+                    "patch": { "fee": 1.0 }
+                });
+                if let Some(confirm) = confirm {
+                    args["confirm"] = confirm;
+                }
+                let err = catalog
+                    .execute(Arc::new(PanicEnv), &granted, name, args)
+                    .await
+                    .unwrap_err();
+                assert!(
+                    matches!(err, AgentToolError::InvalidInput(_)),
+                    "{name} should refuse an unconfirmed call, got: {err}"
+                );
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn merge_assets_refuses_self_merge_before_touching_env() {
+        let catalog = AgentToolCatalog::mcp_catalog();
+        let granted = AgentScopeSet::from_strs(["activities:draft", "activities:write"]);
+        let err = catalog
+            .execute(
+                Arc::new(PanicEnv),
+                &granted,
+                "merge_assets",
+                serde_json::json!({ "sourceId": "a", "targetId": " a ", "confirm": true }),
+            )
+            .await
+            .unwrap_err();
+        assert!(matches!(err, AgentToolError::InvalidInput(_)));
+    }
+
+    #[tokio::test]
+    async fn update_activity_refuses_empty_patch_before_touching_env() {
+        let catalog = AgentToolCatalog::mcp_catalog();
+        let granted = AgentScopeSet::from_strs(["activities:draft", "activities:write"]);
+        let err = catalog
+            .execute(
+                Arc::new(PanicEnv),
+                &granted,
+                "update_activity",
+                serde_json::json!({ "id": "act-1", "patch": {}, "confirm": true }),
+            )
+            .await
+            .unwrap_err();
+        assert!(matches!(err, AgentToolError::InvalidInput(_)));
     }
 
     #[tokio::test]
