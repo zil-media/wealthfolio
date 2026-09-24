@@ -1,3 +1,5 @@
+import { formatZonedDateKey } from "@/features/spending/lib/timezone";
+import { parseLocalDate } from "@/lib/utils";
 import { calculatePerformanceSummary } from "@/adapters";
 import { BenchmarkCompareBar } from "@/components/benchmark-compare/benchmark-compare-bar";
 import {
@@ -15,20 +17,14 @@ import { HoldingType, isAlternativeAssetKind } from "@/lib/constants";
 import { performancePeriodPnl, performanceSummaryReturn } from "@/lib/performance";
 import { QueryKeys } from "@/lib/query-keys";
 import { useSettingsContext } from "@/lib/settings-provider";
-import { DateRange, TimePeriod } from "@/lib/types";
 import { PortfolioUpdateTrigger } from "@/pages/dashboard/portfolio-update-trigger";
 import { keepPreviousData, useQuery } from "@tanstack/react-query";
 import type { TimePeriod as UITimePeriod } from "@wealthfolio/ui";
-import {
-  GainAmount,
-  GainPercent,
-  getInitialIntervalData,
-  IntervalSelector,
-  usePersistentState,
-} from "@wealthfolio/ui";
+import { GainAmount, GainPercent, getInitialIntervalData, IntervalSelector } from "@wealthfolio/ui";
+import { usePersistentState } from "@/hooks/use-persistent-state";
 import { Skeleton } from "@wealthfolio/ui/components/ui/skeleton";
 import { format } from "date-fns";
-import { useMemo, useState } from "react";
+import { useMemo } from "react";
 import { useTranslation } from "react-i18next";
 import { AccountsSummary } from "./accounts-summary";
 import Balance from "./balance";
@@ -82,15 +78,17 @@ function getDashboardNetContributionMaxDomainSpanRatio(period: UITimePeriod): nu
 
 export function DashboardContent() {
   const { t } = useTranslation();
-  // Use the same persisted state as IntervalSelector for the interval code
-  const [intervalCode] = usePersistentState<UITimePeriod>(INTERVAL_STORAGE_KEY, DEFAULT_INTERVAL);
-
-  // Derive initial values from the persisted interval code
-  const [dateRange, setDateRange] = useState<DateRange | undefined>(
-    () => getInitialIntervalData(intervalCode).range,
+  const { settings } = useSettingsContext();
+  const todayISO = formatZonedDateKey(new Date(), settings?.timezone);
+  const [selectedInterval, setSelectedInterval] = usePersistentState<UITimePeriod>(
+    INTERVAL_STORAGE_KEY,
+    DEFAULT_INTERVAL,
   );
-  const [selectedInterval, setSelectedInterval] = useState<UITimePeriod>(() => intervalCode);
-  const [isAllTime, setIsAllTime] = useState<boolean>(() => intervalCode === "ALL");
+  const dateRange = useMemo(
+    () => getInitialIntervalData(selectedInterval, parseLocalDate(todayISO)).range,
+    [selectedInterval, todayISO],
+  );
+  const isAllTime = selectedInterval === "ALL";
 
   const { holdings: allHoldings, isLoading: isHoldingsLoading } = useHoldings({ type: "all" });
   const {
@@ -118,7 +116,6 @@ export function DashboardContent() {
   const { valuationHistory, isLoading: isValuationHistoryLoading } =
     useValuationHistory(valuationHistoryRange);
 
-  const { settings } = useSettingsContext();
   const baseCurrency = settings?.baseCurrency ?? "USD";
 
   const startDate =
@@ -185,17 +182,6 @@ export function DashboardContent() {
   );
 
   const isNegative = totalValue < 0;
-
-  // Callback for IntervalSelector
-  const handleIntervalSelect = (
-    code: TimePeriod,
-    _description: string,
-    range: DateRange | undefined,
-  ) => {
-    setSelectedInterval(code);
-    setDateRange(range);
-    setIsAllTime(code === "ALL");
-  };
 
   return (
     <div className="flex min-h-full flex-col">
@@ -299,11 +285,10 @@ export function DashboardContent() {
             <div className="flex w-full justify-center">
               <IntervalSelector
                 className="pointer-events-auto relative z-20 w-full max-w-screen-sm sm:max-w-screen-md md:max-w-2xl lg:max-w-3xl"
-                onIntervalSelect={handleIntervalSelect}
+                onIntervalSelect={setSelectedInterval}
                 onHaptic={triggerHaptic}
                 isLoading={isValuationHistoryLoading}
-                storageKey={INTERVAL_STORAGE_KEY}
-                defaultValue={DEFAULT_INTERVAL}
+                value={selectedInterval}
               />
             </div>
           )}

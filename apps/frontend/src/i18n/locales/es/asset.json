@@ -22,10 +22,21 @@
     "deleting": "Eliminando..."
   },
   "refreshDialog": {
-    "title": "Actualizar historial",
-    "description_named": "Esto eliminará y reemplazará todas las cotizaciones del proveedor con datos nuevos para {{name}}. Las cotizaciones manuales se conservarán. ¿Continuar?",
-    "description_generic": "Esto eliminará y reemplazará todas las cotizaciones del proveedor con datos nuevos. Las cotizaciones manuales se conservarán. ¿Continuar?",
+    "title": "Actualizar historial completo",
+    "description_named": "Se combinarán los nuevos precios de {{name}} con los existentes. Se conservarán el historial anterior y los precios manuales y del bróker. ¿Continuar?",
+    "description_generic": "Se combinarán los nuevos precios con los existentes. Se conservarán el historial anterior y los precios manuales y del bróker. ¿Continuar?",
     "refresh": "Actualizar"
+  },
+  "resetDialog": {
+    "globalDescription": "¿Reemplazar los precios de proveedores de todos los activos aptos, incluidos los pares de divisas? Cada historial se obtiene y valida antes de reemplazarlo. Puede ser más corto. Se conservan los precios manuales y del bróker. Los activos fallidos conservan su historial; los reemplazos exitosos no se revierten.",
+    "globalResult": "Reemplazados: {{succeeded}}. Fallidos: {{failed}}. Omitidos: {{skipped}}.",
+    "title": "Restablecer historial del proveedor",
+    "description": "¿Reemplazar todos los precios del proveedor de {{name}} por un historial recién obtenido? El nuevo historial puede ser más corto. Se conservarán los precios manuales y del bróker. Si la descarga o validación falla, se conservará el historial existente.",
+    "confirm": "Restablecer historial del proveedor",
+    "resetting": "Restableciendo…",
+    "success": "Historial del proveedor reemplazado",
+    "complete": "Se reemplazaron los precios. Se solicitó el recálculo de la cartera.",
+    "uncertain": "La respuesta se interrumpió; es posible que los precios ya se hayan reemplazado. Revise el historial y actualice la página antes de considerar otro restablecimiento."
   },
   "createSecurity": {
     "title": "Añadir valor",
@@ -177,7 +188,7 @@
     "record_transaction": "Registrar transacción",
     "valuation": "Valoración",
     "update_price": "Actualizar precio",
-    "refresh_history": "Actualizar historial",
+    "refresh_history": "Actualizar historial completo",
     "edit": "Editar",
     "update_value": "Actualizar valor",
     "edit_details": "Editar detalles",

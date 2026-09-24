@@ -22,10 +22,21 @@
     "deleting": "Excluindo..."
   },
   "refreshDialog": {
-    "title": "Atualizar histórico",
-    "description_named": "Isso excluirá e substituirá todas as cotações do provedor com dados novos para {{name}}. As cotações manuais serão mantidas. Continuar?",
-    "description_generic": "Isso excluirá e substituirá todas as cotações do provedor com dados novos. As cotações manuais serão mantidas. Continuar?",
+    "title": "Atualizar todo o histórico",
+    "description_named": "Os novos preços de {{name}} serão combinados com os existentes. O histórico anterior e os preços manuais e da corretora serão preservados. Continuar?",
+    "description_generic": "Os novos preços serão combinados com os existentes. O histórico anterior e os preços manuais e da corretora serão preservados. Continuar?",
     "refresh": "Atualizar"
+  },
+  "resetDialog": {
+    "globalDescription": "Substituir os preços dos fornecedores de todos os ativos elegíveis, incluindo pares de moedas? Cada histórico é obtido e validado antes da substituição e pode ser mais curto. Os preços manuais e da corretora são preservados. Ativos com falhas mantêm seu histórico; substituições bem-sucedidas não são revertidas.",
+    "globalResult": "Substituídos: {{succeeded}}. Falhas: {{failed}}. Ignorados: {{skipped}}.",
+    "title": "Redefinir histórico do provedor",
+    "description": "Substituir todos os preços do provedor de {{name}} por um histórico recém-obtido? O novo histórico pode ser mais curto. Os preços manuais e da corretora serão preservados. Se a busca ou validação falhar, o histórico existente será mantido.",
+    "confirm": "Redefinir histórico do provedor",
+    "resetting": "Redefinindo…",
+    "success": "Histórico do provedor substituído",
+    "complete": "Os preços foram substituídos. O recálculo da carteira foi solicitado.",
+    "uncertain": "A resposta foi interrompida; os preços podem já ter sido substituídos. Verifique o histórico e atualize a página antes de considerar outra redefinição."
   },
   "createSecurity": {
     "title": "Adicionar ativo",
@@ -177,7 +188,7 @@
     "record_transaction": "Registrar transação",
     "valuation": "Avaliação",
     "update_price": "Atualizar preço",
-    "refresh_history": "Atualizar histórico",
+    "refresh_history": "Atualizar todo o histórico",
     "edit": "Editar",
     "update_value": "Atualizar valor",
     "edit_details": "Editar detalhes",

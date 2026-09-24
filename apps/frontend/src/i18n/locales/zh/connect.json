@@ -1,4 +1,5 @@
 {
+  "opensInBrowser": "在浏览器中打开",
   "page": {
     "title": "同步与连接",
     "subtitle": "您的所有设备,尽在一处。",
@@ -37,6 +38,7 @@
     }
   },
   "flow": {
+    "aggregatorExample": "（例如 SnapTrade）",
     "yourDevice": "您的设备",
     "localDatabase": "本地数据库",
     "dataStaysHere": "数据保留在此",
@@ -220,6 +222,10 @@
     "lastUsed": "上次使用"
   },
   "subscription": {
+    "copySupportEmail": "复制支持邮箱地址",
+    "syncPausedTooltip": "同步已暂停 — 需要有效订阅",
+    "syncPausedTitle": "同步已暂停",
+    "syncPausedDescription": "同步需要有效订阅。您的本地数据和待同步的更改会保留。",
     "comingSoon": "敬请期待",
     "getStarted": "开始使用",
     "perMonthShort": "月",
@@ -280,5 +286,16 @@
   },
   "errors": {
     "unknown": "未知错误"
+  },
+  "session": {
+    "restoring": "正在恢复 Connect…",
+    "unavailable": "Connect 暂时无法使用",
+    "localAvailable": "本地投资组合仍可使用。请重试连接。"
+  },
+  "rebind": {
+    "title": "更改此个人资料的 Connect 连接？",
+    "description": "你正在连接其他账户或家庭。你的本地投资组合数据将被保留，但现有的券商关联和设备同步设置将被移除。新账户可以向此个人资料添加券商数据。你可以在准备好后重新设置设备同步。如果希望分别管理数据，请使用新的个人资料。",
+    "cancel": "取消",
+    "confirm": "更改连接"
   }
 }

@@ -97,6 +97,7 @@ pub struct ProviderConfig {
 /// - Coordinating with the market-data ProviderRegistry
 pub struct MarketDataClient {
     registry: ProviderRegistry,
+    provider_configuration: Vec<(String, i32)>,
 }
 
 impl MarketDataClient {
@@ -185,7 +186,20 @@ impl MarketDataClient {
         // Create the registry with custom priorities
         let registry = ProviderRegistry::with_priorities(providers, resolver, custom_priorities);
 
-        Ok(Self { registry })
+        let mut provider_configuration: Vec<_> = enabled_providers
+            .into_iter()
+            .map(|config| (config.id, config.priority))
+            .collect();
+        provider_configuration.sort();
+        Ok(Self {
+            registry,
+            provider_configuration,
+        })
+    }
+
+    /// Enabled provider settings used to construct this client, sorted by ID.
+    pub fn provider_configuration(&self) -> &[(String, i32)] {
+        &self.provider_configuration
     }
 
     fn is_e2e_mode() -> bool {
@@ -381,6 +395,32 @@ impl MarketDataClient {
         );
 
         Ok(core_quotes)
+    }
+
+    /// Fetch validated provider history for an explicit atomic replacement.
+    pub async fn fetch_history_for_reset(
+        &self,
+        asset: &Asset,
+        start: DateTime<Utc>,
+        end: DateTime<Utc>,
+    ) -> Result<Vec<Quote>> {
+        if asset.preferred_provider().is_some_and(|id| {
+            id.starts_with("CUSTOM:") || id.starts_with(DATA_SOURCE_CUSTOM_SCRAPER)
+        }) {
+            return Err(MarketDataClientError::InvalidData(
+                "Reset is unavailable for custom scrapers because historical fetching may fall back to a latest price".into(),
+            ).into());
+        }
+        let context = self.build_quote_context(asset)?;
+        let quotes = self
+            .registry
+            .fetch_quotes_for_reset(&context, start, end)
+            .await
+            .map_err(MarketDataClientError::from)?;
+        Ok(quotes
+            .into_iter()
+            .map(|quote| Self::convert_quote(quote, &asset.id))
+            .collect())
     }
 
     /// Fetch the latest quote for an asset.
@@ -1188,7 +1228,10 @@ mod tests {
 
     fn create_test_client() -> MarketDataClient {
         let registry = ProviderRegistry::new(Vec::new(), Arc::new(ResolverChain::new()));
-        MarketDataClient { registry }
+        MarketDataClient {
+            registry,
+            provider_configuration: Vec::new(),
+        }
     }
 
     #[test]

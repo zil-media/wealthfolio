@@ -3,8 +3,10 @@
 use std::sync::Arc;
 
 use async_trait::async_trait;
+use tauri::AppHandle;
 
 use crate::context::ServiceContext;
+use crate::database::DatabaseRuntime;
 use wealthfolio_core::events::DomainEvent;
 use wealthfolio_device_sync::engine::{
     CredentialStore, OutboxStore, ReplayEvent, ReplayStore, SyncIdentity, SyncTransport,
@@ -13,8 +15,11 @@ use wealthfolio_device_sync::engine::{
 use wealthfolio_device_sync::{
     ReconcileReadyStateResponse, SyncPullResponse, SyncPushRequest, SyncPushResponse, SyncState,
 };
+use wealthfolio_storage_sqlite::sync::SqliteSyncEngineDbPorts;
 
-fn transport_err_from_sync(e: wealthfolio_device_sync::DeviceSyncError) -> TransportError {
+pub(super) fn transport_err_from_sync(
+    e: wealthfolio_device_sync::DeviceSyncError,
+) -> TransportError {
     TransportError {
         message: e.to_string(),
         retry_class: e.retry_class(),
@@ -26,7 +31,7 @@ fn transport_err_from_sync(e: wealthfolio_device_sync::DeviceSyncError) -> Trans
     }
 }
 
-fn transport_err_permanent(message: String) -> TransportError {
+pub(super) fn transport_err_permanent(message: String) -> TransportError {
     TransportError {
         message,
         retry_class: wealthfolio_device_sync::ApiRetryClass::Permanent,
@@ -34,22 +39,44 @@ fn transport_err_permanent(message: String) -> TransportError {
         details: None,
     }
 }
-use wealthfolio_storage_sqlite::sync::SqliteSyncEngineDbPorts;
 
 use super::{
     create_client, decrypt_sync_payload, encrypt_sync_payload, get_sync_identity_from_store,
     persist_device_config_from_identity, sync_identity_can_run_background, SyncCycleResult,
 };
 
-struct TauriEnginePorts {
-    context: Arc<ServiceContext>,
+pub(super) struct TauriEnginePorts {
+    pub(super) context: Arc<ServiceContext>,
     db: SqliteSyncEngineDbPorts,
+    /// Present when these ports drive a restore operation.
+    pub(super) restore_host: Option<RestoreHost>,
+}
+
+/// What a restore needs beyond the engine: events, backups and Connect admission.
+pub(super) struct RestoreHost {
+    pub(super) handle: AppHandle,
+    pub(super) runtime: Arc<DatabaseRuntime>,
 }
 
 impl TauriEnginePorts {
     fn new(context: Arc<ServiceContext>) -> Self {
         let db = SqliteSyncEngineDbPorts::new(context.app_sync_repository());
-        Self { context, db }
+        Self {
+            context,
+            db,
+            restore_host: None,
+        }
+    }
+
+    pub(super) fn for_restore(
+        context: Arc<ServiceContext>,
+        handle: AppHandle,
+        runtime: Arc<DatabaseRuntime>,
+    ) -> Self {
+        Self {
+            restore_host: Some(RestoreHost { handle, runtime }),
+            ..Self::new(context)
+        }
     }
 
     fn to_parent_identity(identity: &SyncIdentity) -> super::SyncIdentity {
@@ -241,19 +268,27 @@ impl SyncTransport for TauriEnginePorts {
 
 #[async_trait]
 impl CredentialStore for TauriEnginePorts {
+    fn has_cloud_session(&self) -> Result<bool, String> {
+        self.context.connect_service().is_session_configured()
+    }
+
+    async fn is_sync_allowed(&self) -> Result<bool, String> {
+        self.context.connect_service().has_device_sync().await
+    }
+
     fn get_sync_identity(&self) -> Option<SyncIdentity> {
-        get_sync_identity_from_store().map(|identity| SyncIdentity {
+        get_sync_identity_from_store(&self.context).map(|identity| SyncIdentity {
             device_id: identity.device_id,
             root_key: identity.root_key,
             key_version: identity.key_version,
         })
     }
 
-    fn get_access_token(&self) -> Result<String, String> {
-        tokio::task::block_in_place(|| {
-            tokio::runtime::Handle::current()
-                .block_on(self.context.connect_service().get_valid_access_token())
-        })
+    async fn get_access_token(&self) -> Result<String, String> {
+        self.context
+            .connect_service()
+            .get_valid_access_token()
+            .await
     }
 
     async fn get_sync_state(&self) -> Result<SyncState, String> {
@@ -326,7 +361,15 @@ pub(super) async fn run_sync_cycle(
 }
 
 pub async fn ensure_background_engine_started(context: Arc<ServiceContext>) -> Result<(), String> {
-    let Some(identity) = get_sync_identity_from_store() else {
+    let _guard = context.sync_lifecycle.lock().await;
+    if !context.is_active() {
+        return Err("PROFILE_LOCKED".into());
+    }
+    let has_session = context.connect_service().is_session_configured()?;
+    if !has_session {
+        return Ok(());
+    }
+    let Some(identity) = get_sync_identity_from_store(&context) else {
         return Ok(());
     };
     if !sync_identity_can_run_background(&identity) {
@@ -334,7 +377,7 @@ pub async fn ensure_background_engine_started(context: Arc<ServiceContext>) -> R
     }
 
     let runtime = context.device_sync_runtime();
-    let ports = Arc::new(TauriEnginePorts::new(context));
+    let ports = Arc::new(TauriEnginePorts::new(context.clone()));
     runtime.ensure_background_started(ports).await;
     Ok(())
 }

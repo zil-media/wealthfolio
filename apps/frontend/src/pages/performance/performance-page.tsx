@@ -1,9 +1,13 @@
+import { formatZonedDateKey } from "@/features/spending/lib/timezone";
+import { useSettingsContext } from "@/lib/settings-provider";
 import { AccountScopeSelector } from "@/components/account-filter-selector";
 import { BenchmarkSymbolSelector } from "@/components/benchmark-symbol-selector";
 import {
   ANNUALIZED_RETURN_INFO as annualizedReturnInfo,
   MAX_DRAWDOWN_INFO as maxDrawdownInfo,
+  MetricInfoPopoverBody,
   MetricLabelWithInfo,
+  metricWarningItems,
   MONEY_WEIGHTED_RETURN_INFO,
   PRICE_RETURN_INFO,
   SIMPLE_RETURN_INFO,
@@ -27,7 +31,7 @@ import {
 } from "@/lib/performance";
 import { getPerformanceDateRangeForRequest } from "@/lib/performance-date-range";
 import { DateRange, PerformanceResult, TrackedItem } from "@/lib/types";
-import { cn } from "@/lib/utils";
+import { cn, parseLocalDate } from "@/lib/utils";
 import {
   AlertFeedback,
   Badge,
@@ -450,19 +454,52 @@ function StripMetric({
   value,
   tone = "gain",
   reason,
-  hasWarning = false,
+  infoText,
+  warningText,
+  boldTerms,
 }: {
   label: string;
   value: number | null;
   tone?: "gain" | "neutral";
   reason?: string;
-  hasWarning?: boolean;
+  infoText: string;
+  warningText?: string | string[];
+  boldTerms?: string[];
 }) {
+  const { t } = useTranslation();
+  const warningItems = metricWarningItems(warningText);
+
   return (
     <div className="flex min-w-0 flex-col items-start gap-2">
       <div className="flex max-w-full items-center gap-1">
         <span className={STRIP_LABEL_CLASS}>{label}</span>
-        {hasWarning && <Icons.AlertTriangle className="text-warning h-3 w-3 shrink-0" />}
+        {warningItems.length > 0 && (
+          <Popover>
+            <PopoverTrigger asChild>
+              <Button
+                variant="ghost"
+                size="icon"
+                className="text-warning hover:text-warning h-4 w-4 shrink-0 rounded-full p-0"
+              >
+                <Icons.AlertTriangle className="h-3 w-3" />
+                <span className="sr-only">
+                  {t("common:component.calculation_note_for", { label })}
+                </span>
+              </Button>
+            </PopoverTrigger>
+            <PopoverContent
+              className="w-[34rem] max-w-[calc(100vw-2rem)] p-0 text-sm"
+              side="bottom"
+              align="start"
+            >
+              <MetricInfoPopoverBody
+                infoText={infoText}
+                warningItems={warningItems}
+                boldTerms={boldTerms}
+              />
+            </PopoverContent>
+          </Popover>
+        )}
       </div>
       {value == null && reason ? (
         <span className="text-muted-foreground line-clamp-2 max-w-[12rem] text-xs leading-snug">
@@ -1013,21 +1050,24 @@ export default function PerformancePage() {
     "performance:selectedItemId",
     null,
   );
-  const [dateRange, setDateRange] = usePersistentState<DateRange | undefined>(
+  const { settings } = useSettingsContext();
+  const todayISO = formatZonedDateKey(new Date(), settings?.timezone);
+  const today = useMemo(() => parseLocalDate(todayISO), [todayISO]);
+  const [savedDateRange, setDateRange] = usePersistentState<DateRange | undefined | null>(
     "performance:dateRange",
-    {
-      from: subMonths(new Date(), 12),
-      to: new Date(),
-    },
+    null,
+  );
+  const dateRange = useMemo(
+    () => (savedDateRange === null ? { from: subMonths(today, 12), to: today } : savedDateRange),
+    [savedDateRange, today],
   );
 
   useEffect(() => {
     if (!dateRange?.from || !dateRange?.to) return;
-    const today = new Date();
     if (isSameDay(dateRange.from, subDays(today, 1)) && isSameDay(dateRange.to, today)) {
       setDateRange({ from: subDays(today, 7), to: today });
     }
-  }, [dateRange, setDateRange]);
+  }, [dateRange, setDateRange, today]);
   // Scope selectors include hidden accounts and mixed account types. Resolve
   // their names from the full inventory; the backend applies report eligibility.
   const {
@@ -1413,6 +1453,7 @@ export default function PerformancePage() {
       <div className="pointer-events-auto fixed right-2 top-4 z-20 hidden items-center gap-2 md:flex lg:right-4">
         <AccountScopeSelector value={accountScope} onChange={setAccountScope} />
         <DateRangeSelector
+          asOf={today}
           value={dateRange}
           onChange={setDateRange}
           hiddenRanges={PERFORMANCE_HIDDEN_DATE_RANGES}
@@ -1423,6 +1464,7 @@ export default function PerformancePage() {
         <div className="flex items-center justify-end gap-2 md:hidden">
           <AccountScopeSelector value={accountScope} onChange={setAccountScope} />
           <DateRangeSelector
+            asOf={today}
             value={dateRange}
             onChange={setDateRange}
             hiddenRanges={PERFORMANCE_HIDDEN_DATE_RANGES}
@@ -1735,24 +1777,29 @@ export default function PerformancePage() {
                                 label={stripReturnLabel(selectedItemData?.label, t)}
                                 value={selectedItemData?.selectedMetricValue ?? null}
                                 reason={selectedItemData?.selectedMetricReason}
-                                hasWarning={Boolean(
-                                  selectedItemData?.returnWarnings.length ||
-                                  selectedItemData?.selectedMetricReason,
-                                )}
+                                infoText={selectedItemData?.infoText ?? SIMPLE_RETURN_INFO}
+                                warningText={[
+                                  ...(selectedItemData?.returnWarnings ?? []),
+                                  ...(selectedItemData?.selectedMetricReason
+                                    ? [selectedItemData.selectedMetricReason]
+                                    : []),
+                                ]}
+                                boldTerms={selectedItemData?.warningTerms}
                               />
                               {selectedItemData?.showMoneyWeightedReturn && (
                                 <StripMetric
                                   label={selectedItemData.moneyWeightedReturnLabel}
                                   value={selectedItemData.moneyWeightedReturn}
                                   reason={selectedItemData.moneyWeightedReason}
-                                  hasWarning={Boolean(
-                                    selectedItemData.moneyWeightedWarnings.length,
-                                  )}
+                                  infoText={MONEY_WEIGHTED_RETURN_INFO}
+                                  warningText={selectedItemData.moneyWeightedWarnings}
+                                  boldTerms={selectedItemData.warningTerms}
                                 />
                               )}
                               <StripMetric
                                 label={t("performance:metric.annualized_short")}
                                 value={selectedItemData?.annualizedReturn ?? null}
+                                infoText={annualizedReturnInfo}
                               />
                             </div>
                           </StripSection>
@@ -1763,11 +1810,14 @@ export default function PerformancePage() {
                                 label={t("performance:metric.volatility")}
                                 value={selectedItemData?.volatility ?? null}
                                 tone="neutral"
-                                hasWarning={Boolean(selectedItemData?.volatilityWarnings.length)}
+                                infoText={volatilityInfo}
+                                warningText={selectedItemData?.volatilityWarnings}
+                                boldTerms={selectedItemData?.warningTerms}
                               />
                               <StripMetric
                                 label={t("performance:metric.max_drawdown_short")}
                                 value={selectedItemData?.maxDrawdown ?? null}
+                                infoText={maxDrawdownInfo}
                               />
                             </div>
                           </StripSection>

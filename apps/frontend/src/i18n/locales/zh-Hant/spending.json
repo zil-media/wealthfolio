@@ -36,6 +36,11 @@
     "transactionCount_other": "{{count}} 筆交易",
     "editCategoryTitle": "編輯類別",
     "deleteCategoryTitle": "刪除類別",
+    "excludeLabel": "排除於支出之外",
+    "excludeDescription": "不計入總額、圖表、洞察與預算",
+    "excludeDisabledParent": "因上層類別已排除而一併排除",
+    "excludedTooltip": "已排除於支出之外",
+    "excludedWithParent": "隨 {{name}} 一併排除",
     "categoryActions": "類別操作",
     "deleteTitle": "刪除類別",
     "deleteConfirm": "確定要刪除「{{name}}」嗎？",
@@ -219,7 +224,13 @@
     "viewingMonth": "正在查看 {{label}}，點選可變更",
     "pickMonth": "選取特定月份",
     "selectMonth": "選取月份",
-    "clearMonth": "清除月份選取"
+    "clearMonth": "清除月份選取",
+    "selectDates": "選擇日期",
+    "chooseCustomDates": "選擇自訂日期",
+    "chooseMonth": "選擇月份",
+    "startDate": "開始日期",
+    "endDate": "結束日期",
+    "invalidRange": "結束日期必須與開始日期相同或晚於開始日期"
   },
   "presets": {
     "loading": "正在載入預設……",
@@ -394,7 +405,8 @@
     "largest": "最大",
     "noSpending": "此時段內無支出。",
     "outlier": "異常值",
-    "weekOf": "{{date}} 所在週"
+    "weekOf": "{{date}} 所在週",
+    "customSubtitle": "所選期間的交易"
   },
   "split": {
     "title": "拆分交易",
@@ -542,7 +554,11 @@
     "brighter": "更亮",
     "moreSpend": "代表支出較多。",
     "less": "更少",
-    "more": "更多"
+    "more": "更多",
+    "customSubtitle": "所選期間 · 依星期與時段顯示支出強度。",
+    "customSubtitleShort": "所選期間",
+    "customNoActivity": "所選期間沒有現金活動。",
+    "customLegendIntro": "每一格代表所選期間內的一個星期與時段。"
   },
   "eventDetail": {
     "previousEvent": "上一個事件",
@@ -714,9 +730,12 @@
     "sortByLabel": "依 {{label}} 排序",
     "categoriesShown_one": "顯示 {{shown}} 個類別，共 {{total}} 個",
     "categoriesShown_other": "顯示 {{shown}} 個類別，共 {{total}} 個",
+    "excludedInSettings_one": "設定中已排除 {{count}} 個",
+    "excludedInSettings_other": "設定中已排除 {{count}} 個",
     "openTransactions": "開啟交易 →",
     "moreCount_other": "+{{count}} 筆",
-    "moreCount_one": "+{{count}} 筆"
+    "moreCount_one": "+{{count}} 筆",
+    "vsRange": "相較於 {{from}} – {{to}}"
   },
   "budgetChart": {
     "overBudget": "超出預算",
@@ -852,6 +871,8 @@
     "automateMatching": "自動比對經常消費的商家",
     "loadError": "無法載入支出資料。",
     "spentLabel": "已花費",
+    "excludedCategoriesHint_one": "已排除 {{count}} 個類別",
+    "excludedCategoriesHint_other": "已排除 {{count}} 個類別",
     "noSpendingInPeriod": "此週期內沒有支出",
     "whereItWent": "支出去向",
     "whereItWentView": "支出去向檢視",

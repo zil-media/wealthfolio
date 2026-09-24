@@ -36,6 +36,11 @@
     "transactionCount_other": "{{count}} Transaktionen",
     "editCategoryTitle": "Kategorie bearbeiten",
     "deleteCategoryTitle": "Kategorie löschen",
+    "excludeLabel": "Aus den Ausgaben ausschließen",
+    "excludeDescription": "Wird in Summen, Diagrammen, Einblicken und Budgets nicht berücksichtigt",
+    "excludeDisabledParent": "Ausgeschlossen, weil die übergeordnete Kategorie ausgeschlossen ist",
+    "excludedTooltip": "Aus den Ausgaben ausgeschlossen",
+    "excludedWithParent": "Zusammen mit {{name}} ausgeschlossen",
     "categoryActions": "Kategorieaktionen",
     "deleteTitle": "Kategorie löschen",
     "deleteConfirm": "Möchten Sie „{{name}}“ wirklich löschen?",
@@ -219,7 +224,13 @@
     "viewingMonth": "{{label}} wird angezeigt, zum Ändern klicken",
     "pickMonth": "Bestimmten Monat auswählen",
     "selectMonth": "Monat auswählen",
-    "clearMonth": "Monatsauswahl aufheben"
+    "clearMonth": "Monatsauswahl aufheben",
+    "chooseMonth": "Monat auswählen",
+    "selectDates": "Daten auswählen",
+    "startDate": "Startdatum",
+    "chooseCustomDates": "Benutzerdefinierte Daten auswählen",
+    "invalidRange": "Das Enddatum muss am oder nach dem Startdatum liegen",
+    "endDate": "Enddatum"
   },
   "presets": {
     "loading": "Vorlagen werden geladen…",
@@ -394,7 +405,8 @@
     "largest": "Größte",
     "noSpending": "Keine Ausgaben in diesem Zeitfenster.",
     "outlier": "Ausreißer",
-    "weekOf": "Woche vom {{date}}"
+    "weekOf": "Woche vom {{date}}",
+    "customSubtitle": "Transaktionen im ausgewählten Zeitraum"
   },
   "split": {
     "title": "Transaktion aufteilen",
@@ -542,7 +554,11 @@
     "brighter": "Heller",
     "moreSpend": "= mehr Ausgaben.",
     "less": "weniger",
-    "more": "mehr"
+    "more": "mehr",
+    "customSubtitleShort": "Ausgewählter Zeitraum",
+    "customNoActivity": "Keine Geldbewegungen im ausgewählten Zeitraum.",
+    "customLegendIntro": "Jede Zelle steht für eine Stunde eines Wochentags im ausgewählten Zeitraum.",
+    "customSubtitle": "Ausgewählter Zeitraum · Ausgabenintensität nach Wochentag und Stunde."
   },
   "eventDetail": {
     "previousEvent": "Vorheriges Ereignis",
@@ -714,9 +730,12 @@
     "sortByLabel": "Sortieren nach {{label}}",
     "categoriesShown_one": "{{shown}} von {{total}} Kategorie angezeigt",
     "categoriesShown_other": "{{shown}} von {{total}} Kategorien angezeigt",
+    "excludedInSettings_one": "{{count}} in den Einstellungen ausgeschlossen",
+    "excludedInSettings_other": "{{count}} in den Einstellungen ausgeschlossen",
     "openTransactions": "Transaktionen öffnen →",
     "moreCount_one": "+{{count}} weitere",
-    "moreCount_other": "+{{count}} weitere"
+    "moreCount_other": "+{{count}} weitere",
+    "vsRange": "gegenüber {{from}} – {{to}}"
   },
   "budgetChart": {
     "overBudget": "Über Budget",
@@ -852,6 +871,8 @@
     "automateMatching": "Zuordnung für wiederkehrende Händler automatisieren",
     "loadError": "Ausgabendaten konnten nicht geladen werden.",
     "spentLabel": "Ausgegeben",
+    "excludedCategoriesHint_one": "{{count}} Kategorie ausgeschlossen",
+    "excludedCategoriesHint_other": "{{count}} Kategorien ausgeschlossen",
     "noSpendingInPeriod": "Keine Ausgaben in diesem Zeitraum",
     "whereItWent": "Wohin es ging",
     "whereItWentView": "Ansicht „Wohin es ging“",

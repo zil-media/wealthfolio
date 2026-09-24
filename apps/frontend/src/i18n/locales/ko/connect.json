@@ -1,4 +1,5 @@
 {
+  "opensInBrowser": "브라우저에서 열립니다",
   "page": {
     "title": "동기화 및 연결",
     "subtitle": "모든 기기를 한 곳에서 관리하세요.",
@@ -37,6 +38,7 @@
     }
   },
   "flow": {
+    "aggregatorExample": "(예: SnapTrade)",
     "yourDevice": "내 기기",
     "localDatabase": "로컬 데이터베이스",
     "dataStaysHere": "데이터는 여기 저장됩니다",
@@ -220,6 +222,10 @@
     "lastUsed": "마지막 사용"
   },
   "subscription": {
+    "copySupportEmail": "지원 이메일 주소 복사",
+    "syncPausedTooltip": "동기화 일시 중지 — 활성 구독 필요",
+    "syncPausedTitle": "동기화가 일시 중지되었습니다",
+    "syncPausedDescription": "동기화하려면 활성 구독이 필요합니다. 로컬 데이터와 대기 중인 변경 사항은 유지됩니다.",
     "comingSoon": "곧 출시 예정",
     "getStarted": "시작하기",
     "perMonthShort": "월",
@@ -280,5 +286,16 @@
   },
   "errors": {
     "unknown": "알 수 없는 오류"
+  },
+  "session": {
+    "restoring": "Connect 복원 중…",
+    "unavailable": "Connect를 일시적으로 사용할 수 없습니다",
+    "localAvailable": "로컬 포트폴리오는 사용할 수 있습니다. 다시 연결해 보세요."
+  },
+  "rebind": {
+    "title": "이 프로필의 Connect 연결을 변경할까요?",
+    "description": "다른 계정 또는 가구에 연결하려고 합니다. 로컬 포트폴리오 데이터는 유지되지만 기존 증권사 연결과 기기 동기화 설정은 제거됩니다. 새 계정은 이 프로필에 증권사 데이터를 추가할 수 있습니다. 준비가 되면 기기 동기화를 다시 설정하세요. 데이터를 별도로 관리하려면 새 프로필을 사용하세요.",
+    "cancel": "취소",
+    "confirm": "연결 변경"
   }
 }

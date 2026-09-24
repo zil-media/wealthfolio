@@ -36,6 +36,11 @@
     "transactionCount_other": "取引{{count}}件",
     "editCategoryTitle": "カテゴリを編集",
     "deleteCategoryTitle": "カテゴリを削除",
+    "excludeLabel": "支出から除外",
+    "excludeDescription": "合計、グラフ、インサイト、予算に含めません",
+    "excludeDisabledParent": "親カテゴリが除外されているため除外されています",
+    "excludedTooltip": "支出から除外済み",
+    "excludedWithParent": "{{name}} と一緒に除外",
     "categoryActions": "カテゴリの操作",
     "deleteTitle": "カテゴリを削除",
     "deleteConfirm": "「{{name}}」を削除してもよろしいですか?",
@@ -217,7 +222,13 @@
     "viewingMonth": "{{label}}を表示中。クリックで変更",
     "pickMonth": "特定の月を選択",
     "selectMonth": "月を選択",
-    "clearMonth": "月の選択をクリア"
+    "clearMonth": "月の選択をクリア",
+    "chooseMonth": "月を選択",
+    "selectDates": "日付を選択",
+    "startDate": "開始日",
+    "chooseCustomDates": "任意の日付を選択",
+    "invalidRange": "終了日は開始日以降にしてください",
+    "endDate": "終了日"
   },
   "presets": {
     "loading": "プリセットを読み込み中…",
@@ -388,7 +399,8 @@
     "largest": "最大",
     "noSpending": "この枠に支出はありません。",
     "outlier": "外れ値",
-    "weekOf": "{{date}}の週"
+    "weekOf": "{{date}}の週",
+    "customSubtitle": "選択した期間の取引"
   },
   "split": {
     "title": "取引を分割",
@@ -536,7 +548,11 @@
     "brighter": "明るい",
     "moreSpend": "= 支出が多い。",
     "less": "少ない",
-    "more": "多い"
+    "more": "多い",
+    "customSubtitleShort": "選択した期間",
+    "customNoActivity": "選択した期間に現金の取引はありません。",
+    "customLegendIntro": "各セルは、選択した期間における曜日ごとの1時間を表します。",
+    "customSubtitle": "選択した期間 · 曜日と時間帯ごとの支出の集中度。"
   },
   "eventDetail": {
     "previousEvent": "前のイベント",
@@ -707,8 +723,11 @@
     "sortByLabel": "{{label}}で並び替え",
     "categoriesShown_one": "{{total}}カテゴリ中{{shown}}件を表示",
     "categoriesShown_other": "{{total}}カテゴリ中{{shown}}件を表示",
+    "excludedInSettings_one": "{{count}}件を設定で除外",
+    "excludedInSettings_other": "{{count}}件を設定で除外",
     "openTransactions": "取引一覧を開く →",
-    "moreCount_other": "他{{count}}件"
+    "moreCount_other": "他{{count}}件",
+    "vsRange": "{{from}} – {{to}} と比較"
   },
   "budgetChart": {
     "overBudget": "予算超過",
@@ -844,6 +863,8 @@
     "automateMatching": "繰り返し利用する店舗のマッチングを自動化",
     "loadError": "支出データを読み込めませんでした。",
     "spentLabel": "支出",
+    "excludedCategoriesHint_one": "{{count}}件のカテゴリを除外",
+    "excludedCategoriesHint_other": "{{count}}件のカテゴリを除外",
     "noSpendingInPeriod": "この期間に支出はありません",
     "whereItWent": "支出の内訳",
     "whereItWentView": "支出の内訳ビュー",

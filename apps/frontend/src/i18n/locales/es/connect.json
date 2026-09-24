@@ -1,4 +1,5 @@
 {
+  "opensInBrowser": "Se abre en el navegador",
   "page": {
     "title": "Sincronización y conexiones",
     "subtitle": "Tus dispositivos, todos en un solo lugar.",
@@ -37,6 +38,7 @@
     }
   },
   "flow": {
+    "aggregatorExample": "(p. ej., SnapTrade)",
     "yourDevice": "Tu dispositivo",
     "localDatabase": "Base de datos local",
     "dataStaysHere": "Los datos permanecen aquí",
@@ -239,6 +241,10 @@
     "lastUsed": "Usado por última vez"
   },
   "subscription": {
+    "copySupportEmail": "Copiar el correo de soporte",
+    "syncPausedTooltip": "Sincronización pausada — se requiere una suscripción activa",
+    "syncPausedTitle": "La sincronización está pausada",
+    "syncPausedDescription": "Se requiere una suscripción activa para sincronizar. Tus datos locales y los cambios pendientes se conservan.",
     "comingSoon": "Próximamente",
     "getStarted": "Empezar",
     "perMonthShort": "mes",
@@ -299,5 +305,16 @@
   },
   "errors": {
     "unknown": "Error desconocido"
+  },
+  "session": {
+    "restoring": "Restaurando Connect…",
+    "unavailable": "Connect no está disponible temporalmente",
+    "localAvailable": "Tu cartera local está disponible. Reintenta la conexión."
+  },
+  "rebind": {
+    "title": "¿Cambiar la conexión de Connect de este perfil?",
+    "description": "Vas a conectar otra cuenta u otro grupo familiar. Se conservarán los datos locales de tu cartera, pero se eliminarán sus vínculos con brókeres y la configuración de sincronización de dispositivos. La nueva cuenta podrá añadir datos de brókeres a este perfil. Vuelve a configurar la sincronización de dispositivos cuando quieras. Usa un perfil nuevo si prefieres mantener los datos separados.",
+    "cancel": "Cancelar",
+    "confirm": "Cambiar conexión"
   }
 }

@@ -149,7 +149,7 @@ fn parse_decimal_lossy(value: &str) -> Decimal {
 pub enum ValuationRecalcMode {
     /// Delete all valuations and recalculate from the first snapshot.
     Full,
-    /// Resume from the latest saved valuation date, only computing new dates forward.
+    /// Refresh the latest saved valuation date and compute new dates forward.
     IncrementalFromLast,
     /// Delete valuations from `date` forward, recalculating with the previous day as an anchor.
     SinceDate(NaiveDate),
@@ -2105,8 +2105,11 @@ impl ValuationService {
                             SnapshotSource::Calculated.as_str(),
                             today,
                         )?;
-                        calculation_start_date = Some(last_saved);
-                        incremental_anchor_date = Some(last_saved);
+                        // Keep the anchor before the latest saved day so refreshed
+                        // prices are persisted without zeroing that day's flows.
+                        let (start_date, anchor_date) = since_date_calculation_window(last_saved);
+                        calculation_start_date = Some(start_date);
+                        incremental_anchor_date = anchor_date;
                     }
                 }
             }

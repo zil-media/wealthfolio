@@ -60,8 +60,11 @@ jobs:
           push: ${{ github.event_name != 'pull_request' }}
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
+          # Registry cache, not type=gha: a tag-triggered run can only read
+          # GitHub Actions caches from its own tag or the default branch, so
+          # every release tag started cold and recompiled all Rust crates.
+          cache-from: type=registry,ref=ghcr.io/${{ github.repository_owner }}/wealthfolio:buildcache
+          cache-to: type=registry,ref=ghcr.io/${{ github.repository_owner }}/wealthfolio:buildcache,mode=max
           build-args: |
             CONNECT_AUTH_URL=${{ vars.CONNECT_AUTH_URL }}
             CONNECT_AUTH_PUBLISHABLE_KEY=${{ vars.CONNECT_AUTH_PUBLISHABLE_KEY }}

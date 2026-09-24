@@ -1,4 +1,5 @@
 use std::sync::Arc;
+use wealthfolio_core::events::DomainEvent;
 
 use crate::{
     api::shared::{enqueue_portfolio_job, PortfolioJobConfig},
@@ -6,7 +7,7 @@ use crate::{
     main_lib::AppState,
 };
 use axum::{
-    extract::{Path, Query, State},
+    extract::{Path, Query},
     http::StatusCode,
     routing::{delete, get, post, put},
     Json, Router,
@@ -19,15 +20,62 @@ use wealthfolio_core::quotes::{
 };
 use wealthfolio_market_data::{DividendEvent, ExchangeInfo};
 
+async fn reset_provider_history(
+    axum::Extension(state): axum::Extension<Arc<AppState>>,
+    Path(asset_id): Path<String>,
+) -> ApiResult<Json<wealthfolio_core::quotes::ResetProviderHistoryResult>> {
+    // Dropping the HTTP future must not drop committed work's recalculation event.
+    let result = tokio::spawn(async move {
+        let result = state.quote_service.reset_provider_history(&asset_id).await;
+        if result.is_ok() {
+            state
+                .domain_event_sink
+                .emit(DomainEvent::PriceHistoryChanged);
+        }
+        result
+    })
+    .await
+    .map_err(|_| {
+        crate::error::ApiError::Internal(
+            "Reset completion could not be confirmed. Reload quotes before retrying.".into(),
+        )
+    })??;
+    Ok(Json(result))
+}
+
+async fn reset_all_provider_history(
+    axum::Extension(state): axum::Extension<Arc<AppState>>,
+) -> ApiResult<Json<wealthfolio_core::quotes::ResetAllProviderHistoryResult>> {
+    let result = tokio::spawn(async move {
+        let result = state.quote_service.reset_all_provider_history().await;
+        if result
+            .as_ref()
+            .is_ok_and(|result| !result.results.is_empty())
+        {
+            state
+                .domain_event_sink
+                .emit(DomainEvent::PriceHistoryChanged);
+        }
+        result
+    })
+    .await
+    .map_err(|_| {
+        crate::error::ApiError::Internal(
+            "Reset completion could not be confirmed. Reload quotes before retrying.".into(),
+        )
+    })??;
+    Ok(Json(result))
+}
+
 async fn get_market_data_providers(
-    State(state): State<Arc<AppState>>,
+    axum::Extension(state): axum::Extension<Arc<AppState>>,
 ) -> ApiResult<Json<Vec<ProviderInfo>>> {
     let infos = state.quote_service.get_providers_info().await?;
     Ok(Json(infos))
 }
 
 async fn get_market_data_provider_settings(
-    State(state): State<Arc<AppState>>,
+    axum::Extension(state): axum::Extension<Arc<AppState>>,
 ) -> ApiResult<Json<Vec<ProviderInfo>>> {
     let infos = state.quote_service.get_providers_info().await?;
     Ok(Json(infos))
@@ -42,7 +90,7 @@ struct ProviderUpdateBody {
 }
 
 async fn update_market_data_provider_settings(
-    State(state): State<Arc<AppState>>,
+    axum::Extension(state): axum::Extension<Arc<AppState>>,
     Json(body): Json<ProviderUpdateBody>,
 ) -> ApiResult<StatusCode> {
     state
@@ -58,7 +106,7 @@ struct SearchQuery {
 }
 
 async fn search_symbol(
-    State(state): State<Arc<AppState>>,
+    axum::Extension(state): axum::Extension<Arc<AppState>>,
     Query(q): Query<SearchQuery>,
 ) -> ApiResult<Json<Vec<SymbolSearchResult>>> {
     let res = state.quote_service.search_symbol(&q.query).await?;
@@ -71,7 +119,7 @@ struct QuoteHistoryQuery {
 }
 
 async fn get_quote_history(
-    State(state): State<Arc<AppState>>,
+    axum::Extension(state): axum::Extension<Arc<AppState>>,
     Query(q): Query<QuoteHistoryQuery>,
 ) -> ApiResult<Json<Vec<Quote>>> {
     let res = state.quote_service.get_historical_quotes(&q.symbol)?;
@@ -91,7 +139,7 @@ struct DividendsQuery {
 }
 
 async fn fetch_dividends(
-    State(state): State<Arc<AppState>>,
+    axum::Extension(state): axum::Extension<Arc<AppState>>,
     Query(q): Query<DividendsQuery>,
 ) -> ApiResult<Json<Vec<DividendEvent>>> {
     let inst_type = q
@@ -115,7 +163,7 @@ async fn fetch_dividends(
 
 async fn update_quote(
     Path(symbol): Path<String>,
-    State(state): State<Arc<AppState>>,
+    axum::Extension(state): axum::Extension<Arc<AppState>>,
     Json(mut quote): Json<Quote>,
 ) -> ApiResult<StatusCode> {
     // Ensure asset_id matches path parameter
@@ -138,7 +186,7 @@ async fn update_quote(
 
 async fn delete_quote(
     Path(id): Path<String>,
-    State(state): State<Arc<AppState>>,
+    axum::Extension(state): axum::Extension<Arc<AppState>>,
 ) -> ApiResult<StatusCode> {
     state.quote_service.delete_quote(&id).await?;
     // Manual quote deletion - no market sync needed, but force full recalculation
@@ -156,8 +204,22 @@ async fn delete_quote(
     Ok(StatusCode::NO_CONTENT)
 }
 
-async fn sync_history_quotes(State(state): State<Arc<AppState>>) -> ApiResult<StatusCode> {
-    let result = state.quote_service.resync(None).await?;
+async fn sync_history_quotes(
+    axum::Extension(state): axum::Extension<Arc<AppState>>,
+) -> ApiResult<StatusCode> {
+    let result = tokio::spawn(async move {
+        let result = state.quote_service.resync(None).await;
+        if result.as_ref().is_ok_and(|result| result.synced > 0) {
+            state
+                .domain_event_sink
+                .emit(DomainEvent::PriceHistoryChanged);
+        }
+        result
+    })
+    .await
+    .map_err(|_| {
+        crate::error::ApiError::Internal("Refresh completion could not be confirmed.".into())
+    })??;
     if result.failed > 0 {
         tracing::warn!("resync reported {} failures", result.failed);
     }
@@ -172,7 +234,7 @@ struct CheckQuotesBody {
 }
 
 async fn check_quotes_import(
-    State(state): State<Arc<AppState>>,
+    axum::Extension(state): axum::Extension<Arc<AppState>>,
     Json(body): Json<CheckQuotesBody>,
 ) -> ApiResult<Json<Vec<QuoteImport>>> {
     let result = state
@@ -190,7 +252,7 @@ struct ImportQuotesBody {
 }
 
 async fn import_quotes_csv(
-    State(state): State<Arc<AppState>>,
+    axum::Extension(state): axum::Extension<Arc<AppState>>,
     Json(body): Json<ImportQuotesBody>,
 ) -> ApiResult<Json<Vec<QuoteImport>>> {
     let result = state
@@ -225,7 +287,7 @@ struct SyncBody {
 }
 
 async fn sync_market_data(
-    State(state): State<Arc<AppState>>,
+    axum::Extension(state): axum::Extension<Arc<AppState>>,
     Json(body): Json<SyncBody>,
 ) -> ApiResult<StatusCode> {
     // Determine the appropriate market sync mode based on refetch flags
@@ -265,7 +327,7 @@ struct LatestQuotesBody {
 }
 
 async fn get_latest_quotes(
-    State(state): State<Arc<AppState>>,
+    axum::Extension(state): axum::Extension<Arc<AppState>>,
     Json(body): Json<LatestQuotesBody>,
 ) -> ApiResult<Json<std::collections::HashMap<String, LatestQuoteSnapshot>>> {
     let quotes = state
@@ -275,7 +337,7 @@ async fn get_latest_quotes(
 }
 
 async fn get_intraday_quotes(
-    State(state): State<Arc<AppState>>,
+    axum::Extension(state): axum::Extension<Arc<AppState>>,
     Json(body): Json<LatestQuotesBody>,
 ) -> ApiResult<Json<Vec<IntradayQuote>>> {
     let quotes = state
@@ -296,7 +358,7 @@ struct ResolveSymbolQuoteQuery {
 }
 
 async fn resolve_symbol_quote(
-    State(state): State<Arc<AppState>>,
+    axum::Extension(state): axum::Extension<Arc<AppState>>,
     Query(q): Query<ResolveSymbolQuoteQuery>,
 ) -> ApiResult<Json<wealthfolio_core::quotes::ResolvedQuote>> {
     let inst_type = q
@@ -320,7 +382,7 @@ async fn get_exchanges() -> Json<Vec<ExchangeInfo>> {
     Json(wealthfolio_market_data::get_exchange_list())
 }
 
-pub fn router() -> Router<Arc<AppState>> {
+pub fn router<S: Clone + Send + Sync + 'static>() -> Router<S> {
     Router::new()
         .route("/exchanges", get(get_exchanges))
         .route("/providers", get(get_market_data_providers))
@@ -331,13 +393,29 @@ pub fn router() -> Router<Arc<AppState>> {
         .route("/market-data/search", get(search_symbol))
         .route("/market-data/resolve-currency", get(resolve_symbol_quote))
         .route("/market-data/quotes/history", get(get_quote_history))
+        .route(
+            "/market-data/quotes/{asset_id}/reset",
+            post(reset_provider_history),
+        )
         .route("/market-data/dividends", get(fetch_dividends))
         .route("/market-data/quotes/latest", post(get_latest_quotes))
         .route("/market-data/quotes/intraday", post(get_intraday_quotes))
+        .route(
+            "/market-data/quotes/reset",
+            post(reset_all_provider_history),
+        )
         .route("/market-data/quotes/{symbol}", put(update_quote))
         .route("/market-data/quotes/id/{id}", delete(delete_quote))
         .route("/market-data/quotes/check", post(check_quotes_import))
         .route("/market-data/quotes/import", post(import_quotes_csv))
         .route("/market-data/sync/history", post(sync_history_quotes))
         .route("/market-data/sync", post(sync_market_data))
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn reset_routes_register_alongside_existing_quote_routes() {
+        let _ = super::router::<()>();
+    }
 }

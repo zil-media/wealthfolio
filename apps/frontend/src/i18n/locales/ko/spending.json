@@ -36,6 +36,11 @@
     "transactionCount_other": "거래 {{count}}건",
     "editCategoryTitle": "카테고리 수정",
     "deleteCategoryTitle": "카테고리 삭제",
+    "excludeLabel": "지출에서 제외",
+    "excludeDescription": "합계, 차트, 인사이트, 예산에 포함되지 않습니다",
+    "excludeDisabledParent": "상위 카테고리가 제외되어 함께 제외됩니다",
+    "excludedTooltip": "지출에서 제외됨",
+    "excludedWithParent": "{{name}}와(과) 함께 제외됨",
     "categoryActions": "카테고리 작업",
     "deleteTitle": "카테고리 삭제",
     "deleteConfirm": "\"{{name}}\"을(를) 삭제하시겠습니까?",
@@ -217,7 +222,13 @@
     "viewingMonth": "{{label}} 보는 중, 클릭하여 변경",
     "pickMonth": "특정 월 선택",
     "selectMonth": "월 선택",
-    "clearMonth": "월 선택 해제"
+    "clearMonth": "월 선택 해제",
+    "chooseMonth": "월 선택",
+    "selectDates": "날짜 선택",
+    "startDate": "시작일",
+    "chooseCustomDates": "사용자 지정 날짜 선택",
+    "invalidRange": "종료일은 시작일과 같거나 이후여야 합니다",
+    "endDate": "종료일"
   },
   "presets": {
     "loading": "프리셋 불러오는 중…",
@@ -388,7 +399,8 @@
     "largest": "최대",
     "noSpending": "이 시간대에 지출이 없습니다.",
     "outlier": "이상값",
-    "weekOf": "{{date}} 주"
+    "weekOf": "{{date}} 주",
+    "customSubtitle": "선택한 기간의 거래"
   },
   "split": {
     "title": "거래 분할",
@@ -536,7 +548,11 @@
     "brighter": "밝을수록",
     "moreSpend": "= 지출이 많다는 뜻입니다.",
     "less": "적음",
-    "more": "많음"
+    "more": "많음",
+    "customSubtitleShort": "선택한 기간",
+    "customNoActivity": "선택한 기간에 현금 거래가 없습니다.",
+    "customLegendIntro": "각 셀은 선택한 기간의 요일별 한 시간대를 나타냅니다.",
+    "customSubtitle": "선택한 기간 · 요일 및 시간대별 지출 강도."
   },
   "eventDetail": {
     "previousEvent": "이전 이벤트",
@@ -707,8 +723,11 @@
     "sortByLabel": "{{label}} 기준 정렬",
     "categoriesShown_one": "카테고리 {{total}}개 중 {{shown}}개 표시",
     "categoriesShown_other": "카테고리 {{total}}개 중 {{shown}}개 표시",
+    "excludedInSettings_one": "설정에서 {{count}}개 제외",
+    "excludedInSettings_other": "설정에서 {{count}}개 제외",
     "openTransactions": "거래 내역 열기 →",
-    "moreCount_other": "+{{count}} 더보기"
+    "moreCount_other": "+{{count}} 더보기",
+    "vsRange": "{{from}} – {{to}} 대비"
   },
   "budgetChart": {
     "overBudget": "예산 초과",
@@ -844,6 +863,8 @@
     "automateMatching": "반복 가맹점 자동 매칭",
     "loadError": "지출 데이터를 불러올 수 없습니다.",
     "spentLabel": "지출",
+    "excludedCategoriesHint_one": "카테고리 {{count}}개 제외",
+    "excludedCategoriesHint_other": "카테고리 {{count}}개 제외",
     "noSpendingInPeriod": "이 기간에 지출이 없습니다",
     "whereItWent": "지출처",
     "whereItWentView": "지출처 보기",

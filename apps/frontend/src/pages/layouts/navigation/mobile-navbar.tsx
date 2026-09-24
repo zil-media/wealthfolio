@@ -1,11 +1,14 @@
 import { LiquidGlass } from "@/components/liquid-glass";
+import { ProfileAvatar } from "@/features/profiles/profile-avatar";
+import { useProfile } from "@/features/profiles/profile-context";
+import { MobileProfileMenu } from "@/features/profiles/mobile-profile-menu";
 import { SyncStatusIcon } from "@/features/wealthfolio-connect/components/sync-status-icon";
 import { useAggregatedSyncStatus } from "@/features/wealthfolio-connect/hooks";
 import { useHapticFeedback } from "@/hooks/use-haptic-feedback";
 import { cn } from "@/lib/utils";
 import { Icons, Sheet, SheetContent, SheetTitle } from "@wealthfolio/ui";
 import { motion } from "motion/react";
-import { useCallback, useId, useState, type ReactNode } from "react";
+import { useCallback, useId, useRef, useState, type ReactNode } from "react";
 import { useTranslation } from "react-i18next";
 import { Link, useLocation, useNavigate } from "react-router-dom";
 import { type NavLink, type NavigationProps, isPathActive } from "./app-navigation";
@@ -20,6 +23,17 @@ export function MobileNavBar({ navigation }: MobileNavBarProps) {
   const location = useLocation();
   const navigate = useNavigate();
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
+  const [profileView, setProfileView] = useState(false);
+  const profileContext = useProfile();
+  const backButtonRef = useRef<HTMLButtonElement>(null);
+  const profileButtonRef = useRef<HTMLButtonElement>(null);
+  const showProfileView = (show: boolean) => {
+    setProfileView(show);
+    requestAnimationFrame(() => {
+      (show ? backButtonRef : profileButtonRef).current?.focus();
+    });
+  };
+  const closeMenu = () => setMobileMenuOpen(false);
   const { triggerHaptic } = useHapticFeedback();
   const uniqueId = useId();
   const { status: syncStatus } = useAggregatedSyncStatus();
@@ -142,6 +156,7 @@ export function MobileNavBar({ navigation }: MobileNavBarProps) {
               <button
                 onClick={() => {
                   triggerHaptic();
+                  setProfileView(false);
                   setMobileMenuOpen(true);
                 }}
                 aria-label={t("common:layout.more_options")}
@@ -175,11 +190,28 @@ export function MobileNavBar({ navigation }: MobileNavBarProps) {
         <SheetContent
           side="bottom"
           showCloseButton={false}
-          className="bg-background inset-x-4 bottom-4 max-h-[min(82vh,720px)] overflow-hidden rounded-[2rem] border-0 px-0 pb-[calc(env(safe-area-inset-bottom,0px)+1.25rem)] pt-0 shadow-2xl"
+          className="bg-background inset-x-4 bottom-4 flex max-h-[min(82dvh,720px)] flex-col gap-0 overflow-hidden rounded-[2rem] border-0 px-0 pb-[calc(env(safe-area-inset-bottom,0px)+1.25rem)] pt-0 shadow-2xl"
         >
-          <div className="bg-muted mx-auto mt-4 h-1.5 w-14 rounded-full" />
-          <div className="flex items-center justify-between px-8 pb-4 pt-7">
-            <SheetTitle className="text-2xl font-semibold">{t("common:layout.more")}</SheetTitle>
+          <div className="bg-muted mx-auto mt-4 h-1.5 w-14 shrink-0 rounded-full" />
+          <div className="flex shrink-0 items-center justify-between px-8 pb-4 pt-7">
+            <div className="flex min-w-0 items-center gap-3">
+              {profileView && (
+                <button
+                  ref={backButtonRef}
+                  type="button"
+                  onClick={() => showProfileView(false)}
+                  className="hover:bg-muted flex size-11 shrink-0 items-center justify-center rounded-full"
+                  aria-label={t("common:back")}
+                >
+                  <Icons.ArrowLeft className="size-5" />
+                </button>
+              )}
+              <SheetTitle
+                className={cn("truncate font-semibold", profileView ? "text-lg" : "text-2xl")}
+              >
+                {profileView ? t("common:profiles.yourProfile") : t("common:layout.more")}
+              </SheetTitle>
+            </div>
             <button
               type="button"
               onClick={() => setMobileMenuOpen(false)}
@@ -190,44 +222,35 @@ export function MobileNavBar({ navigation }: MobileNavBarProps) {
             </button>
           </div>
 
-          <div className="scrollbar-hide max-h-[calc(min(82vh,720px)-7rem)] overflow-y-auto px-8">
-            <div className="divide-border/70 divide-y">
-              {standardMenuItems.map((item) => {
-                const isActive = isPathActive(location.pathname, item.href);
-
-                return (
-                  <Link
-                    key={item.href}
-                    to={item.href}
-                    onClick={() => {
-                      handleNavigation(item.href, isActive);
-                      setMobileMenuOpen(false);
-                    }}
-                    aria-current={isActive ? "page" : undefined}
-                    className={cn(
-                      "group flex h-16 items-center gap-4 transition-colors",
-                      isActive ? "text-primary" : "text-foreground",
-                    )}
-                  >
-                    <span className="flex size-7 shrink-0 items-center justify-center">
-                      {renderIcon(item.icon)}
-                    </span>
-                    <span className="min-w-0 flex-1 truncate text-lg font-semibold">
-                      {item.title}
-                    </span>
-                    <Icons.ChevronRight className="text-muted-foreground/50 size-5 shrink-0 transition-transform group-hover:translate-x-0.5" />
-                  </Link>
-                );
-              })}
-            </div>
-
-            {addonItems.length > 0 && (
-              <div className="pt-6">
-                <div className="text-muted-foreground pb-3 text-xs font-semibold uppercase tracking-[0.35em]">
-                  {t("common:addons")}
-                </div>
+          <div className="scrollbar-hide min-h-0 overflow-y-auto px-8">
+            {profileView ? (
+              <MobileProfileMenu onAction={closeMenu} />
+            ) : (
+              <>
+                {profileContext?.profile && (
+                  <div className="border-border/70 border-b pb-3">
+                    <button
+                      ref={profileButtonRef}
+                      type="button"
+                      onClick={() => showProfileView(true)}
+                      aria-label={t("common:profiles.menuLabel", {
+                        name: profileContext.profile.name,
+                      })}
+                      className="hover:bg-muted flex min-h-14 w-full items-center gap-4 rounded-lg text-left"
+                    >
+                      <ProfileAvatar
+                        id={profileContext.profile.avatarId}
+                        className="mx-0 size-8 shrink-0 rounded-full"
+                      />
+                      <span className="min-w-0 flex-1 truncate font-semibold">
+                        {profileContext.profile.name}
+                      </span>
+                      <Icons.ChevronRight className="text-muted-foreground size-5 shrink-0" />
+                    </button>
+                  </div>
+                )}
                 <div className="divide-border/70 divide-y">
-                  {addonItems.map((item) => {
+                  {standardMenuItems.map((item) => {
                     const isActive = isPathActive(location.pathname, item.href);
 
                     return (
@@ -255,7 +278,44 @@ export function MobileNavBar({ navigation }: MobileNavBarProps) {
                     );
                   })}
                 </div>
-              </div>
+
+                {addonItems.length > 0 && (
+                  <div className="pt-6">
+                    <div className="text-muted-foreground pb-3 text-xs font-semibold uppercase tracking-[0.35em]">
+                      {t("common:addons")}
+                    </div>
+                    <div className="divide-border/70 divide-y">
+                      {addonItems.map((item) => {
+                        const isActive = isPathActive(location.pathname, item.href);
+
+                        return (
+                          <Link
+                            key={item.href}
+                            to={item.href}
+                            onClick={() => {
+                              handleNavigation(item.href, isActive);
+                              setMobileMenuOpen(false);
+                            }}
+                            aria-current={isActive ? "page" : undefined}
+                            className={cn(
+                              "group flex h-16 items-center gap-4 transition-colors",
+                              isActive ? "text-primary" : "text-foreground",
+                            )}
+                          >
+                            <span className="flex size-7 shrink-0 items-center justify-center">
+                              {renderIcon(item.icon)}
+                            </span>
+                            <span className="min-w-0 flex-1 truncate text-lg font-semibold">
+                              {item.title}
+                            </span>
+                            <Icons.ChevronRight className="text-muted-foreground/50 size-5 shrink-0 transition-transform group-hover:translate-x-0.5" />
+                          </Link>
+                        );
+                      })}
+                    </div>
+                  </div>
+                )}
+              </>
             )}
           </div>
         </SheetContent>

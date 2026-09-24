@@ -1,3 +1,5 @@
+import { profilePreferenceKey } from "@/hooks/use-persistent-state";
+import { usesLegacyPreferences } from "@/features/profiles/session";
 import { formatOptionSubtitle, parseOccSymbol } from "@/lib/occ-symbol";
 import { safeDivide } from "@/lib/utils";
 import type { ColumnDef } from "@tanstack/react-table";
@@ -230,7 +232,8 @@ export const HoldingsTable = ({
         searchBy="symbol"
         filters={filters}
         showColumnToggle={true}
-        storageKey="holdings-table-v4"
+        storageKey={profilePreferenceKey("holdings-table-v4")}
+        fallbackStorageKey={usesLegacyPreferences() ? "holdings-table-v4" : undefined}
         defaultColumnVisibility={
           isClosedView
             ? {

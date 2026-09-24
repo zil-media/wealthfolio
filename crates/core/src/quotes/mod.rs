@@ -55,7 +55,9 @@ mod service_tests;
 
 // Re-export commonly used types for convenience
 pub use model::{
-    IntradayPricePoint, IntradayQuote, LatestQuotePair, Quote, ResolvedQuote, SymbolSearchResult,
+    IntradayPricePoint, IntradayQuote, LatestQuotePair, ProviderHistoryResetContext,
+    ProviderHistoryResetFailure, ProviderHistoryResetSkipped, Quote, ResetAllProviderHistoryResult,
+    ResetProviderHistoryResult, ResolvedQuote, SymbolSearchResult,
 };
 pub use store::{ProviderSettingsStore, QuoteStore};
 

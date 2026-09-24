@@ -49,15 +49,15 @@
     "sync_broker_accounts": "同步券商帳戶",
     "sync_devices": "同步裝置",
     "update_prices": "更新價格",
-    "rebuild_full_history": "重建完整歷史資料",
+    "rebuild_full_history": "重新整理全部歷史",
     "verify_data": "執行資料健檢"
   },
   "update": {
     "as_of": "截至：",
-    "update_quotes": "更新報價",
+    "update_quotes": "更新價格",
     "updating_quotes": "正在更新報價…",
-    "rebuild_history": "重建完整歷史資料",
-    "rebuilding_history": "正在重建歷史資料…"
+    "rebuild_history": "重新整理全部歷史",
+    "rebuilding_history": "重新整理全部歷史…"
   },
   "goals": {
     "no_goals_set": "尚未設定目標。",

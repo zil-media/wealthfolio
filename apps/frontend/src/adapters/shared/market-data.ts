@@ -266,3 +266,47 @@ export const importManualQuotes = async (quotes: QuoteImport[]): Promise<QuoteIm
     throw error;
   }
 };
+
+export interface ResetProviderHistoryResult {
+  assetId: string;
+  source: string;
+  fromDate: string;
+  toDate: string;
+  insertedCount: number;
+  deletedCount: number;
+}
+
+export const resetProviderHistory = (assetId: string): Promise<ResetProviderHistoryResult> =>
+  invokeHistoryReset<ResetProviderHistoryResult>("reset_provider_history", { assetId });
+
+export interface ResetAllProviderHistoryResult {
+  results: ResetProviderHistoryResult[];
+  failures: { assetId: string; error: string }[];
+  skipped: { assetId: string; reason: string }[];
+}
+
+export const resetAllProviderHistory = (): Promise<ResetAllProviderHistoryResult> =>
+  invokeHistoryReset<ResetAllProviderHistoryResult>("reset_all_provider_history");
+
+export interface ResetProviderHistoryError extends Error {
+  outcomeUnknown: boolean;
+}
+
+async function invokeHistoryReset<T>(
+  command: string,
+  payload?: Record<string, unknown>,
+): Promise<T> {
+  try {
+    return payload === undefined ? await invoke<T>(command) : await invoke<T>(command, payload);
+  } catch (error) {
+    // Only an explicit backend rejection confirms that no replacement committed.
+    // Transport errors (including timeouts or unreadable responses) remain unknown.
+    const classified = typeof error === "object" && error !== null;
+    const message = classified && "message" in error ? String(error.message) : String(error);
+    const outcomeUnknown =
+      classified && "outcomeUnknown" in error && typeof error.outcomeUnknown === "boolean"
+        ? error.outcomeUnknown
+        : true;
+    throw Object.assign(new Error(message), { outcomeUnknown });
+  }
+}

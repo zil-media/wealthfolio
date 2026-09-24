@@ -49,15 +49,15 @@
     "sync_broker_accounts": "Sincronizza conti broker",
     "sync_devices": "Sincronizza dispositivi",
     "update_prices": "Aggiorna prezzi",
-    "rebuild_full_history": "Ricostruisci cronologia completa",
+    "rebuild_full_history": "Aggiorna tutta la cronologia",
     "verify_data": "Verifica dati"
   },
   "update": {
     "as_of": "Alla data:",
-    "update_quotes": "Aggiorna quotazioni",
+    "update_quotes": "Aggiorna prezzi",
     "updating_quotes": "Aggiornamento quotazioni...",
-    "rebuild_history": "Ricostruisci cronologia completa",
-    "rebuilding_history": "Ricostruzione cronologia..."
+    "rebuild_history": "Aggiorna tutta la cronologia",
+    "rebuilding_history": "Aggiorna tutta la cronologia…"
   },
   "goals": {
     "no_goals_set": "Nessun obiettivo impostato.",

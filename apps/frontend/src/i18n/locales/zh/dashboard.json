@@ -49,15 +49,15 @@
     "sync_broker_accounts": "同步券商账户",
     "sync_devices": "同步设备",
     "update_prices": "更新价格",
-    "rebuild_full_history": "重建完整历史",
+    "rebuild_full_history": "刷新全部历史",
     "verify_data": "校验数据"
   },
   "update": {
     "as_of": "截至：",
-    "update_quotes": "更新报价",
+    "update_quotes": "更新价格",
     "updating_quotes": "正在更新报价……",
-    "rebuild_history": "重建完整历史",
-    "rebuilding_history": "正在重建历史……"
+    "rebuild_history": "刷新全部历史",
+    "rebuilding_history": "刷新全部历史…"
   },
   "goals": {
     "no_goals_set": "尚未设置目标。",

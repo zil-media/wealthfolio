@@ -552,7 +552,7 @@ impl AiProviderServiceTrait for AiProviderService {
         };
 
         // Build HTTP client and request
-        let client = reqwest::Client::new();
+        let client = wealthfolio_http::client();
         let mut request = client.get(&models_url);
 
         // Add authorization header based on provider

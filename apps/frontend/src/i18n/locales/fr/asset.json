@@ -22,10 +22,21 @@
     "deleting": "Suppression..."
   },
   "refreshDialog": {
-    "title": "Actualiser l'historique",
-    "description_named": "Cela supprimera et remplacera toutes les cotations du fournisseur par des données actualisées pour {{name}}. Les cotations manuelles seront conservées. Continuer ?",
-    "description_generic": "Cela supprimera et remplacera toutes les cotations du fournisseur par des données actualisées. Les cotations manuelles seront conservées. Continuer ?",
+    "title": "Actualiser tout l’historique",
+    "description_named": "Les nouvelles cotations de {{name}} seront fusionnées avec les prix existants. L’historique antérieur et les prix manuels ou du courtier seront conservés. Continuer ?",
+    "description_generic": "Les nouvelles cotations seront fusionnées avec les prix existants. L’historique antérieur et les prix manuels ou du courtier seront conservés. Continuer ?",
     "refresh": "Actualiser"
+  },
+  "resetDialog": {
+    "globalDescription": "Remplacer les cours des fournisseurs pour tous les actifs admissibles, y compris les paires de devises ? Chaque historique est récupéré et validé avant son remplacement. Il peut être plus court. Les cours manuels et du courtier sont conservés. Les actifs en échec conservent leur historique ; les remplacements réussis ne sont pas annulés.",
+    "globalResult": "Remplacés : {{succeeded}}. Échecs : {{failed}}. Ignorés : {{skipped}}.",
+    "title": "Réinitialiser l’historique du fournisseur",
+    "description": "Remplacer tous les prix du fournisseur pour {{name}} par un nouvel historique ? Celui-ci peut être plus court. Les prix manuels et du courtier seront conservés. L’historique existant est conservé si la récupération ou la validation échoue.",
+    "confirm": "Réinitialiser l’historique du fournisseur",
+    "resetting": "Réinitialisation…",
+    "success": "Historique du fournisseur remplacé",
+    "complete": "Les cours ont été remplacés. Le recalcul du portefeuille a été demandé.",
+    "uncertain": "La réponse a été interrompue ; les prix peuvent déjà avoir été remplacés. Vérifiez l’historique et actualisez la page avant d’envisager une nouvelle réinitialisation."
   },
   "createSecurity": {
     "title": "Ajouter un titre",
@@ -177,7 +188,7 @@
     "record_transaction": "Enregistrer une transaction",
     "valuation": "Évaluation",
     "update_price": "Mettre à jour le prix",
-    "refresh_history": "Actualiser l'historique",
+    "refresh_history": "Actualiser tout l’historique",
     "edit": "Modifier",
     "update_value": "Mettre à jour la valeur",
     "edit_details": "Modifier les détails",

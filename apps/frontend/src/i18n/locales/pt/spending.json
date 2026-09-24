@@ -37,6 +37,11 @@
     "transactionCount_many": "{{count}} transações",
     "editCategoryTitle": "Editar categoria",
     "deleteCategoryTitle": "Excluir categoria",
+    "excludeLabel": "Ignorar nos gastos",
+    "excludeDescription": "Oculta em totais, gráficos, análises e orçamentos",
+    "excludeDisabledParent": "Ignorada porque a categoria principal é ignorada",
+    "excludedTooltip": "Ignorada nos gastos",
+    "excludedWithParent": "Ignorada junto com {{name}}",
     "categoryActions": "Ações da categoria",
     "deleteTitle": "Excluir categoria",
     "deleteConfirm": "Tem certeza que deseja excluir \"{{name}}\"?",
@@ -226,7 +231,13 @@
     "viewingMonth": "Vendo {{label}}, clique para alterar",
     "pickMonth": "Escolher um mês específico",
     "selectMonth": "Selecionar mês",
-    "clearMonth": "Limpar seleção de mês"
+    "clearMonth": "Limpar seleção de mês",
+    "chooseMonth": "Escolha um mês",
+    "selectDates": "Selecionar datas",
+    "startDate": "Data de início",
+    "chooseCustomDates": "Escolher datas personalizadas",
+    "invalidRange": "A data de término deve ser igual ou posterior à data de início",
+    "endDate": "Data de término"
   },
   "presets": {
     "loading": "Carregando conjuntos predefinidos…",
@@ -413,7 +424,8 @@
     "largest": "Maior",
     "noSpending": "Não há gasto nesta faixa.",
     "outlier": "Atípico",
-    "weekOf": "Semana de {{date}}"
+    "weekOf": "Semana de {{date}}",
+    "customSubtitle": "Transações no período selecionado"
   },
   "split": {
     "title": "Dividir transação",
@@ -570,7 +582,11 @@
     "brighter": "Mais claro",
     "moreSpend": "= mais gasto.",
     "less": "menos",
-    "more": "mais"
+    "more": "mais",
+    "customSubtitleShort": "Período selecionado",
+    "customNoActivity": "Nenhuma movimentação de caixa no período selecionado.",
+    "customLegendIntro": "Cada célula representa uma hora de um dia da semana no período selecionado.",
+    "customSubtitle": "Período selecionado · intensidade dos gastos por dia da semana e hora."
   },
   "eventDetail": {
     "previousEvent": "Evento anterior",
@@ -754,10 +770,14 @@
     "categoriesShown_one": "{{shown}} de {{total}} categoria mostrada",
     "categoriesShown_other": "{{shown}} de {{total}} categorias mostradas",
     "categoriesShown_many": "{{shown}} de {{total}} categorias mostradas",
+    "excludedInSettings_one": "{{count}} ignorada nas configurações",
+    "excludedInSettings_other": "{{count}} ignoradas nas configurações",
+    "excludedInSettings_many": "{{count}} ignoradas nas configurações",
     "openTransactions": "Abrir transações →",
     "moreCount_one": "+{{count}} mais",
     "moreCount_other": "+{{count}} mais",
-    "moreCount_many": "+{{count}} mais"
+    "moreCount_many": "+{{count}} mais",
+    "vsRange": "em relação a {{from}} – {{to}}"
   },
   "budgetChart": {
     "overBudget": "Orçamento excedido",
@@ -901,6 +921,9 @@
     "automateMatching": "Automatize a correspondência para estabelecimentos recorrentes",
     "loadError": "Não foi possível carregar os dados de gastos.",
     "spentLabel": "Gasto",
+    "excludedCategoriesHint_one": "{{count}} categoria ignorada",
+    "excludedCategoriesHint_other": "{{count}} categorias ignoradas",
+    "excludedCategoriesHint_many": "{{count}} categorias ignoradas",
     "noSpendingInPeriod": "Não há gastos neste período",
     "whereItWent": "Para onde foi",
     "whereItWentView": "Visão de para onde foi",

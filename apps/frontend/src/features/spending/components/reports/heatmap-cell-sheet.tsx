@@ -1,3 +1,4 @@
+import type { SpendingDateRange } from "../../lib/date-range-params";
 import type { TFunction } from "i18next";
 import { useMemo } from "react";
 import { useTranslation } from "react-i18next";
@@ -22,7 +23,7 @@ import {
 } from "@wealthfolio/ui";
 
 import { createFormatter } from "@wealthfolio/ui/lib/formatting";
-import { isCashActivityOutflow } from "../../lib/constants";
+import { getVisibleSpendingAmount, isCashActivityOutflow } from "../../lib/constants";
 import { createZonedDayHourFormatter } from "../../lib/timezone";
 
 interface HeatmapCellSheetProps {
@@ -38,6 +39,7 @@ interface HeatmapCellSheetProps {
   endHour: number | null;
   timezone?: string | null;
   currency: string;
+  customRange?: SpendingDateRange;
 }
 
 /**
@@ -54,6 +56,7 @@ export function HeatmapCellSheet({
   endHour,
   timezone,
   currency,
+  customRange,
 }: HeatmapCellSheetProps) {
   const localizationSettings = useLocalizationSettings();
   const amountFormatting = useAmountFormatting();
@@ -80,9 +83,9 @@ export function HeatmapCellSheet({
     const outflowAmounts: number[] = [];
     for (const it of activities) {
       const account = accountById.get(it.accountId);
-      const amt = parseFloat(it.amount ?? "0");
-      if (!Number.isFinite(amt)) continue;
-      if (!isCashActivityOutflow(it.activityType, account?.accountType)) continue;
+      // Same figure the heatmap cell was built from, so the two agree.
+      const amt = getVisibleSpendingAmount(it, account?.accountType);
+      if (amt <= 0) continue;
       total += amt;
       if (amt > largest) largest = amt;
       outflowAmounts.push(amt);
@@ -104,8 +107,8 @@ export function HeatmapCellSheet({
 
   // Group by ISO week (Mon-start) so the dense list breaks into legible chunks.
   const grouped = useMemo(
-    () => groupByWeek(activities, timezone, t, dateFormatting),
-    [activities, timezone, t, dateFormatting],
+    () => groupByWeek(activities, accountById, timezone, t, dateFormatting),
+    [activities, accountById, timezone, t, dateFormatting],
   );
 
   const hourLabel = hour == null ? "" : formatHourRange(hour, endHour, dateFormatting);
@@ -118,10 +121,10 @@ export function HeatmapCellSheet({
     start.setDate(end.getDate() - 12 * 7);
     const params = new URLSearchParams();
     params.set("tab", "spending");
-    params.set("from", formatDateISO(start));
-    params.set("to", formatDateISO(end));
+    params.set("from", formatDateISO(customRange?.from ?? start));
+    params.set("to", formatDateISO(customRange?.to ?? end));
     return `/activities?${params.toString()}`;
-  }, []);
+  }, [customRange]);
 
   return (
     <Sheet open={open} onOpenChange={onOpenChange}>
@@ -162,7 +165,11 @@ export function HeatmapCellSheet({
                 {dayLabel ? `${dayLabel} · ${hourLabel}` : t("spending:heatmapSheet.activity")}
               </SheetTitle>
               <p className="text-muted-foreground mt-0.5 text-xs">
-                {t("spending:heatmapSheet.subtitle")}
+                {t(
+                  customRange
+                    ? "spending:heatmapSheet.customSubtitle"
+                    : "spending:heatmapSheet.subtitle",
+                )}
               </p>
             </div>
           </div>
@@ -338,6 +345,7 @@ interface WeekGroup {
 /** Bucket activities into Monday-anchored ISO weeks, newest first. */
 function groupByWeek(
   activities: Activity[],
+  accountById: Map<string, Account>,
   timezone: string | null | undefined,
   t: TFunction,
   formatting: Pick<FormattingApi, "formatCalendarDate">,
@@ -362,7 +370,16 @@ function groupByWeek(
   const groups: WeekGroup[] = [];
   for (const [key, entry] of byKey) {
     entry.items.sort((a, b) => b.activityDate.localeCompare(a.activityDate));
-    const total = entry.items.reduce((s, a) => s + (parseFloat(a.amount ?? "0") || 0), 0);
+    // Match the header's positive, included spending total; rows retain their full amounts.
+    const total = entry.items.reduce(
+      (sum, activity) =>
+        sum +
+        Math.max(
+          0,
+          getVisibleSpendingAmount(activity, accountById.get(activity.accountId)?.accountType),
+        ),
+      0,
+    );
     groups.push({
       key,
       label: entry.label,
