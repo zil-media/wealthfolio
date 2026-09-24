@@ -1,0 +1,59 @@
+---
+source: crates/ai/tests/tool_outputs_parity.rs
+expression: result
+---
+{
+  "ok": {
+    "accountScope": "all",
+    "currency": "USD",
+    "hasMore": true,
+    "holdings": [
+      {
+        "account": "Brokerage",
+        "costBasisBase": null,
+        "currency": "USD",
+        "dayChangePct": null,
+        "holdingType": "Security",
+        "incomeBase": null,
+        "marketValueBase": 300.0,
+        "name": null,
+        "quantity": 1.0,
+        "returnBasisBase": null,
+        "symbol": "AAA",
+        "totalGainBase": null,
+        "totalGainPct": null,
+        "totalReturnBase": null,
+        "totalReturnPct": null,
+        "unrealizedGainPct": null,
+        "weight": 0.0
+      },
+      {
+        "account": "Brokerage",
+        "costBasisBase": null,
+        "currency": "USD",
+        "dayChangePct": null,
+        "holdingType": "Security",
+        "incomeBase": null,
+        "marketValueBase": 200.0,
+        "name": null,
+        "quantity": 1.0,
+        "returnBasisBase": null,
+        "symbol": "BBB",
+        "totalGainBase": null,
+        "totalGainPct": null,
+        "totalReturnBase": null,
+        "totalReturnPct": null,
+        "unrealizedGainPct": null,
+        "weight": 0.0
+      }
+    ],
+    "originalCount": 3,
+    "page": 1,
+    "pageSize": 2,
+    "totalPages": 2,
+    "totalRowCount": 3,
+    "totalValue": 600.0,
+    "truncated": true,
+    "viewMode": "table"
+  }
+}

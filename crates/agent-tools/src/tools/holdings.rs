@@ -25,6 +25,14 @@ pub struct GetHoldingsArgs {
     /// - "both": Show treemap first, then table below
     #[serde(default = "default_view_mode")]
     pub view_mode: String,
+
+    /// Page number (1-based, default: 1).
+    #[serde(default)]
+    pub page: Option<i64>,
+
+    /// Number of holdings per page (default and max: 100).
+    #[serde(default)]
+    pub page_size: Option<i64>,
 }
 
 fn default_view_mode() -> String {
@@ -68,6 +76,14 @@ pub struct GetHoldingsOutput {
     pub account_scope: String,
     /// View mode requested: "table", "treemap", or "both"
     pub view_mode: String,
+    /// 1-based page number returned.
+    pub page: i64,
+    pub page_size: i64,
+    pub total_pages: i64,
+    /// Number of non-cash holdings across all pages.
+    pub total_row_count: usize,
+    /// True when later pages exist; request `page + 1` to continue.
+    pub has_more: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub truncated: Option<bool>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -137,7 +153,7 @@ impl AgentTool for GetHoldings {
     }
 
     fn description(&self) -> &'static str {
-        "Get portfolio holdings for an account or all accounts. Returns symbol, quantity, market value, cost basis, and gain/loss for each holding. Gain/loss amounts and percentages are expressed in the portfolio base currency and include FX effects. Omit accountId for aggregate holdings across all accounts. Use viewMode to control display: 'treemap' for visual composition chart with daily performance, 'table' for detailed list, or 'both' to show both views."
+        "Get portfolio holdings for an account or all accounts. Returns symbol, quantity, market value, cost basis, and gain/loss for each holding. Gain/loss amounts and percentages are expressed in the portfolio base currency and include FX effects. Omit accountId for aggregate holdings across all accounts. Results are paginated (default and max 100 per page); when hasMore is true, call again with page + 1 to fetch the rest. totalValue covers all pages. Use viewMode to control display: 'treemap' for visual composition chart with daily performance, 'table' for detailed list, or 'both' to show both views."
     }
 
     fn input_schema(&self) -> serde_json::Value {
@@ -153,6 +169,16 @@ impl AgentTool for GetHoldings {
                     "enum": ["table", "treemap", "both"],
                     "description": "Display mode: 'treemap' for composition chart with daily gains (best for 'how is my portfolio today?'), 'table' for detailed list, 'both' for treemap + table",
                     "default": "treemap"
+                },
+                "page": {
+                    "type": "integer",
+                    "description": "Page number, 1-based (default: 1)",
+                    "default": 1
+                },
+                "pageSize": {
+                    "type": "integer",
+                    "description": "Number of holdings per page (default: 100, max: 100)",
+                    "default": 100
                 }
             },
             "required": []
@@ -217,13 +243,16 @@ impl AgentTool for GetHoldings {
         let account_names: HashMap<String, String> =
             accounts.into_iter().map(|a| (a.id, a.name)).collect();
 
-        let original_count = holdings.len();
+        let page = args.page.unwrap_or(1).max(1);
+        let page_size = args
+            .page_size
+            .unwrap_or(MAX_HOLDINGS as i64)
+            .clamp(1, MAX_HOLDINGS as i64);
 
-        // Convert to DTOs, filtering out cash positions, and apply limit
-        let holdings_dto: Vec<HoldingDto> = holdings
+        // Convert to DTOs, filtering out cash positions
+        let all_holdings: Vec<HoldingDto> = holdings
             .into_iter()
             .filter(|h| h.holding_type != wealthfolio_core::holdings::HoldingType::Cash)
-            .take(MAX_HOLDINGS)
             .map(|h| {
                 let account = account_names
                     .get(&h.account_id)
@@ -233,9 +262,17 @@ impl AgentTool for GetHoldings {
             })
             .collect();
 
-        let returned_count = holdings_dto.len();
-        let total_value: f64 = holdings_dto.iter().map(|h| h.market_value_base).sum();
-        let truncated = original_count > returned_count;
+        let total_row_count = all_holdings.len();
+        let total_value: f64 = all_holdings.iter().map(|h| h.market_value_base).sum();
+        let total_pages = ((total_row_count as i64) + page_size - 1) / page_size;
+        let offset = ((page - 1) * page_size) as usize;
+        let holdings_dto: Vec<HoldingDto> = all_holdings
+            .into_iter()
+            .skip(offset)
+            .take(page_size as usize)
+            .collect();
+        let has_more = page < total_pages;
+        let truncated = holdings_dto.len() < total_row_count;
 
         let output = GetHoldingsOutput {
             holdings: holdings_dto,
@@ -243,9 +280,14 @@ impl AgentTool for GetHoldings {
             currency: base_currency,
             account_scope: account_id.unwrap_or("all").to_string(),
             view_mode: args.view_mode.clone(),
+            page,
+            page_size,
+            total_pages,
+            total_row_count,
+            has_more,
             truncated: if truncated { Some(true) } else { None },
             original_count: if truncated {
-                Some(original_count)
+                Some(total_row_count)
             } else {
                 None
             },

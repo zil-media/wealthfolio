@@ -25,6 +25,9 @@ expression: snapshot
         ],
         "type": "string"
       },
+      "assetId": {
+        "type": "string"
+      },
       "dateFrom": {
         "type": "string"
       },

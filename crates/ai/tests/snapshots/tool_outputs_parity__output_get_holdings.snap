@@ -6,7 +6,12 @@ expression: result
   "ok": {
     "accountScope": "all",
     "currency": "USD",
+    "hasMore": false,
     "holdings": [],
+    "page": 1,
+    "pageSize": 100,
+    "totalPages": 0,
+    "totalRowCount": 0,
     "totalValue": -0.0,
     "viewMode": "treemap"
   }

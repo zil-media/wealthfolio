@@ -1,0 +1,50 @@
+---
+source: crates/ai/tests/tool_outputs_parity.rs
+expression: result
+---
+{
+  "ok": {
+    "accountScope": "all",
+    "activities": [
+      {
+        "accountId": "acc-1",
+        "accountName": "Brokerage",
+        "activityType": "BUY",
+        "amount": 995.0,
+        "assetId": "bond-a",
+        "createdAt": "2024-03-01T10:00:00+00:00",
+        "currency": "EUR",
+        "date": "2024-03-01T00:00:00Z",
+        "fee": 0.0,
+        "fxRate": null,
+        "id": "act-1",
+        "quantity": 10.0,
+        "symbol": "XS123",
+        "unitPrice": 99.5
+      },
+      {
+        "accountId": "acc-1",
+        "accountName": "Brokerage",
+        "activityType": "BUY",
+        "amount": 995.0,
+        "assetId": "bond-b",
+        "createdAt": "2024-03-02T11:00:00+00:00",
+        "currency": "EUR",
+        "date": "2024-03-01T00:00:00Z",
+        "fee": 0.0,
+        "fxRate": null,
+        "id": "act-2",
+        "quantity": 10.0,
+        "symbol": "XS123",
+        "unitPrice": 99.5
+      }
+    ],
+    "count": 2,
+    "hasMore": true,
+    "page": 1,
+    "pageSize": 1,
+    "totalAmount": 1990.0,
+    "totalPages": 2,
+    "totalRowCount": 2
+  }
+}

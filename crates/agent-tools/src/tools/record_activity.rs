@@ -14,6 +14,7 @@ use wealthfolio_core::activities::{
     ACTIVITY_TYPE_TRANSFER_IN, ACTIVITY_TYPE_TRANSFER_OUT, ACTIVITY_TYPE_UNKNOWN,
     ACTIVITY_TYPE_WITHDRAWAL,
 };
+use wealthfolio_core::assets::{Asset, AssetKind};
 
 use crate::env::AgentEnvironment;
 use crate::scope::AgentScope;
@@ -116,13 +117,14 @@ pub struct ActivityDraft {
     /// Price source: "user", "historical", "none".
     pub price_source: String,
 
-    /// Pricing mode: "MARKET" or "MANUAL".
+    /// Pricing mode: "MARKET" or "MANUAL". Inherited from an existing asset.
     pub pricing_mode: String,
 
     /// True if asset not found and needs custom creation.
     pub is_custom_asset: bool,
 
-    /// Asset kind for custom assets: "SECURITY", "CRYPTO", "OTHER".
+    /// Asset kind for custom assets: "SECURITY", "CRYPTO", "OTHER". For an
+    /// existing asset, its instrument type (e.g. "BOND") or alternative kind.
     pub asset_kind: Option<String>,
 }
 
@@ -395,7 +397,7 @@ impl RecordActivity {
             .unwrap_or_else(|| env.base_currency());
 
         // 4. Handle symbol/asset resolution using quote_service
-        let (resolved_asset, asset_id, asset_name, is_custom_asset) =
+        let (resolved_asset, asset_id, asset_name, is_custom_asset, existing_asset) =
             if let Some(symbol) = &args.symbol {
                 // Search for the symbol using quote_service
                 let search_results = env
@@ -405,8 +407,13 @@ impl RecordActivity {
                     .unwrap_or_default();
 
                 if let Some(top_result) = search_results.first() {
+                    // An existing asset's stored pricing/kind are authoritative.
+                    let existing_asset = top_result
+                        .existing_asset_id
+                        .as_deref()
+                        .and_then(|id| env.asset_service().get_asset_by_id(id).ok());
                     // Found a match - use the top result
-                    let asset = ResolvedAsset {
+                    let mut asset = ResolvedAsset {
                         asset_id: top_result.existing_asset_id.clone().unwrap_or_else(|| {
                             // Construct asset ID from symbol and exchange
                             format!(
@@ -426,11 +433,15 @@ impl RecordActivity {
                         instrument_type: (!top_result.quote_type.trim().is_empty())
                             .then(|| top_result.quote_type.clone()),
                     };
+                    if let Some(existing) = &existing_asset {
+                        asset.currency = existing.quote_ccy.clone();
+                    }
                     (
                         Some(asset.clone()),
                         Some(asset.asset_id.clone()),
                         Some(asset.name.clone()),
                         false,
+                        existing_asset,
                     )
                 } else {
                     // No match found - treat as custom asset
@@ -439,10 +450,11 @@ impl RecordActivity {
                         None,
                         Some(symbol.clone()),
                         true, // Mark as custom asset so user can create it
+                        None,
                     )
                 }
             } else {
-                (None, None, None, false)
+                (None, None, None, false, None)
             };
 
         // 5. Determine price source
@@ -469,6 +481,11 @@ impl RecordActivity {
             .map(|a| a.currency.clone())
             .unwrap_or(currency);
 
+        let (pricing_mode, asset_kind) = existing_asset
+            .as_ref()
+            .map(existing_asset_pricing_and_kind)
+            .unwrap_or_else(|| ("MARKET".to_string(), None));
+
         let draft = ActivityDraft {
             activity_type: activity_type.clone(),
             activity_date: args.activity_date,
@@ -486,9 +503,9 @@ impl RecordActivity {
             subtype: args.subtype,
             notes: args.notes,
             price_source: price_source.to_string(),
-            pricing_mode: "MARKET".to_string(),
+            pricing_mode,
             is_custom_asset,
-            asset_kind: None,
+            asset_kind,
         };
 
         // 8. Validate the draft
@@ -505,6 +522,19 @@ impl RecordActivity {
             available_subtypes,
         })
     }
+}
+
+/// Pricing mode and asset kind a draft inherits from an existing asset, so a
+/// commit never re-hints a MANUAL asset as MARKET. Kind is the instrument
+/// type (e.g. "BOND") for market instruments, the asset kind (e.g.
+/// "PROPERTY") for alternatives, and `None` when neither is more specific.
+fn existing_asset_pricing_and_kind(asset: &Asset) -> (String, Option<String>) {
+    let asset_kind = match (&asset.instrument_type, &asset.kind) {
+        (Some(instrument_type), _) => Some(instrument_type.as_db_str().to_string()),
+        (None, AssetKind::Investment) => None,
+        (None, kind) => Some(kind.as_db_str().to_string()),
+    };
+    (asset.quote_mode.as_db_str().to_string(), asset_kind)
 }
 
 /// Resolve account by name or ID with fuzzy matching.
@@ -768,6 +798,45 @@ mod tests {
         };
         let validation = validate_draft(&draft);
         assert!(validation.is_valid, "{:?}", validation);
+    }
+
+    #[test]
+    fn existing_manual_bond_draft_inherits_pricing_and_kind() {
+        use wealthfolio_core::assets::{InstrumentType, QuoteMode};
+        let bond = Asset {
+            id: "bond-1".to_string(),
+            kind: AssetKind::Investment,
+            quote_mode: QuoteMode::Manual,
+            quote_ccy: "EUR".to_string(),
+            instrument_type: Some(InstrumentType::Bond),
+            ..Default::default()
+        };
+        assert_eq!(
+            existing_asset_pricing_and_kind(&bond),
+            ("MANUAL".to_string(), Some("BOND".to_string()))
+        );
+
+        let property = Asset {
+            kind: AssetKind::Property,
+            quote_mode: QuoteMode::Manual,
+            instrument_type: None,
+            ..Default::default()
+        };
+        assert_eq!(
+            existing_asset_pricing_and_kind(&property),
+            ("MANUAL".to_string(), Some("PROPERTY".to_string()))
+        );
+
+        let untyped = Asset {
+            kind: AssetKind::Investment,
+            quote_mode: QuoteMode::Market,
+            instrument_type: None,
+            ..Default::default()
+        };
+        assert_eq!(
+            existing_asset_pricing_and_kind(&untyped),
+            ("MARKET".to_string(), None)
+        );
     }
 
     #[test]

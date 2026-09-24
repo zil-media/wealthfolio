@@ -19,6 +19,8 @@ pub struct SearchActivitiesArgs {
     pub activity_type: Option<String>,
     /// Symbol/asset keyword filter.
     pub symbol: Option<String>,
+    /// Exact asset ID filter (use to separate assets sharing a symbol).
+    pub asset_id: Option<String>,
     /// Start date filter in YYYY-MM-DD format (optional).
     pub date_from: Option<String>,
     /// End date filter in YYYY-MM-DD format (optional).
@@ -37,6 +39,8 @@ pub struct ActivityDto {
     pub date: String,
     pub activity_type: String,
     pub symbol: Option<String>,
+    /// Asset ID; distinguishes assets that share a symbol.
+    pub asset_id: Option<String>,
     pub quantity: Option<f64>,
     pub unit_price: Option<f64>,
     pub amount: Option<f64>,
@@ -45,6 +49,8 @@ pub struct ActivityDto {
     pub currency: String,
     pub account_id: String,
     pub account_name: Option<String>,
+    /// When the activity was recorded (RFC 3339).
+    pub created_at: String,
 }
 
 /// Output envelope for activities tool.
@@ -57,6 +63,8 @@ pub struct SearchActivitiesOutput {
     pub page: i64,
     pub page_size: i64,
     pub total_pages: i64,
+    /// True when later pages exist; request `page + 1` to continue.
+    pub has_more: bool,
     pub account_scope: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub total_amount: Option<f64>,
@@ -72,7 +80,7 @@ impl AgentTool for SearchActivities {
     }
 
     fn description(&self) -> &'static str {
-        "Search and get investment activities (transactions) such as buys, sells, dividends, deposits, and withdrawals. Supports filtering, date ranges, and pagination. Returns paginated results with totalPages so you can request more pages if needed."
+        "Search and get investment activities (transactions) such as buys, sells, dividends, deposits, and withdrawals. Supports filtering, date ranges, and pagination. Returns paginated results with totalPages and hasMore so you can request more pages if needed. Each row carries its assetId; filter by assetId to separate assets that share a symbol."
     }
 
     fn input_schema(&self) -> serde_json::Value {
@@ -91,6 +99,10 @@ impl AgentTool for SearchActivities {
                 "symbol": {
                     "type": "string",
                     "description": "Filter by symbol or asset keyword"
+                },
+                "assetId": {
+                    "type": "string",
+                    "description": "Filter by exact asset ID (from a previous result's assetId). Do not combine with symbol."
                 },
                 "dateFrom": {
                     "type": "string",
@@ -146,6 +158,15 @@ impl AgentTool for SearchActivities {
             .filter(|s| !s.is_empty())
             .map(|t| vec![t]);
         let symbol_keyword = args.symbol.filter(|s| !s.is_empty());
+        let asset_id = args.asset_id.filter(|s| !s.is_empty());
+        if symbol_keyword.is_some() && asset_id.is_some() {
+            return Err(AgentToolError::InvalidInput(
+                "Provide either symbol or assetId, not both".to_string(),
+            ));
+        }
+        // Asset IDs are UUIDs, so the backend's asset keyword match (which
+        // includes assets.id) selects exactly that asset.
+        let asset_keyword = asset_id.or(symbol_keyword);
 
         // Resolve account filter: if the value isn't a known account ID, try matching by name
         let account_ids = if let Some(ref raw) = account_id {
@@ -209,7 +230,7 @@ impl AgentTool for SearchActivities {
                 page_size,
                 account_ids.clone(),
                 activity_types,
-                symbol_keyword,
+                asset_keyword,
                 Some(sort),
                 None, // needs_review_filter
                 date_from,
@@ -242,6 +263,7 @@ impl AgentTool for SearchActivities {
                     } else {
                         Some(a.asset_symbol)
                     },
+                    asset_id: (!a.asset_id.is_empty()).then_some(a.asset_id),
                     quantity,
                     unit_price,
                     amount,
@@ -250,6 +272,7 @@ impl AgentTool for SearchActivities {
                     currency: a.currency,
                     account_id: a.account_id.clone(),
                     account_name: Some(a.account_name),
+                    created_at: a.created_at,
                 }
             })
             .collect();
@@ -268,6 +291,7 @@ impl AgentTool for SearchActivities {
             page,
             page_size,
             total_pages,
+            has_more: page < total_pages,
             account_scope,
             total_amount: if total_amount > 0.0 {
                 Some(total_amount)
