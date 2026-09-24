@@ -1,6 +1,13 @@
 import { calculatePerformanceSummary } from "@/adapters";
-import { HistoryChart } from "@/components/history-chart";
+import { BenchmarkCompareBar } from "@/components/benchmark-compare/benchmark-compare-bar";
+import {
+  ChartModeToggle,
+  type ValuationChartMode,
+} from "@/components/benchmark-compare/chart-mode-toggle";
+import { ContributionNeutralChart } from "@/components/benchmark-compare/contribution-neutral-chart";
+import { HistoryChart, type HistoryChartData } from "@/components/history-chart";
 import { useHapticFeedback } from "@/hooks";
+import { useBenchmarkComparison, useBenchmarkSelection } from "@/hooks/use-benchmark-comparison";
 import { useCurrentValuation } from "@/hooks/use-current-account-valuations";
 import { useHoldings } from "@/hooks/use-holdings";
 import { useValuationHistory } from "@/hooks/use-valuation-history";
@@ -30,6 +37,8 @@ import TopHoldings from "./top-holdings";
 
 const DEFAULT_INTERVAL: UITimePeriod = "3M";
 const INTERVAL_STORAGE_KEY = "dashboard-interval";
+const CHART_MODE_STORAGE_KEY = "dashboard-chart-mode";
+const NO_POINTS: HistoryChartData[] = [];
 
 function getDashboardChartMinDomainSpanRatio(period: UITimePeriod): number {
   switch (period) {
@@ -155,6 +164,17 @@ export function DashboardContent() {
     );
   }, [valuationHistory, baseCurrency]);
 
+  const [chartMode, setChartMode] = usePersistentState<ValuationChartMode>(
+    CHART_MODE_STORAGE_KEY,
+    "value",
+  );
+  const { benchmarks, addBenchmark, removeBenchmark } = useBenchmarkSelection();
+  // Only fetch index history while the return view is open.
+  const comparison = useBenchmarkComparison(
+    chartMode === "return" ? chartData : NO_POINTS,
+    benchmarks,
+  );
+
   const chartMinDomainSpanRatio = useMemo(
     () => getDashboardChartMinDomainSpanRatio(selectedInterval),
     [selectedInterval],
@@ -180,63 +200,75 @@ export function DashboardContent() {
   return (
     <div className="flex min-h-full flex-col">
       <div className="px-4 pb-1 pt-2 md:px-6 lg:px-8">
-        <PortfolioUpdateTrigger
-          lastCalculatedAt={portfolioSourceDataAsOf}
-          notices={portfolioCurrentValuation?.summary.warnings}
-        >
-          <div className="flex items-start gap-2">
-            <div>
-              <Balance
-                isLoading={isCurrentValuationLoading}
-                isUnavailable={isCurrentValuationUnavailable}
-                targetValue={totalValue}
-                currency={baseCurrency}
-                displayCurrency={true}
-              />
-              <div className="text-md flex min-h-5 items-center space-x-3">
-                {isPortfolioPerformanceLoading ? (
-                  <div className="flex items-center gap-3">
-                    <Skeleton className="h-4 w-24" />
-                    <div className="border-secondary my-1 border-r pr-2" />
-                    <Skeleton className="h-4 w-16" />
-                  </div>
-                ) : (
-                  <>
-                    {gainLossAmount == null ? (
-                      <span className="text-muted-foreground lg:text-md text-sm font-light">
-                        N/A
-                      </span>
-                    ) : (
-                      <GainAmount
-                        className="lg:text-md text-sm font-light"
-                        value={gainLossAmount}
-                        currency={baseCurrency}
-                        displayCurrency={false}
-                      />
-                    )}
-                    <div className="border-secondary my-1 border-r pr-2" />
-                    {simpleReturn == null ? (
-                      <span className="text-muted-foreground lg:text-md text-sm font-light">
-                        N/A
-                      </span>
-                    ) : (
-                      <GainPercent
-                        className="lg:text-md text-sm font-light"
-                        value={simpleReturn}
-                        animated={true}
-                      />
-                    )}
-                  </>
-                )}
-                {selectedInterval && (
-                  <span className="lg:text-md text-muted-foreground ml-1 text-sm font-light">
-                    {t(`ui:interval.${selectedInterval}`)}
-                  </span>
-                )}
+        <div className="flex items-start justify-between gap-2">
+          <PortfolioUpdateTrigger
+            lastCalculatedAt={portfolioSourceDataAsOf}
+            notices={portfolioCurrentValuation?.summary.warnings}
+          >
+            <div className="flex items-start gap-2">
+              <div>
+                <Balance
+                  isLoading={isCurrentValuationLoading}
+                  isUnavailable={isCurrentValuationUnavailable}
+                  targetValue={totalValue}
+                  currency={baseCurrency}
+                  displayCurrency={true}
+                />
+                <div className="text-md flex min-h-5 items-center space-x-3">
+                  {isPortfolioPerformanceLoading ? (
+                    <div className="flex items-center gap-3">
+                      <Skeleton className="h-4 w-24" />
+                      <div className="border-secondary my-1 border-r pr-2" />
+                      <Skeleton className="h-4 w-16" />
+                    </div>
+                  ) : (
+                    <>
+                      {gainLossAmount == null ? (
+                        <span className="text-muted-foreground lg:text-md text-sm font-light">
+                          N/A
+                        </span>
+                      ) : (
+                        <GainAmount
+                          className="lg:text-md text-sm font-light"
+                          value={gainLossAmount}
+                          currency={baseCurrency}
+                          displayCurrency={false}
+                        />
+                      )}
+                      <div className="border-secondary my-1 border-r pr-2" />
+                      {simpleReturn == null ? (
+                        <span className="text-muted-foreground lg:text-md text-sm font-light">
+                          N/A
+                        </span>
+                      ) : (
+                        <GainPercent
+                          className="lg:text-md text-sm font-light"
+                          value={simpleReturn}
+                          animated={true}
+                        />
+                      )}
+                    </>
+                  )}
+                  {selectedInterval && (
+                    <span className="lg:text-md text-muted-foreground ml-1 text-sm font-light">
+                      {t(`ui:interval.${selectedInterval}`)}
+                    </span>
+                  )}
+                </div>
               </div>
             </div>
-          </div>
-        </PortfolioUpdateTrigger>
+          </PortfolioUpdateTrigger>
+          <ChartModeToggle value={chartMode} onChange={setChartMode} />
+        </div>
+        {chartMode === "return" && (
+          <BenchmarkCompareBar
+            className="mt-2"
+            series={comparison.series}
+            onAdd={addBenchmark}
+            onRemove={removeBenchmark}
+            showReturns
+          />
+        )}
       </div>
 
       <div
@@ -248,13 +280,21 @@ export function DashboardContent() {
         }}
       >
         <div className="h-70">
-          <HistoryChart
-            data={chartData}
-            isLoading={isValuationHistoryLoading}
-            scaleMode="fit-visible"
-            minDomainSpanRatio={chartMinDomainSpanRatio}
-            netContributionMaxDomainSpanRatio={chartNetContributionMaxDomainSpanRatio}
-          />
+          {chartMode === "return" ? (
+            <ContributionNeutralChart
+              neutral={comparison.neutral}
+              series={comparison.series}
+              currency={baseCurrency}
+            />
+          ) : (
+            <HistoryChart
+              data={chartData}
+              isLoading={isValuationHistoryLoading}
+              scaleMode="fit-visible"
+              minDomainSpanRatio={chartMinDomainSpanRatio}
+              netContributionMaxDomainSpanRatio={chartNetContributionMaxDomainSpanRatio}
+            />
+          )}
           {valuationHistory && chartData.length > 0 && (
             <div className="flex w-full justify-center">
               <IntervalSelector

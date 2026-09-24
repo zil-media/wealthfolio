@@ -379,5 +379,25 @@
     "sidebar": "Barra lateral",
     "floating": "Barra flotante"
   },
-  "allocation_other_in_category": "Otros ({{category}})"
+  "allocation_other_in_category": "Otros ({{category}})",
+  "benchmark_compare": {
+    "mode_label": "Vista del gráfico",
+    "mode_value": "Valor",
+    "mode_return": "Rendimiento",
+    "mode_return_hint": "Rendimiento sobre el capital, sin contar aportes ni retiros",
+    "your_portfolio": "Tu cartera",
+    "this_scope": "Cartera",
+    "vs": "vs",
+    "gain": "Ganancia",
+    "deposit_excluded": "Aporte (excluido)",
+    "withdrawal_excluded": "Retiro (excluido)",
+    "remove": "Quitar {{name}}",
+    "no_data": "Sin datos",
+    "return_on_capital": "Rend. s/ capital",
+    "twr_or_index": "TWR / índice",
+    "volatility": "Volatilidad",
+    "max_drawdown": "Caída máxima",
+    "difference": "Diferencia",
+    "method_note": "Rendimiento sobre capital = ganancia ÷ (valor inicial + aportes del periodo), así los aportes nunca cuentan como rendimiento. Cada índice replica tu valor inicial y cada aporte o retiro el mismo día. Los precios de los índices no incluyen dividendos."
+  }
 }

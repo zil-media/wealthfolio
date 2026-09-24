@@ -1,4 +1,11 @@
 import { getContributionLimit, getSnapshots, searchActivities } from "@/adapters";
+import { BenchmarkCompareBar } from "@/components/benchmark-compare/benchmark-compare-bar";
+import { BenchmarkComparisonTable } from "@/components/benchmark-compare/benchmark-comparison-table";
+import {
+  ChartModeToggle,
+  type ValuationChartMode,
+} from "@/components/benchmark-compare/chart-mode-toggle";
+import { ContributionNeutralChart } from "@/components/benchmark-compare/contribution-neutral-chart";
 import { HistoryChart } from "@/components/history-chart";
 import type { ActivityDetails } from "@/lib/types";
 import {
@@ -26,6 +33,7 @@ import { useTranslation } from "react-i18next";
 import { ActionPalette, type ActionPaletteGroup } from "@/components/action-palette";
 import { PrivacyToggle } from "@/components/privacy-toggle";
 import { useAccounts } from "@/hooks/use-accounts";
+import { useBenchmarkComparison, useBenchmarkSelection } from "@/hooks/use-benchmark-comparison";
 import { useRecalculatePortfolioMutation } from "@/hooks/use-calculate-portfolio";
 import { useCurrentValuation } from "@/hooks/use-current-account-valuations";
 import { useHoldings } from "@/hooks/use-holdings";
@@ -73,7 +81,7 @@ import { HoldingsEditMode } from "@/pages/holdings/components/holdings-edit-mode
 import { useCalculatePerformanceHistory } from "@/pages/performance/hooks/use-performance-data";
 import { useQuery } from "@tanstack/react-query";
 import type { SortingState } from "@tanstack/react-table";
-import { Icons, type Icon } from "@wealthfolio/ui";
+import { Icons, usePersistentState, type Icon } from "@wealthfolio/ui";
 import { Button } from "@wealthfolio/ui/components/ui/button";
 import {
   Command,
@@ -190,6 +198,10 @@ const AccountPage = () => {
   const [actionPaletteOpen, setActionPaletteOpen] = useState(false);
   const [isEditingHoldings, setIsEditingHoldings] = useState(false);
   const [showSnapshotMarkers, setShowSnapshotMarkers] = useState(false);
+  const [chartMode, setChartMode] = usePersistentState<ValuationChartMode>(
+    "account-chart-mode",
+    "value",
+  );
   const [editingSnapshotDate, setEditingSnapshotDate] = useState<string | null>(null);
   const [selectedActivityDate, setSelectedActivityDate] = useState<string | null>(null);
   const [isActivitySheetOpen, setIsActivitySheetOpen] = useState(false);
@@ -623,6 +635,15 @@ const AccountPage = () => {
   }, [valuationHistory]);
 
   const isLoading = isAccountsLoading || isValuationHistoryLoading;
+  const { benchmarks, addBenchmark, removeBenchmark } = useBenchmarkSelection();
+  const benchmarkComparison = useBenchmarkComparison(chartData, benchmarks);
+  const benchmarkCompareBar = (
+    <BenchmarkCompareBar
+      series={benchmarkComparison.series}
+      onAdd={addBenchmark}
+      onRemove={removeBenchmark}
+    />
+  );
 
   // Callback for IntervalSelector
   const handleIntervalSelect = (
@@ -1060,6 +1081,9 @@ const AccountPage = () => {
                     </PortfolioUpdateTrigger>
                   </CardTitle>
                   <div className="-mt-3 flex items-center gap-1 self-start">
+                    {!isHoldingsMode && (
+                      <ChartModeToggle value={chartMode} onChange={setChartMode} />
+                    )}
                     <PrivacyToggle />
                     <TooltipProvider>
                       <Tooltip>
@@ -1090,24 +1114,35 @@ const AccountPage = () => {
                 <CardContent className="p-0">
                   <div className="w-full p-0">
                     <div className="flex w-full flex-col">
+                      {chartMode === "return" && !isHoldingsMode && (
+                        <div className="px-4 pb-2 md:px-6">{benchmarkCompareBar}</div>
+                      )}
                       <div className="h-120 w-full">
-                        <HistoryChart
-                          data={chartData}
-                          isLoading={false}
-                          showMarkers={showSnapshotMarkers}
-                          snapshotDates={markerDates}
-                          onMarkerClick={(date) => {
-                            if (isHoldingsMode) {
-                              // Holdings mode: open edit holdings sheet
-                              setEditingSnapshotDate(date);
-                              setIsEditingHoldings(true);
-                            } else {
-                              // Transactions mode: open activities sheet for this date
-                              setSelectedActivityDate(date);
-                              setIsActivitySheetOpen(true);
-                            }
-                          }}
-                        />
+                        {chartMode === "return" && !isHoldingsMode ? (
+                          <ContributionNeutralChart
+                            neutral={benchmarkComparison.neutral}
+                            series={benchmarkComparison.series}
+                            currency={chartData[0]?.currency ?? displayedValueCurrency}
+                          />
+                        ) : (
+                          <HistoryChart
+                            data={chartData}
+                            isLoading={false}
+                            showMarkers={showSnapshotMarkers}
+                            snapshotDates={markerDates}
+                            onMarkerClick={(date) => {
+                              if (isHoldingsMode) {
+                                // Holdings mode: open edit holdings sheet
+                                setEditingSnapshotDate(date);
+                                setIsEditingHoldings(true);
+                              } else {
+                                // Transactions mode: open activities sheet for this date
+                                setSelectedActivityDate(date);
+                                setIsActivitySheetOpen(true);
+                              }
+                            }}
+                          />
+                        )}
                         <IntervalSelector
                           className="relative bottom-10 left-0 right-0 z-10"
                           onIntervalSelect={handleIntervalSelect}
@@ -1132,6 +1167,16 @@ const AccountPage = () => {
                   performanceError={hasPerformanceError ? performanceErrorMessages[0] : undefined}
                   hideBalanceEdit={isHoldingsMode || isLiabilityAccount}
                   isHoldingsMode={isHoldingsMode}
+                  benchmarkComparison={
+                    isHoldingsMode ? undefined : (
+                      <BenchmarkComparisonTable
+                        neutral={benchmarkComparison.neutral}
+                        series={benchmarkComparison.series}
+                        performance={accountPerformance}
+                        controls={benchmarkCompareBar}
+                      />
+                    )
+                  }
                   balanceLabel={
                     isLiabilityAccount ? t("account:balance_label") : t("account:cash_balance")
                   }

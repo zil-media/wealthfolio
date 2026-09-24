@@ -102,6 +102,8 @@ interface AccountMetricsProps {
     disabled?: boolean;
     isLoading?: boolean;
   };
+  /** Index comparison rendered under the performance metrics. */
+  benchmarkComparison?: React.ReactNode;
 }
 
 interface CashCurrencyBreakdownProps {
@@ -153,6 +155,7 @@ const AccountMetrics: React.FC<AccountMetricsProps> = ({
   balanceLabel,
   isHoldingsMode = false,
   balanceWarning,
+  benchmarkComparison,
 }) => {
   const dateFormatting = useDateFormatting();
 
@@ -353,6 +356,7 @@ const AccountMetrics: React.FC<AccountMetricsProps> = ({
           performanceError={performanceError}
           isHoldingsMode={isHoldingsMode}
         />
+        {benchmarkComparison}
       </CardContent>
       <CardFooter className="mt-auto flex flex-col items-start gap-1 px-3 pb-3 pt-0">
         {performanceError ? (
