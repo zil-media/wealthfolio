@@ -76,9 +76,10 @@ pub async fn delete_asset(id: String, state: ProfileAccess) -> Result<(), String
 pub async fn merge_assets(
     source_id: String,
     target_id: String,
-    state: State<'_, Arc<ServiceContext>>,
+    state: ProfileAccess,
 ) -> Result<u32, String> {
-    state
+    let context = state.context()?;
+    context
         .activity_service()
         .merge_assets(&source_id, &target_id)
         .await
