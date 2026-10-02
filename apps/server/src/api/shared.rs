@@ -97,6 +97,24 @@ pub fn enqueue_portfolio_job(state: Arc<AppState>, config: PortfolioJobConfig) {
     });
 }
 
+/// Run one incremental market sync + snapshot/valuation update to completion.
+/// Same job the frontend triggers on load; used by the periodic scheduler so the
+/// dashboard is already current when the app is opened.
+pub async fn run_scheduled_portfolio_update(state: Arc<AppState>) {
+    let config = PortfolioJobConfig {
+        account_ids: None,
+        market_sync_mode: MarketSyncMode::Incremental { asset_ids: None },
+        snapshot_mode: SnapshotRecalcMode::IncrementalFromLast,
+        valuation_mode: ValuationRecalcMode::IncrementalFromLast,
+        since_date: None,
+    };
+    tracing::info!("Periodic portfolio update: starting");
+    match process_portfolio_job(state, config).await {
+        Ok(()) => tracing::info!("Periodic portfolio update: completed"),
+        Err(err) => tracing::error!("Periodic portfolio update failed: {}", err),
+    }
+}
+
 /// Trigger a lightweight portfolio update (no full recalculation) similar to Tauri defaults.
 /// Uses MarketSyncMode::None - no market sync, just recalculation.
 pub fn trigger_lightweight_portfolio_update(state: Arc<AppState>) {

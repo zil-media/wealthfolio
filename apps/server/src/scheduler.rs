@@ -181,15 +181,17 @@ pub fn start_background_workers(state: Arc<AppState>) {
     // Start background broker sync scheduler (4-hour interval)
     start_broker_sync_scheduler(state.clone());
 
-    // Start periodic market data sync (6h interval, 2min initial delay)
-    let quote_svc = state.quote_service.clone();
+    // Start periodic market data sync + portfolio recalculation (6h interval, 2min initial delay).
+    // Quotes alone are not enough: valuation history (dashboard chart, totals, gains) is only
+    // rebuilt by the portfolio job, so it must run here and not just when a browser opens.
+    let periodic_state = state.clone();
     let worker = tokio::spawn(async move {
-        wealthfolio_core::quotes::scheduler::run_periodic_sync(
-            quote_svc,
-            std::time::Duration::from_secs(120),
-            std::time::Duration::from_secs(6 * 3600),
-        )
-        .await;
+        tokio::time::sleep(std::time::Duration::from_secs(120)).await;
+        tracing::info!("Periodic portfolio update started (interval: 6h)");
+        loop {
+            crate::api::shared::run_scheduled_portfolio_update(periodic_state.clone()).await;
+            tokio::time::sleep(std::time::Duration::from_secs(6 * 3600)).await;
+        }
     });
     state.workers.lock().unwrap().push(worker);
 }
