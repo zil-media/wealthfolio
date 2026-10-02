@@ -193,6 +193,9 @@ Ensure you have the following installed on your machine:
    cp .env.example .env
    ```
 
+   For optional Connect setup, see
+   [Wealthfolio Connect in source builds](docs/connect-source-builds.md#desktop).
+
    Desktop development uses a separate application identity and profile
    directory. On macOS, the default layout is:
 
@@ -202,12 +205,16 @@ Ensure you have the following installed on your machine:
    └── profiles/<uuid>/app.db
    ```
 
-   You do not need to set `DATABASE_URL`: the development identity ignores it,
-   including values inherited from `.env` or the shell. The root-level `app.db`
-   is only used when adopting an existing legacy database. To select another
-   profile directory during desktop development, set `WF_DATA_DIR` to an
-   absolute path as described in `.env.example`. Use a dedicated development
-   directory.
+   To select another profile directory during desktop development, set
+   `WF_DATA_DIR` in `.env` to an absolute path as described in `.env.example`.
+   Leave it unset to use the default development app-data directory. Use a
+   dedicated development directory; this setting selects the registry and its
+   profiles, not an individual database file. An existing root-level `app.db` is
+   only adopted on first profile initialization.
+
+   If your older `.env` contains `DATABASE_URL`, remove it: `pnpm tauri dev`
+   ignores it, including on first launch. Use `WF_DATA_DIR` for development
+   directory selection. Packaged desktop apps do not ship with an `.env` file.
 
 4. **Run in Development Mode**:
 
@@ -297,8 +304,17 @@ All configuration is done via environment variables in `.env.web`.
 **Server Configuration (WF\_\* variables)**:
 
 - `WF_LISTEN_ADDR` - Server bind address (default: `0.0.0.0:8088`)
-- `WF_DB_PATH` - SQLite database path or directory (default: `./db/app.db`)
-  - If a directory is provided, `app.db` will be used inside it
+- `WF_DATA_DIR` - Optional directory for the profile registry, profile
+  databases, and default encrypted vault. For `pnpm dev:web`, set it in
+  `.env.web` or the shell; the desktop `.env` value is masked. Relative paths
+  use the working directory; `~` is not expanded.
+- `WF_DB_PATH` - Supported legacy database file path (default: `./db/app.db`).
+  Its parent selects the installation when `WF_DATA_DIR` is unset. With only
+  `WF_DATA_DIR`, the legacy candidate is `<WF_DATA_DIR>/app.db`. If both are
+  set, their directories must agree. Existing registries retain their saved
+  database paths; neither setting moves data. See
+  [installation directory configuration](docs/self-host/README.md#installation-directory)
+  for Docker and upgrade behavior.
 - `WF_CORS_ALLOW_ORIGINS` - Comma-separated list of allowed CORS origins
   (default: `*`). **Required when auth is enabled** — wildcard `*` is rejected.
   - Example: `https://wealthfolio.example.com`

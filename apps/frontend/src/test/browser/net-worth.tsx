@@ -1,3 +1,5 @@
+import { MemoryRouter } from "react-router-dom";
+import { NetWorthAttentionCard } from "@/pages/net-worth/components/net-worth-attention";
 import { useState } from "react";
 import { createRoot } from "react-dom/client";
 import i18next from "i18next";
@@ -5,6 +7,7 @@ import { initReactI18next } from "react-i18next";
 import { FormattingProvider } from "@wealthfolio/ui";
 import { PrivacyContext } from "@/context/privacy-context";
 import en from "@/i18n/locales/en/insights.json";
+import { NetWorthChart } from "@/pages/net-worth/net-worth-chart";
 import { VelocityCard } from "@/pages/net-worth/components/velocity-card";
 import { computeVelocity } from "@/pages/net-worth/components/utils";
 import de from "@/i18n/locales/de/insights.json";
@@ -56,6 +59,8 @@ function Fixture() {
   const [scenario, setScenario] = useState(params.get("scenario") ?? "growth");
   const [locale, setLocale] = useState(params.get("locale") ?? "de-DE");
   const [hidden, setHidden] = useState(false);
+  const [attentionLinked, setAttentionLinked] = useState(false);
+  const [attentionAdd, setAttentionAdd] = useState(false);
   const current = structuredClone(data);
   const points = structuredClone(history);
   if (scenario === "extreme") {
@@ -171,6 +176,23 @@ function Fixture() {
         {fallback && (
           <style>{`main [class*="supports-[grid-template-columns:subgrid]"] { grid-template-columns: var(--breakdown-fallback-columns) !important; }`}</style>
         )}
+        {params.has("chart") && (
+          <section aria-label="Net worth history" style={{ height: 280, margin: 16 }}>
+            <NetWorthChart
+              data={(params.get("chart") ?? "").split(",").map((value, index) => ({
+                date: `2026-09-${10 + index}`,
+                netWorth: value,
+                totalAssets: "100000",
+                totalLiabilities: String(100000 - Number(value)),
+                portfolioValue: "100000",
+                alternativeAssetsValue: "0",
+                netContribution: "0",
+                currency: "USD",
+                breakdown: {},
+              }))}
+            />
+          </section>
+        )}
         <main
           aria-label="Net worth card"
           style={{ padding: 16, width: width === "auto" ? undefined : Number(width) + 32 }}
@@ -183,6 +205,52 @@ function Fixture() {
             onSelect={() => undefined}
           />
         </main>
+        {params.has("attention") && (
+          <MemoryRouter>
+            <div style={{ padding: 16, maxWidth: 384 }}>
+              <NetWorthAttentionCard
+                staleAssets={[
+                  { assetId: "home", name: "Home", valuationDate: "2025-01-01", daysStale: 195 },
+                  {
+                    assetId: "mortgage",
+                    name: "Home Mortgage",
+                    valuationDate: "2020-01-01",
+                    daysStale: 1928,
+                  },
+                ]}
+                holdings={[
+                  {
+                    id: "mortgage",
+                    kind: "liability",
+                    name: "Home Mortgage",
+                    symbol: "Mortgage",
+                    currency: "USD",
+                    marketValue: "500000",
+                    valuationDate: "2020-01-01",
+                    metadata: params.get("untyped") === "1" ? {} : { sub_type: "mortgage" },
+                    linkedAssetId: attentionLinked ? "home" : undefined,
+                  },
+                  ...(params.get("property") === "0"
+                    ? []
+                    : [
+                        {
+                          id: "home",
+                          kind: "property",
+                          name: "Home",
+                          symbol: "Property",
+                          currency: "USD",
+                          marketValue: "235000",
+                          valuationDate: "2025-01-01",
+                        },
+                      ]),
+                ]}
+                onLink={() => setAttentionLinked(true)}
+                onAddProperty={() => setAttentionAdd(true)}
+              />
+              {attentionAdd && <p>Property creation requested</p>}
+            </div>
+          </MemoryRouter>
+        )}
         <section aria-label="Monthly pace card" style={{ padding: 16, maxWidth: 384 }}>
           <VelocityCard
             velocity={

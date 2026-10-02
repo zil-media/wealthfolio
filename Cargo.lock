@@ -7934,7 +7934,6 @@ dependencies = [
  "signal-hook-registry",
  "socket2 0.6.4",
  "tokio-macros",
- "tracing",
  "windows-sys 0.61.2",
 ]
 
@@ -8760,7 +8759,7 @@ dependencies = [
 
 [[package]]
 name = "wealthfolio-agent-tools"
-version = "3.9.0"
+version = "3.9.1"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -8778,7 +8777,7 @@ dependencies = [
 
 [[package]]
 name = "wealthfolio-ai"
-version = "3.9.0"
+version = "3.9.1"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -8810,7 +8809,7 @@ dependencies = [
 
 [[package]]
 name = "wealthfolio-app"
-version = "3.9.0"
+version = "3.9.1"
 dependencies = [
  "android-native-keyring-store",
  "anyhow",
@@ -8879,7 +8878,7 @@ dependencies = [
 
 [[package]]
 name = "wealthfolio-connect"
-version = "3.9.0"
+version = "3.9.1"
 dependencies = [
  "async-trait",
  "base64 0.22.1",
@@ -8898,7 +8897,7 @@ dependencies = [
 
 [[package]]
 name = "wealthfolio-core"
-version = "3.9.0"
+version = "3.9.1"
 dependencies = [
  "anyhow",
  "argon2",
@@ -8948,12 +8947,13 @@ dependencies = [
 
 [[package]]
 name = "wealthfolio-device-sync"
-version = "3.9.0"
+version = "3.9.1"
 dependencies = [
  "async-trait",
  "base64 0.22.1",
  "chacha20poly1305",
  "chrono",
+ "flate2",
  "hkdf 0.12.4",
  "hmac 0.12.1",
  "log",
@@ -8973,7 +8973,7 @@ dependencies = [
 
 [[package]]
 name = "wealthfolio-http"
-version = "3.9.0"
+version = "3.9.1"
 dependencies = [
  "rcgen",
  "reqwest 0.13.5",
@@ -8984,7 +8984,7 @@ dependencies = [
 
 [[package]]
 name = "wealthfolio-market-data"
-version = "3.9.0"
+version = "3.9.1"
 dependencies = [
  "async-trait",
  "chrono",
@@ -9007,7 +9007,7 @@ dependencies = [
 
 [[package]]
 name = "wealthfolio-mcp"
-version = "3.9.0"
+version = "3.9.1"
 dependencies = [
  "async-trait",
  "axum",
@@ -9032,7 +9032,7 @@ dependencies = [
 
 [[package]]
 name = "wealthfolio-server"
-version = "3.9.0"
+version = "3.9.1"
 dependencies = [
  "anyhow",
  "argon2",
@@ -9086,7 +9086,7 @@ dependencies = [
 
 [[package]]
 name = "wealthfolio-spending"
-version = "3.9.0"
+version = "3.9.1"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -9106,7 +9106,7 @@ dependencies = [
 
 [[package]]
 name = "wealthfolio-storage-sqlite"
-version = "3.9.0"
+version = "3.9.1"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -10142,7 +10142,6 @@ dependencies = [
  "rustix 1.1.4",
  "serde",
  "serde_repr",
- "tokio",
  "tracing",
  "uds_windows",
  "uuid",
