@@ -21,8 +21,12 @@ import type {
 
 import { invoke, logger } from "./platform";
 
-export const updatePortfolio = async (): Promise<void> => {
-  return invoke<void>("update_portfolio");
+// `skipMarketSync` only recalculates (web server; desktop always syncs). Used by the
+// on-load refresh because the server's periodic job keeps market data current.
+export const updatePortfolio = async (options?: { skipMarketSync?: boolean }): Promise<void> => {
+  return options?.skipMarketSync
+    ? invoke<void>("update_portfolio", { marketSyncMode: { type: "none" } })
+    : invoke<void>("update_portfolio");
 };
 
 export const recalculatePortfolio = async (): Promise<void> => {

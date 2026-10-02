@@ -8,7 +8,7 @@ export function useUpdatePortfolioMutation() {
   const queryClient = useQueryClient();
 
   return useMutation({
-    mutationFn: updatePortfolio,
+    mutationFn: () => updatePortfolio(),
     onSuccess: () => {
       invalidatePerformanceCaches(queryClient);
     },

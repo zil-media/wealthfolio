@@ -21,10 +21,15 @@ async fn update_portfolio(
 ) -> ApiResult<StatusCode> {
     // Web-mode callers typically omit the body; preserve desktop behavior by defaulting
     // to an explicit market sync policy (PRD: no implicit sync inside the job runner).
-    let mut request = body.map(|Json(inner)| inner).unwrap_or_default();
-    if matches!(request.market_sync_mode, MarketSyncMode::None) {
-        request.market_sync_mode = MarketSyncMode::Incremental { asset_ids: None };
-    }
+    // A body is honored as sent, so the on-load refresh can skip the sync (the periodic
+    // scheduler keeps market data current).
+    let request = match body {
+        Some(Json(inner)) => inner,
+        None => PortfolioRequestBody {
+            market_sync_mode: MarketSyncMode::Incremental { asset_ids: None },
+            ..Default::default()
+        },
+    };
     let cfg = request.into_config(false);
     enqueue_portfolio_job(state, cfg);
     Ok(StatusCode::ACCEPTED)

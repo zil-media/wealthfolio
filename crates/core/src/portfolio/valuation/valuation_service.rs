@@ -380,6 +380,16 @@ fn since_date_calculation_window(date: NaiveDate) -> (NaiveDate, Option<NaiveDat
     (start_date, anchor_date)
 }
 
+/// A `SinceDate` recalc only computes from `since`. If the latest saved valuation is
+/// older than the day before `since` (no recalc ran in between), resume the day after
+/// it instead, so those days are not left as holes — scoped history rejects accounts
+/// with missing dates inside their range.
+fn since_date_resume_from_last_saved(since: NaiveDate, last_saved: Option<NaiveDate>) -> NaiveDate {
+    last_saved
+        .and_then(|last| last.succ_opt())
+        .map_or(since, |resume| resume.min(since))
+}
+
 fn latest_valuation_requires_full_rebuild(last_saved: NaiveDate, today: NaiveDate) -> bool {
     last_saved > today
 }
@@ -2087,7 +2097,13 @@ impl ValuationService {
                     SnapshotSource::Calculated.as_str(),
                     today,
                 )?;
-                let (start_date, anchor_date) = since_date_calculation_window(*date);
+                let date = since_date_resume_from_last_saved(
+                    *date,
+                    self.valuation_repository
+                        .load_latest_valuation_date(account_id)?,
+                );
+                replace_since_date = Some(Some(date));
+                let (start_date, anchor_date) = since_date_calculation_window(date);
                 calculation_start_date = Some(start_date);
                 incremental_anchor_date = anchor_date;
             }
@@ -3516,6 +3532,33 @@ mod tests {
 
         assert_eq!(start_date, date("2025-03-01"));
         assert_eq!(anchor_date, Some(date("2025-03-01")));
+    }
+
+    #[test]
+    fn since_date_resumes_after_stale_last_saved_valuation() {
+        // Last saved 09-25, activity lands 09-27: 09-26 must be recalculated too.
+        assert_eq!(
+            since_date_resume_from_last_saved(date("2026-09-27"), Some(date("2026-09-25"))),
+            date("2026-09-26")
+        );
+    }
+
+    #[test]
+    fn since_date_kept_when_valuations_are_current_or_absent() {
+        // Contiguous history: no change.
+        assert_eq!(
+            since_date_resume_from_last_saved(date("2026-09-27"), Some(date("2026-09-26"))),
+            date("2026-09-27")
+        );
+        // Backdated edit inside existing history: no change.
+        assert_eq!(
+            since_date_resume_from_last_saved(date("2026-09-10"), Some(date("2026-10-02"))),
+            date("2026-09-10")
+        );
+        assert_eq!(
+            since_date_resume_from_last_saved(date("2026-09-27"), None),
+            date("2026-09-27")
+        );
     }
 
     #[test]

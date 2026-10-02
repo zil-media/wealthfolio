@@ -2096,6 +2096,12 @@ export const invoke = async <T>(command: string, payload?: Record<string, unknow
       url += `/${encodeURIComponent(id)}`;
       break;
     }
+    case "update_portfolio": {
+      if (payload?.marketSyncMode) {
+        body = JSON.stringify({ marketSyncMode: payload.marketSyncMode });
+      }
+      break;
+    }
     case "list_agent_audit_log": {
       const { page, pageSize, q, tools, outcomes, actorKinds } = payload as {
         page: number;
