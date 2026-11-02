@@ -15,6 +15,8 @@ ENV CONNECT_AUTH_URL=${CONNECT_AUTH_URL}
 ENV CONNECT_AUTH_PUBLISHABLE_KEY=${CONNECT_AUTH_PUBLISHABLE_KEY}
 
 WORKDIR /app
+COPY package.json pnpm-lock.yaml pnpm-workspace.yaml ./
+COPY . .
 ENV CI=1
 ENV BUILD_TARGET=web
 RUN npm install -g "$(node -p "require('./package.json').packageManager")" && pnpm install --frozen-lockfile
@@ -46,9 +48,6 @@ RUN xx-apk add --no-cache musl-dev gcc openssl-dev openssl-libs-static sqlite-de
 
 # Install rust target
 RUN rustup target add $(xx-cargo --print-target-triple)
-ENV CARGO_REGISTRIES_CRATES_IO_PROTOCOL=sparse
-ENV OPENSSL_STATIC=1
-RUN cargo install cargo-chef --locked --version 0.1.78
 
 ENV CARGO_REGISTRIES_CRATES_IO_PROTOCOL=sparse
 # Set before cooking: openssl-sys rebuilds when OPENSSL_STATIC changes.
@@ -60,6 +59,7 @@ FROM chef AS planner
 COPY Cargo.toml Cargo.lock ./
 COPY crates ./crates
 COPY apps/server ./apps/server
+# Stub out apps/tauri so the workspace resolves (not built in Docker)
 COPY apps/tauri/Cargo.toml apps/tauri/Cargo.toml
 RUN mkdir -p apps/tauri/src && echo "fn main(){}" > apps/tauri/src/main.rs && echo "" > apps/tauri/src/lib.rs
 # Drop integration tests so new test files don't invalidate the cooked deps.
