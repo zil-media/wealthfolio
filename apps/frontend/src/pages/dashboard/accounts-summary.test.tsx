@@ -193,6 +193,7 @@ interface PerformanceFixture {
   pnl: number | null;
   returnValue: number | null;
   dataQuality?: PerformanceResult["dataQuality"];
+  mode?: PerformanceResult["mode"];
 }
 
 function createPerformanceResult(
@@ -327,6 +328,7 @@ function renderAccountsSummary({
       pnl: performance.pnl,
       returnValue: performance.returnValue,
       dataQuality: performance.dataQuality,
+      mode: performance.mode,
     });
   }
 
@@ -348,6 +350,7 @@ function renderAccountsSummary({
     performanceSummaries[key] = createPerformanceResult({
       scope: { id: key, currency: "USD" },
       pnl: explicitGroupPerformance?.pnl ?? gain,
+      mode: explicitGroupPerformance?.mode,
       returnValue: explicitGroupPerformance?.returnValue ?? firstReturn ?? null,
       dataQuality: explicitGroupPerformance?.dataQuality,
     });
@@ -570,6 +573,7 @@ describe("AccountsSummary", () => {
       performanceByScopeKey: {
         "accounts:a-missing,a-positive,a-zero": {
           pnl: 17,
+          mode: "valueReturn",
           returnValue: 0.07,
         },
       },
@@ -636,6 +640,29 @@ describe("AccountsSummary", () => {
     expect(within(row as HTMLElement).getByText("gain-percent:0.25")).toBeInTheDocument();
   });
 
+  it("states the percent against the capital behind the row, not TWR", () => {
+    // A large late deposit can leave TWR negative while the money gained, realized
+    // sales included, is positive. Both halves of the row must describe that gain.
+    renderAccountsSummary({
+      accounts: [createAccount({ id: "late-deposit", name: "Late Deposit" })],
+      valuations: [
+        createValuation({
+          accountId: "late-deposit",
+          totalValue: 1050,
+          totalValueBase: 1050,
+        }),
+      ],
+      performanceByAccountId: {
+        "late-deposit": { pnl: 50, returnValue: -0.28 },
+      },
+    });
+
+    const row = screen.getByText("Late Deposit").closest("a");
+    expect(row).not.toBeNull();
+    expect(within(row as HTMLElement).getByText("gain-amount:USD:true:50")).toBeInTheDocument();
+    expect(within(row as HTMLElement).getByText("gain-percent:0.05")).toBeInTheDocument();
+  });
+
   it("displays a foreign-currency account in its own currency, not the base currency", () => {
     renderAccountsSummary({
       accounts: [createAccount({ id: "cad-account", name: "CAD Account", currency: "CAD" })],
@@ -652,6 +679,7 @@ describe("AccountsSummary", () => {
       performanceByAccountId: {
         "cad-account": {
           pnl: 10,
+          mode: "valueReturn",
           returnValue: 0.08,
         },
       },
@@ -685,6 +713,7 @@ describe("AccountsSummary", () => {
       performanceByAccountId: {
         "cad-account": {
           pnl: 10,
+          mode: "valueReturn",
           returnValue: 0.08,
         },
       },
@@ -855,6 +884,7 @@ describe("AccountsSummary", () => {
       performanceByAccountId: {
         "td-invest": {
           pnl: 2522.37,
+          mode: "valueReturn",
           returnValue: 0.0933,
           dataQuality: {
             status: "ok",
@@ -886,6 +916,7 @@ describe("AccountsSummary", () => {
       performanceByAccountId: {
         business: {
           pnl: -17013.7,
+          mode: "valueReturn",
           returnValue: -0.1923,
           dataQuality: {
             status: "partial",

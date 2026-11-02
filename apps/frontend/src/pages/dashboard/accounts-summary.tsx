@@ -5,9 +5,8 @@ import { useAccounts } from "@/hooks/use-accounts";
 import { useCurrentAccountValuations } from "@/hooks/use-current-account-valuations";
 import { AccountPurpose } from "@/lib/constants";
 import {
-  performanceSummaryReturn,
+  performanceReturnOnCapital,
   performancePeriodPnl,
-  simpleReturnFromNetContribution,
 } from "@/lib/performance";
 import { QueryKeys } from "@/lib/query-keys";
 import { useSettingsContext } from "@/lib/settings-provider";
@@ -509,12 +508,7 @@ export const AccountsSummary = React.memo(
         const totalValueBaseCurrency = valuation.totalValueBase;
 
         const gainLossBaseCurrency = performancePeriodPnl(perf);
-        // summary.percent carries TWR, which has a different base than the P&L amount
-        // shown beside it, so the row read as -2048 / -30.98%. Express the percentage
-        // against net contributions so both halves describe the same thing.
-        const gainPercent =
-          simpleReturnFromNetContribution(gainLossBaseCurrency, perf?.attribution?.contributions) ??
-          performanceSummaryReturn(perf);
+        const gainPercent = performanceReturnOnCapital(perf, totalValueBaseCurrency);
 
         return {
           accountName: acc.name,
@@ -646,7 +640,10 @@ export const AccountsSummary = React.memo(
           );
 
           const totalGainLossAmountBase = performancePeriodPnl(groupPerformance);
-          const groupTotalReturnPercentBase = performanceSummaryReturn(groupPerformance);
+          const groupTotalReturnPercentBase = performanceReturnOnCapital(
+            groupPerformance,
+            totalValueBaseCurrency,
+          );
 
           actualGroups.push({
             accountName: groupName,

@@ -51,6 +51,22 @@ export function simpleReturnFromNetContribution(
   return amount / contribution;
 }
 
+// summary.percent can be TWR, which has a different base than the P&L amount shown beside
+// it (+3014 next to -27.93%). Restate it against the capital behind the current total
+// (opening value + net flows = total - P&L). attribution.contributions is zeroed in the
+// dashboard profile, so it can't be used. An unavailable percent stays unavailable.
+export function performanceReturnOnCapital(
+  result: PerformanceResult | null | undefined,
+  totalValue: number,
+): number | null {
+  const percent = performanceSummaryReturn(result);
+  const amount = performancePeriodPnl(result);
+  if (percent == null || amount == null || result?.summary?.method !== "timeWeighted") {
+    return percent;
+  }
+  return simpleReturnFromNetContribution(amount, totalValue - amount) ?? percent;
+}
+
 export function shouldDisplayAnnualizedPerformanceReturn(
   result: PerformanceResult | null | undefined,
 ): boolean {
