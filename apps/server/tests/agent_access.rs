@@ -965,7 +965,7 @@ async fn mcp_writes_link_activities_to_newly_created_assets() {
     let account = create_eur_account(&server, &cookie, "Draft").await;
     let draft = serde_json::json!({
         "accountId": account["id"], "activityType": "BUY", "activityDate": "2026-08-28",
-        "symbol": "ZZDRAFT", "assetId": "ZZDRAFT:XPAR", "assetName": "Synthetic ETF",
+        "createAssetIfMissing": true, "symbol": "ZZDRAFT", "assetId": "ZZDRAFT:XPAR", "assetName": "Synthetic ETF",
         "exchangeMic": "XPAR", "quoteCcy": "EUR", "instrumentType": "ETF",
         "currency": "EUR", "quantity": 3, "unitPrice": 18.9,
         "priceSource": "user", "pricingMode": "MARKET", "isCustomAsset": false
