@@ -1,3 +1,4 @@
+import { localizeAllocation } from "@/lib/taxonomy-labels";
 import { AllocationBreadcrumb } from "@/components/allocation-breadcrumb";
 import { useDrillDownState } from "@/hooks/use-drill-down-state";
 import { namedChildren } from "@/lib/allocation-children";
@@ -8,8 +9,10 @@ import {
   CardHeader,
   CardTitle,
   DonutChart,
-  EmptyPlaceholder,
   Skeleton,
+  Empty,
+  EmptyHeader,
+  EmptyDescription,
 } from "@wealthfolio/ui";
 import { useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
@@ -30,13 +33,17 @@ interface DrillableDonutChartProps {
  */
 export function DrillableDonutChart({
   title,
-  allocation,
+  allocation: sourceAllocation,
   baseCurrency = "USD",
   isLoading,
   onCategoryClick,
   onCardClick,
 }: DrillableDonutChartProps) {
   const { t } = useTranslation();
+  const allocation = useMemo(
+    () => (sourceAllocation ? localizeAllocation(t, sourceAllocation) : undefined),
+    [sourceAllocation, t],
+  );
   const [activeIndex, setActiveIndex] = useState(0);
   const { path, drillDown, navigateTo, isAtRoot } = useDrillDownState();
 
@@ -58,7 +65,7 @@ export function DrillableDonutChart({
         currency: baseCurrency,
         color: cat.color,
       }));
-  }, [allocation, baseCurrency]);
+  }, [allocation, baseCurrency, t]);
 
   // Drilled-down data from allocation.categories[].children
   const drilledData = useMemo(() => {
@@ -83,6 +90,12 @@ export function DrillableDonutChart({
       .sort((a, b) => b.value - a.value);
   }, [path, allocation, baseCurrency, t]);
 
+  // The drilled category can empty out while the chart stays mounted (account scope
+  // changed, re-classification) — return to the categories instead of an empty level.
+  if (!isAtRoot && !isLoading && drilledData.length === 0) {
+    navigateTo(0);
+  }
+
   const data = isAtRoot ? rootData : drilledData;
 
   // The selection points at a category, not at a position — reset it when the categories
@@ -95,12 +108,12 @@ export function DrillableDonutChart({
   }
 
   const handleSectionClick = (
-    sectionData: { name: string; value: number; currency: string },
+    _sectionData: { name: string; value: number; currency: string },
     index: number,
   ) => {
     setActiveIndex(index);
 
-    const clickedItem = data.find((d) => d.name === sectionData.name);
+    const clickedItem = data[index];
     if (!clickedItem) return;
 
     // At root level, check if this category has children to drill into
@@ -126,12 +139,12 @@ export function DrillableDonutChart({
   if (isLoading) {
     return (
       <Card className="overflow-hidden backdrop-blur-sm">
-        <CardHeader className="px-5 pb-1 pt-5">
-          <Skeleton className="h-4 w-[120px]" />
+        <CardHeader className="px-5 pt-5 pb-1">
+          <Skeleton className="h-4 w-30" />
         </CardHeader>
-        <CardContent className="px-5 pb-5 pt-0">
-          <div className="flex h-[160px] items-center justify-center">
-            <Skeleton className="h-[120px] w-[120px] rounded-full" />
+        <CardContent className="px-5 pt-0 pb-5">
+          <div className="flex h-40 items-center justify-center">
+            <Skeleton className="h-30 w-30 rounded-full" />
           </div>
         </CardContent>
       </Card>
@@ -143,22 +156,28 @@ export function DrillableDonutChart({
       className="hover:bg-muted/50 cursor-pointer overflow-hidden backdrop-blur-sm transition-colors"
       onClick={onCardClick}
     >
-      <CardHeader className="px-5 pb-1 pt-5">
+      <CardHeader className="px-5 pt-5 pb-1">
         {isAtRoot ? (
-          <CardTitle className="text-muted-foreground text-[12px] font-semibold uppercase tracking-[0.18em]">
+          <CardTitle className="text-muted-foreground text-xs font-semibold tracking-[0.18em] uppercase">
             {title}
           </CardTitle>
         ) : (
           <div onClick={(e) => e.stopPropagation()}>
             <AllocationBreadcrumb
-              path={path}
+              path={path.map((item) => ({
+                ...item,
+                name:
+                  allocation?.categories
+                    .flatMap((c) => [c, ...(c.children ?? [])])
+                    .find((c) => c.categoryId === item.id)?.categoryName ?? item.name,
+              }))}
               rootLabel={title}
               onNavigate={handleBreadcrumbNavigate}
             />
           </div>
         )}
       </CardHeader>
-      <CardContent className="px-5 pb-5 pt-0">
+      <CardContent className="px-5 pt-0 pb-5">
         {data.length > 0 ? (
           <DonutChart
             data={data}
@@ -168,10 +187,13 @@ export function DrillableDonutChart({
             endAngle={0}
           />
         ) : (
-          <EmptyPlaceholder
-            description={t("holdings:no_typed_data_available", { type: title.toLowerCase() })}
-            className="max-h-[160px]"
-          />
+          <Empty className="max-h-40">
+            <EmptyHeader>
+              <EmptyDescription>
+                {t("holdings:no_typed_data_available", { type: title.toLowerCase() })}
+              </EmptyDescription>
+            </EmptyHeader>
+          </Empty>
         )}
       </CardContent>
     </Card>

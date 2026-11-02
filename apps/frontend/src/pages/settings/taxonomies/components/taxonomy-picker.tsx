@@ -1,3 +1,4 @@
+import { getCategoryLabel } from "@/lib/taxonomy-labels";
 import { useState, useMemo, useCallback } from "react";
 import { useTranslation } from "react-i18next";
 import {
@@ -114,7 +115,7 @@ export function TaxonomyPicker({
     return (
       <Button variant="outline" className="w-full justify-between" disabled>
         <Skeleton className="h-4 w-32" />
-        <Icons.ChevronsUpDown className="ml-2 h-4 w-4 shrink-0 opacity-50" />
+        <Icons.ChevronsUpDown className="ms-2 h-4 w-4 shrink-0 opacity-50" />
       </Button>
     );
   }
@@ -124,7 +125,7 @@ export function TaxonomyPicker({
     return (
       <Button variant="outline" className="text-destructive w-full justify-between" disabled>
         <span>{t("settings:tax_error_loading")}</span>
-        <Icons.AlertCircle className="ml-2 h-4 w-4 shrink-0" />
+        <Icons.AlertCircle className="ms-2 h-4 w-4 shrink-0" />
       </Button>
     );
   }
@@ -134,60 +135,60 @@ export function TaxonomyPicker({
     return (
       <Button variant="outline" className="w-full justify-between" disabled>
         <span className="text-muted-foreground">{t("settings:tax_no_categories_available")}</span>
-        <Icons.ChevronsUpDown className="ml-2 h-4 w-4 shrink-0 opacity-50" />
+        <Icons.ChevronsUpDown className="ms-2 h-4 w-4 shrink-0 opacity-50" />
       </Button>
     );
   }
 
   return (
     <Popover open={open} onOpenChange={setOpen}>
-      <PopoverTrigger asChild>
-        <Button
-          variant="outline"
-          role="combobox"
-          aria-expanded={open}
-          aria-label={t("settings:tax_select_category_aria")}
-          className={cn("w-full justify-between", !selectedCategory && "text-muted-foreground")}
-          disabled={disabled}
-        >
-          <div className="flex items-center gap-2 truncate">
-            {selectedCategory ? (
-              <>
-                <span
-                  className="h-3 w-3 shrink-0 rounded-full"
-                  style={{ backgroundColor: selectedCategory.color }}
-                />
-                <span className="truncate">{selectedCategory.name}</span>
-              </>
-            ) : (
-              <span>{resolvedPlaceholder}</span>
-            )}
-          </div>
-          <div className="flex items-center gap-1">
-            {selectedCategory && !disabled && (
-              <span
-                role="button"
-                tabIndex={0}
-                className="hover:bg-muted rounded-sm p-0.5"
-                onClick={handleClear}
-                onKeyDown={(e) => {
-                  if (e.key === "Enter" || e.key === " ") {
-                    handleClear(e as unknown as React.MouseEvent);
-                  }
-                }}
-              >
-                <Icons.Close className="h-3 w-3 opacity-50 hover:opacity-100" />
-              </span>
-            )}
-            <Icons.ChevronsUpDown className="h-4 w-4 shrink-0 opacity-50" />
-          </div>
-        </Button>
-      </PopoverTrigger>
-      <PopoverContent
-        className="p-0"
-        align="start"
-        style={{ minWidth: "var(--radix-popover-trigger-width)" }}
+      <PopoverTrigger
+        render={
+          <Button
+            variant="field"
+            role="combobox"
+            aria-expanded={open}
+            aria-label={t("settings:tax_select_category_aria")}
+            className={cn("w-full justify-between", !selectedCategory && "text-muted-foreground")}
+            disabled={disabled}
+          />
+        }
       >
+        <div className="flex items-center gap-2 truncate">
+          {selectedCategory ? (
+            <>
+              <span
+                className="h-3 w-3 shrink-0 rounded-full"
+                style={{ backgroundColor: selectedCategory.color }}
+              />
+              <span className="truncate">
+                {getCategoryLabel(t, taxonomyId, selectedCategory.id, selectedCategory.name)}
+              </span>
+            </>
+          ) : (
+            <span>{resolvedPlaceholder}</span>
+          )}
+        </div>
+        <div className="flex items-center gap-1">
+          {selectedCategory && !disabled && (
+            <span
+              role="button"
+              tabIndex={0}
+              className="hover:bg-muted rounded-sm p-0.5"
+              onClick={handleClear}
+              onKeyDown={(e) => {
+                if (e.key === "Enter" || e.key === " ") {
+                  handleClear(e as unknown as React.MouseEvent);
+                }
+              }}
+            >
+              <Icons.Close className="h-3 w-3 opacity-50 hover:opacity-100" />
+            </span>
+          )}
+          <Icons.ChevronsUpDown className="h-4 w-4 shrink-0 opacity-50" />
+        </div>
+      </PopoverTrigger>
+      <PopoverContent className="p-0" align="start" style={{ minWidth: "var(--anchor-width)" }}>
         <Command>
           <CommandInput placeholder={t("settings:tax_search_categories")} />
           <CommandList>
@@ -196,27 +197,29 @@ export function TaxonomyPicker({
               {flattenedCategories.map((category) => (
                 <CommandItem
                   key={category.id}
-                  value={`${category.name} ${category.id}`}
+                  value={`${category.name} ${getCategoryLabel(t, taxonomyId, category.id, category.name)} ${category.id}`}
                   onSelect={() => handleSelect(category.id)}
                   className="flex items-center py-1.5"
                 >
                   {/* Indentation based on level */}
                   <div
                     className="flex items-center"
-                    style={{ paddingLeft: `${category.level * 16}px` }}
+                    style={{ paddingInlineStart: `${category.level * 16}px` }}
                   >
                     {/* Color dot */}
                     <span
-                      className="mr-2 h-3 w-3 shrink-0 rounded-full"
+                      className="me-2 h-3 w-3 shrink-0 rounded-full"
                       style={{ backgroundColor: category.color }}
                     />
                     {/* Category name */}
-                    <span className="truncate">{category.name}</span>
+                    <span className="truncate">
+                      {getCategoryLabel(t, taxonomyId, category.id, category.name)}
+                    </span>
                   </div>
                   {/* Check icon for selected item */}
                   <Icons.Check
                     className={cn(
-                      "ml-auto h-4 w-4 shrink-0",
+                      "ms-auto h-4 w-4 shrink-0",
                       value === category.id ? "opacity-100" : "opacity-0",
                     )}
                   />

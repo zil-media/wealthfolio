@@ -1,6 +1,10 @@
 import * as z from "zod";
-import { AlternativeAssetKind } from "@/lib/types";
+import type { LoanSetup } from "@/adapters/shared/alternative-assets";
+import { readActiveLoanProjection, LOAN_RENEWAL_MATURITY_METADATA_KEY } from "../lib/loan-events";
+import { calculateAmortizationMonths, calculateLoanPaymentDate } from "../lib/loan-calculator";
+import { AlternativeAssetKind, type AlternativeAssetHolding } from "@/lib/types";
 import { parseLocalDate } from "@/lib/utils";
+import type { LinkedLiability } from "./asset-details-sheet";
 
 // Property types
 export const PROPERTY_TYPES = [
@@ -42,6 +46,7 @@ export const LIABILITY_TYPES = [
   { value: "credit_card", label: "Credit Card" },
   { value: "personal_loan", label: "Personal Loan" },
   { value: "heloc", label: "HELOC" },
+  { value: "other", label: "Other" },
 ] as const;
 
 // Vehicle types (optional, for future use)
@@ -55,21 +60,32 @@ export const VEHICLE_TYPES = [
 // Base schema for common fields across all asset types
 const baseSchema = z.object({
   // Name field (required, editable)
-  name: z.string().min(1, "Name is required").max(100, "Name must be less than 100 characters"),
+  name: z
+    .string()
+    .min(1, "asset:detailsSheet.validation.name_is_required")
+    .max(100, "asset:detailsSheet.validation.name_must_be_less_than_100_characters"),
   // Common fields for all types
   purchasePrice: z.coerce
     .number()
-    .positive("Purchase price must be greater than 0")
+    .positive("asset:detailsSheet.validation.purchase_price_must_be_greater_than_0")
     .optional()
     .nullable(),
   purchaseDate: z.date().optional().nullable(),
-  notes: z.string().max(1000, "Notes must be less than 1000 characters").optional().nullable(),
+  notes: z
+    .string()
+    .max(1000, "asset:detailsSheet.validation.notes_must_be_less_than_1000_characters")
+    .optional()
+    .nullable(),
 });
 
 // Property-specific schema
 export const propertyDetailsSchema = baseSchema.extend({
   kind: z.literal(AlternativeAssetKind.PROPERTY),
-  address: z.string().max(200, "Address must be less than 200 characters").optional().nullable(),
+  address: z
+    .string()
+    .max(200, "asset:detailsSheet.validation.address_must_be_less_than_200_characters")
+    .optional()
+    .nullable(),
   propertyType: z.enum(["residence", "rental", "land", "commercial"]).optional().nullable(),
 });
 
@@ -79,7 +95,7 @@ export const vehicleDetailsSchema = baseSchema.extend({
   vehicleType: z.enum(["car", "motorcycle", "boat", "rv"]).optional().nullable(),
   description: z
     .string()
-    .max(200, "Description must be less than 200 characters")
+    .max(200, "asset:detailsSheet.validation.description_must_be_less_than_200_characters")
     .optional()
     .nullable(),
 });
@@ -90,7 +106,7 @@ export const collectibleDetailsSchema = baseSchema.extend({
   collectibleType: z.enum(["art", "wine", "watch", "jewelry", "memorabilia"]).optional().nullable(),
   description: z
     .string()
-    .max(200, "Description must be less than 200 characters")
+    .max(200, "asset:detailsSheet.validation.description_must_be_less_than_200_characters")
     .optional()
     .nullable(),
 });
@@ -99,11 +115,15 @@ export const collectibleDetailsSchema = baseSchema.extend({
 export const preciousMetalDetailsSchema = baseSchema.extend({
   kind: z.literal(AlternativeAssetKind.PRECIOUS_METAL),
   metalType: z.enum(["gold", "silver", "platinum", "palladium"]).optional().nullable(),
-  quantity: z.coerce.number().positive("Quantity must be greater than 0").optional().nullable(),
+  quantity: z.coerce
+    .number()
+    .positive("asset:detailsSheet.validation.quantity_must_be_greater_than_0")
+    .optional()
+    .nullable(),
   unit: z.enum(["oz", "g", "kg"]).optional().nullable(),
   description: z
     .string()
-    .max(200, "Description must be less than 200 characters")
+    .max(200, "asset:detailsSheet.validation.description_must_be_less_than_200_characters")
     .optional()
     .nullable(),
 });
@@ -112,22 +132,61 @@ export const preciousMetalDetailsSchema = baseSchema.extend({
 export const liabilityDetailsSchema = baseSchema.extend({
   kind: z.literal(AlternativeAssetKind.LIABILITY),
   liabilityType: z
-    .enum(["mortgage", "auto_loan", "student_loan", "credit_card", "personal_loan", "heloc"])
+    .enum([
+      "mortgage",
+      "auto_loan",
+      "student_loan",
+      "credit_card",
+      "personal_loan",
+      "heloc",
+      "other",
+    ])
     .optional()
     .nullable(),
   originalAmount: z.coerce
     .number()
-    .positive("Original amount must be greater than 0")
+    .positive("asset:detailsSheet.validation.original_amount_must_be_greater_than_0")
     .optional()
     .nullable(),
   originationDate: z.date().optional().nullable(),
-  interestRate: z.coerce
+  amortizationYears: z
     .number()
-    .min(0, "Interest rate must be 0 or greater")
-    .max(100, "Interest rate must be 100 or less")
+    .int()
+    .min(0)
+    .max(100, "asset:loanActions.validation.term_too_long")
     .optional()
     .nullable(),
+  amortizationMonths: z
+    .number()
+    .int()
+    .min(0)
+    .max(1200, "asset:loanActions.validation.term_too_long")
+    .optional()
+    .nullable(),
+  /** Stored horizon, kept unless the entered amortization no longer matches it. */
+  amortizationEndDate: z.date().optional().nullable(),
+  interestRate: z.coerce
+    .number()
+    .min(0, "asset:detailsSheet.validation.interest_rate_must_be_0_or_greater")
+    .max(100, "asset:detailsSheet.validation.interest_rate_must_be_100_or_less")
+    .optional()
+    .nullable(),
+  automaticLoan: z.boolean().optional(),
+  renewalMaturity: z.date().optional().nullable(),
+  paymentAmount: z
+    .number()
+    .finite()
+    .positive("asset:loanActions.validation.payment_positive")
+    .optional()
+    .nullable(),
+  paymentFrequency: z.enum(["monthly", "biweekly", "accelerated_biweekly"]).optional(),
+  interestMethod: z.enum(["nominal_periodic", "monthly", "semiannual"]).optional(),
+  firstPaymentDate: z.date().optional().nullable(),
   linkedAssetId: z.string().optional().nullable(),
+  /** "Paid from" cash account; saved by a loan action, not with the metadata. */
+  paymentAccountId: z.string().optional().nullable(),
+  /** Escrow usually included in a payment; saved with the "Paid from" account. */
+  escrowAmount: z.number().finite().min(0).optional().nullable(),
 });
 
 // Other asset schema (generic)
@@ -135,23 +194,62 @@ export const otherDetailsSchema = baseSchema.extend({
   kind: z.literal(AlternativeAssetKind.OTHER),
   description: z
     .string()
-    .max(200, "Description must be less than 200 characters")
+    .max(200, "asset:detailsSheet.validation.description_must_be_less_than_200_characters")
     .optional()
     .nullable(),
 });
 
+/** Loan messages are translation keys; the sheet translates them. */
+const REQUIRED = "asset:loanActions.validation.required";
+
 // Discriminated union of all asset type schemas
-export const assetDetailsSchema = z.discriminatedUnion("kind", [
-  propertyDetailsSchema,
-  vehicleDetailsSchema,
-  collectibleDetailsSchema,
-  preciousMetalDetailsSchema,
-  liabilityDetailsSchema,
-  otherDetailsSchema,
-]);
+export const assetDetailsSchema = z
+  .discriminatedUnion("kind", [
+    propertyDetailsSchema,
+    vehicleDetailsSchema,
+    collectibleDetailsSchema,
+    preciousMetalDetailsSchema,
+    liabilityDetailsSchema,
+    otherDetailsSchema,
+  ])
+  .superRefine((values, ctx) => {
+    if (values.kind !== AlternativeAssetKind.LIABILITY || !values.automaticLoan) return;
+    for (const field of [
+      "originalAmount",
+      "originationDate",
+      "interestRate",
+      "paymentAmount",
+      "paymentFrequency",
+      "firstPaymentDate",
+    ] as const) {
+      if (values[field] == null)
+        ctx.addIssue({ code: z.ZodIssueCode.custom, path: [field], message: REQUIRED });
+    }
+    if (
+      values.firstPaymentDate &&
+      values.originationDate &&
+      values.firstPaymentDate <= values.originationDate
+    ) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["firstPaymentDate"],
+        message: "asset:loanActions.validation.first_payment_after_origination",
+      });
+    }
+    if (totalAmortizationMonths(values) <= 0) {
+      ctx.addIssue({ code: z.ZodIssueCode.custom, path: ["amortizationYears"], message: REQUIRED });
+    }
+  });
 
 // Type for the combined form values
 export type AssetDetailsFormValues = z.infer<typeof assetDetailsSchema>;
+
+/** Total amortization entered as years plus months. */
+export function totalAmortizationMonths(
+  values: Pick<LiabilityDetailsFormValues, "amortizationYears" | "amortizationMonths">,
+): number {
+  return (values.amortizationYears ?? 0) * 12 + (values.amortizationMonths ?? 0);
+}
 
 // Type-specific form value types for convenience
 export type PropertyDetailsFormValues = z.infer<typeof propertyDetailsSchema>;
@@ -176,7 +274,7 @@ export function getDefaultDetailsFormValues(
   };
 
   // Read sub_type from metadata (unified field for all asset types)
-  const subType = (metadata?.sub_type as string) ?? null;
+  const subType = (metadata?.sub_type ?? metadata?.liability_type) as string | null;
 
   switch (kind) {
     case AlternativeAssetKind.PROPERTY:
@@ -216,20 +314,56 @@ export function getDefaultDetailsFormValues(
         description: (metadata?.description as string) ?? null,
       };
 
-    case AlternativeAssetKind.LIABILITY:
+    case AlternativeAssetKind.LIABILITY: {
       // For original amount, check both new field (original_amount) and legacy field (purchase_price)
       const origAmount = metadata?.original_amount ?? metadata?.purchase_price;
       // For origination date, check both new field (origination_date) and legacy field (purchase_date)
       const origDate = metadata?.origination_date ?? metadata?.purchase_date;
+      const projection = readActiveLoanProjection(metadata);
+      const firstPaymentDate = projection ? parseLocalDate(projection.firstPaymentDate) : null;
+      const endDate = projection?.amortizationEndDate
+        ? parseLocalDate(projection.amortizationEndDate)
+        : projection?.paymentCount && firstPaymentDate
+          ? calculateLoanPaymentDate(
+              firstPaymentDate,
+              projection.paymentCount - 1,
+              projection.frequency,
+            )
+          : null;
+      const amortization =
+        firstPaymentDate && endDate
+          ? calculateAmortizationMonths(firstPaymentDate, endDate, projection?.frequency)
+          : null;
       return {
         ...base,
         kind: AlternativeAssetKind.LIABILITY,
         liabilityType: subType as LiabilityDetailsFormValues["liabilityType"],
         originalAmount: origAmount ? parseFloat(origAmount as string) : null,
         originationDate: origDate ? parseLocalDate(origDate as string) : null,
-        interestRate: metadata?.interest_rate ? parseFloat(metadata.interest_rate as string) : null,
+        amortizationYears: amortization == null ? null : Math.floor(amortization / 12),
+        amortizationMonths: amortization == null ? null : amortization % 12 || null,
+        amortizationEndDate: endDate,
+        interestRate:
+          projection?.annualRate ??
+          (typeof metadata?.interest_rate === "number"
+            ? metadata.interest_rate
+            : typeof metadata?.interest_rate === "string"
+              ? parseFloat(metadata.interest_rate)
+              : null),
+        automaticLoan: !!projection,
+        renewalMaturity:
+          typeof metadata?.[LOAN_RENEWAL_MATURITY_METADATA_KEY] === "string"
+            ? parseLocalDate(metadata[LOAN_RENEWAL_MATURITY_METADATA_KEY])
+            : null,
+        firstPaymentDate,
+        paymentAmount: projection?.paymentAmount ?? null,
+        paymentFrequency: projection?.frequency ?? "monthly",
+        interestMethod: projection?.interestMethod ?? "nominal_periodic",
         linkedAssetId: (metadata?.linked_asset_id as string) ?? null,
+        paymentAccountId: storedPaymentAccount(metadata),
+        escrowAmount: storedEscrow(metadata) || null,
       };
+    }
 
     case AlternativeAssetKind.OTHER:
     default:
@@ -285,15 +419,12 @@ export function formValuesToMetadata(values: AssetDetailsFormValues): Record<str
       if (values.description) metadata.description = values.description;
       break;
 
-    case AlternativeAssetKind.LIABILITY:
+    case AlternativeAssetKind.LIABILITY: {
+      // The loan section is saved by the backend from a loan setup; see loanSetupAction.
       if (values.liabilityType) metadata.sub_type = values.liabilityType;
-      if (values.originalAmount != null)
-        metadata.original_amount = values.originalAmount.toString();
-      if (values.originationDate)
-        metadata.origination_date = formatDateToISO(values.originationDate);
-      if (values.interestRate != null) metadata.interest_rate = values.interestRate.toString();
       if (values.linkedAssetId) metadata.linked_asset_id = values.linkedAssetId;
       break;
+    }
 
     case AlternativeAssetKind.OTHER:
       if (values.description) metadata.description = values.description;
@@ -303,10 +434,54 @@ export function formValuesToMetadata(values: AssetDetailsFormValues): Record<str
   return metadata;
 }
 
+/** A liability as the details sheet lists it; an unavailable balance is left out, not shown as zero. */
+export function toLinkedLiability(holding: AlternativeAssetHolding): LinkedLiability {
+  return {
+    id: holding.id,
+    name: holding.name,
+    balance: holding.loan?.balanceSource === null ? undefined : holding.marketValue,
+  };
+}
+
 // Helper to format date to ISO string (YYYY-MM-DD)
 function formatDateToISO(date: Date): string {
   const year = date.getFullYear();
   const month = String(date.getMonth() + 1).padStart(2, "0");
   const day = String(date.getDate()).padStart(2, "0");
   return `${year}-${month}-${day}`;
+}
+
+function storedPaymentAccount(metadata?: Record<string, unknown>): string | null {
+  const account = metadata?.payment_account_id;
+  return typeof account === "string" && account ? account : null;
+}
+
+function storedEscrow(metadata?: Record<string, unknown>): number {
+  const escrow = Number(metadata?.escrow_amount);
+  return Number.isFinite(escrow) && escrow > 0 ? escrow : 0;
+}
+
+/** The loan section as entered; the backend checks it and derives the stored terms. */
+export function liabilityLoanSetup(values: LiabilityDetailsFormValues): LoanSetup {
+  const day = (date?: Date | null) => (date ? formatDateToISO(date) : undefined);
+  const amounts = {
+    originalAmount: values.originalAmount ?? undefined,
+    originationDate: day(values.originationDate),
+    interestRate: values.interestRate ?? undefined,
+  };
+  if (!values.automaticLoan) return amounts;
+  const months = totalAmortizationMonths(values);
+  return {
+    ...amounts,
+    schedule: {
+      frequency: values.paymentFrequency ?? "monthly",
+      interestMethod: values.interestMethod ?? "nominal_periodic",
+      firstPaymentDate: day(values.firstPaymentDate),
+      amortizationMonths: months > 0 ? months : undefined,
+      paymentAmount: values.paymentAmount ?? undefined,
+      renewalMaturity: day(values.renewalMaturity),
+      paymentAccountId: values.paymentAccountId || undefined,
+      escrowAmount: values.escrowAmount ?? undefined,
+    },
+  };
 }

@@ -7,19 +7,33 @@ members = [
 ]
 
 [workspace.package]
-version = "3.9.1"
+version = "3.12.0"
 edition = "2021"
 license = "AGPL-3.0"
 
 [workspace.lints.rust]
-unsafe_code = "forbid"
+# deny, not forbid: the FFI calls that need unsafe allow it locally, with a reason.
+unsafe_code = "deny"
 
 [workspace.lints.clippy]
 all = "warn"
+# Production code returns errors instead of panicking. Where a value provably
+# cannot be missing, `expect("why it cannot fail")` states the invariant.
+# Tests are exempt (clippy.toml).
+unwrap_used = "warn"
+panic = "warn"
 
 [profile.dev]
 # Keep file/line backtraces without full type and variable debug information.
 debug = "line-tables-only"
+
+# portfolio-engine's property tests take minutes unoptimized. opt-level leaves
+# the test profile's overflow checks and debug assertions on.
+[profile.test.package.wealthfolio-portfolio-engine]
+opt-level = 3
+
+[profile.test.package.rust_decimal]
+opt-level = 3
 
 [workspace.dependencies]
 # Async runtime
@@ -44,7 +58,7 @@ r2d2 = "0.8"
 chrono = { version = "0.4", features = ["serde"] }
 
 # HTTP
-reqwest = { version = "0.13.5", default-features = false, features = ["json", "rustls", "query", "form", "stream"] }
+reqwest = { version = "0.13.5", default-features = false, features = ["json", "rustls", "query", "form", "stream", "charset", "http2", "system-proxy"] }
 
 # Error handling
 thiserror = "1"
@@ -63,7 +77,7 @@ async-trait = "0.1"
 futures = "0.3"
 
 # MCP (Model Context Protocol)
-rmcp = { version = "1.7", default-features = false, features = ["server", "transport-streamable-http-server"] }
+rmcp = { version = "2.1", default-features = false, features = ["server", "transport-streamable-http-server"] }
 
 # Logging
 log = "0.4"
@@ -88,8 +102,4 @@ wealthfolio-ai = { path = "crates/ai" }
 wealthfolio-spending = { path = "crates/spending" }
 wealthfolio-agent-tools = { path = "crates/agent-tools" }
 wealthfolio-mcp = { path = "crates/wealthfolio-mcp" }
-
-# Tauri 2.x requires tao 0.35; this upstream fix keeps the iOS scene configuration alive.
-# Remove when a Tauri release accepts tao >= 0.36.
-[patch.crates-io]
-tao = { git = "https://github.com/tauri-apps/tao", rev = "f2163508" }
+wealthfolio-portfolio-engine = { path = "crates/portfolio-engine" }

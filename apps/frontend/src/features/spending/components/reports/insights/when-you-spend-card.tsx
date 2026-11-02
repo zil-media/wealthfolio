@@ -14,9 +14,10 @@ import { useAmountFormatting } from "@wealthfolio/ui";
 
 import { getVisibleSpendingAmount } from "../../../lib/constants";
 import { createZonedDayHourFormatter, type ZonedDayHour } from "../../../lib/timezone";
+import { Card } from "@wealthfolio/ui/components/ui/card";
 
-const CARD_CLASS = "border-border/60 bg-card/40 rounded-2xl border p-5 backdrop-blur-xl";
-const LABEL_CLASS = "text-muted-foreground/70 text-[10px] font-normal uppercase tracking-[0.12em]";
+const CARD_CLASS = "p-5";
+const LABEL_CLASS = "text-muted-foreground/70 text-2xs font-normal uppercase tracking-[0.12em]";
 
 const DAY_NAME_KEYS = [
   "spending:dayOfWeek.mon",
@@ -59,7 +60,7 @@ export const WhenYouSpendCard: FC<WhenYouSpendCardProps> = ({
 
   if (activities.length === 0) {
     return (
-      <div className={CARD_CLASS}>
+      <Card className={CARD_CLASS}>
         <header className="mb-3">
           <h3 className="text-foreground text-base font-semibold tracking-tight">
             {t("spending:whenYouSpend.title")}
@@ -79,12 +80,12 @@ export const WhenYouSpendCard: FC<WhenYouSpendCardProps> = ({
               : "spending:whenYouSpend.noActivity",
           )}
         </div>
-      </div>
+      </Card>
     );
   }
 
   return (
-    <div className={CARD_CLASS}>
+    <Card className={CARD_CLASS}>
       <header className="mb-4 flex flex-wrap items-baseline justify-between gap-2">
         <div>
           <h3 className="text-foreground text-base font-semibold tracking-tight">
@@ -112,9 +113,9 @@ export const WhenYouSpendCard: FC<WhenYouSpendCardProps> = ({
       <div className="grid grid-cols-[auto_1fr_auto] items-center gap-x-3 gap-y-1">
         {/* Hour-axis label row */}
         <div />
-        <div className="text-muted-foreground/70 grid grid-cols-8 text-[10px]">
+        <div className="text-muted-foreground/70 text-2xs grid grid-cols-8">
           {HOUR_LABELS.map((h, i) => (
-            <span key={i} className="text-left">
+            <span key={i} className="text-start">
               {h}
             </span>
           ))}
@@ -143,7 +144,7 @@ export const WhenYouSpendCard: FC<WhenYouSpendCardProps> = ({
         })}
       </div>
 
-      <div className="border-border/40 mt-4 flex items-center justify-between border-t pt-3 text-[11px]">
+      <div className="border-border/40 text-2xs mt-4 flex items-center justify-between border-t pt-3">
         {!isPhone && (
           <span className="text-muted-foreground/70">
             {t(
@@ -158,7 +159,7 @@ export const WhenYouSpendCard: FC<WhenYouSpendCardProps> = ({
         )}
         <Legend />
       </div>
-    </div>
+    </Card>
   );
 };
 
@@ -190,7 +191,7 @@ function Row({
   const hoursPerCell = Math.max(1, Math.round(24 / cols));
   return (
     <>
-      <div className="text-muted-foreground/80 pr-1 text-right text-[11px]">{day}</div>
+      <div className="text-muted-foreground/80 text-2xs pe-1 text-end">{day}</div>
       <div
         className="grid gap-[3px]"
         style={{ gridTemplateColumns: `repeat(${cols}, minmax(0,1fr))` }}
@@ -229,7 +230,7 @@ function Row({
               key={i}
               type="button"
               onClick={() => onCellClick(weekdayIndex, startHour, Math.min(24, endHour + 1))}
-              className="aspect-square rounded-[3px] transition-all hover:scale-110 hover:ring-1 hover:ring-[var(--ring)] focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-[var(--ring)]"
+              className="aspect-square rounded-[3px] transition-all hover:scale-110 hover:ring-1 hover:ring-[var(--ring)] focus-visible:ring-1 focus-visible:ring-[var(--ring)] focus-visible:outline-none"
               style={{ backgroundColor: "var(--heatmap-accent)", opacity }}
               title={label}
               aria-label={label}
@@ -239,7 +240,7 @@ function Row({
       </div>
       <div
         className={cn(
-          "text-foreground/90 inline-flex items-center pl-1 text-xs tabular-nums",
+          "text-foreground/90 inline-flex items-center ps-1 text-xs tabular-nums",
           !isPhone && "gap-2",
         )}
       >

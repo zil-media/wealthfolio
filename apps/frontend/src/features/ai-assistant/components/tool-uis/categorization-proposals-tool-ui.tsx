@@ -1,3 +1,4 @@
+import { getCategoryPathLabel } from "@/lib/taxonomy-labels";
 import { updateToolResult } from "@/adapters";
 import { QuickCategorizePopover } from "@/features/spending/components/quick-categorize-popover";
 import { useBulkAssignCategories } from "@/features/spending/hooks/use-cash-activities";
@@ -17,8 +18,9 @@ import {
   CardHeader,
   CardTitle,
   Checkbox,
+  useAmountFormatting,
   useDateFormatting,
-  useNumberFormatting,
+  Spinner,
 } from "@wealthfolio/ui";
 import { Icons } from "@wealthfolio/ui/components/ui/icons";
 import { memo, useEffect, useMemo, useState } from "react";
@@ -30,12 +32,13 @@ import type {
   ProposeCategoryOption,
   ProposeCategoryProposal,
 } from "../../types";
+import { categoryPickerScope, unwrapSpendingResult } from "./spending-result-utils";
 import { createActivityAmountFormatter, formatActivityAmount, formatActivityDate } from "./shared";
 
-type CategorizationProposalsToolUIContentProps = ToolCallMessagePartProps<
-  ProposeCategoriesArgs,
-  ProposeCategoriesOutput
->;
+type CategorizationProposalsToolUIContentProps = Omit<
+  ToolCallMessagePartProps<ProposeCategoriesArgs, ProposeCategoriesOutput>,
+  "result"
+> & { result?: unknown };
 
 interface RowDraft {
   activityId: string;
@@ -53,10 +56,10 @@ interface RowDraft {
   selected: boolean;
 }
 
-function confidencePillClass(confidence: number): string {
-  if (confidence >= 0.85) return "bg-success/15 text-success border-success/30";
-  if (confidence >= 0.6) return "bg-warning/15 text-warning border-warning/30";
-  return "bg-muted text-muted-foreground border-border";
+function confidenceVariant(confidence: number) {
+  if (confidence >= 0.85) return "success-subtle";
+  if (confidence >= 0.6) return "warning-subtle";
+  return "outline";
 }
 
 function confidenceLabel(confidence: number): string {
@@ -77,18 +80,22 @@ function ProposalsLoadingState() {
             {t("ai:categorization.categorizingHint")}
           </p>
         </div>
-        <Icons.Spinner className="text-muted-foreground h-4 w-4 shrink-0 animate-spin" />
+        <Spinner className="text-muted-foreground h-4 w-4 shrink-0" />
       </CardContent>
     </Card>
   );
 }
 
-function CategorizationProposalsContentImpl({
-  result,
+export function CategorizationProposalsContentImpl({
+  result: rawResult,
   status,
   toolCallId,
 }: CategorizationProposalsToolUIContentProps) {
-  const numberFormatting = useNumberFormatting();
+  const result = useMemo(
+    () => unwrapSpendingResult<ProposeCategoriesOutput>(rawResult),
+    [rawResult],
+  );
+  const amountFormatting = useAmountFormatting();
   const dateFormatting = useDateFormatting();
 
   const { t } = useTranslation();
@@ -98,8 +105,8 @@ function CategorizationProposalsContentImpl({
   const runtime = useRuntimeContext();
   const threadId = runtime.currentThreadId;
   const amountFormatter = useMemo(
-    () => createActivityAmountFormatter(numberFormatting),
-    [numberFormatting],
+    () => createActivityAmountFormatter(amountFormatting),
+    [amountFormatting],
   );
   const bulkAssign = useBulkAssignCategories();
 
@@ -171,25 +178,19 @@ function CategorizationProposalsContentImpl({
 
   if (isIncomplete) {
     return (
-      <Card className="border-destructive/30 bg-destructive/5">
-        <CardContent className="py-4">
-          <p className="text-destructive text-sm font-medium">
-            {t("ai:categorization.failedLoad")}
-          </p>
-        </CardContent>
-      </Card>
+      <Alert variant="destructive">
+        <Icons.AlertCircle />
+        <AlertTitle>{t("ai:categorization.failedLoad")}</AlertTitle>
+      </Alert>
     );
   }
 
   if (!result) {
     return (
-      <Card className="border-destructive/30 bg-destructive/5">
-        <CardContent className="py-4">
-          <p className="text-destructive text-sm font-medium">
-            {t("ai:categorization.noProposals")}
-          </p>
-        </CardContent>
-      </Card>
+      <Alert variant="destructive">
+        <Icons.AlertCircle />
+        <AlertTitle>{t("ai:categorization.noProposals")}</AlertTitle>
+      </Alert>
     );
   }
 
@@ -211,6 +212,7 @@ function CategorizationProposalsContentImpl({
   };
 
   const updateRowCategory = (activityId: string, taxonomyId: string, categoryId: string) => {
+    if (rows.find((row) => row.activityId === activityId)?.taxonomyId !== taxonomyId) return;
     const cat = categoryPathMap.get(categoryId);
     setRows((prev) =>
       prev.map((r) =>
@@ -298,13 +300,8 @@ function CategorizationProposalsContentImpl({
           <div className="flex flex-wrap items-center justify-between gap-2 px-6">
             <label className="flex cursor-pointer items-center gap-2 text-xs">
               <Checkbox
-                checked={
-                  selectedCount === 0
-                    ? false
-                    : selectedCount === rows.length
-                      ? true
-                      : "indeterminate"
-                }
+                checked={rows.length > 0 && selectedCount === rows.length}
+                indeterminate={selectedCount > 0 && selectedCount < rows.length}
                 onCheckedChange={(checked) =>
                   checked === true ? handleAcceptAll() : handleRejectAll()
                 }
@@ -328,7 +325,7 @@ function CategorizationProposalsContentImpl({
           </div>
         )}
 
-        <div className="max-h-[420px] overflow-y-auto px-2">
+        <div className="max-h-105 overflow-y-auto px-2">
           {rows.length === 0 && visibleUnproposed.length === 0 && (
             <p className="text-muted-foreground px-4 py-6 text-center text-xs">
               {(result.taxonomies?.length ?? 0) === 0
@@ -354,7 +351,7 @@ function CategorizationProposalsContentImpl({
               <span className="text-muted-foreground w-24 whitespace-nowrap tabular-nums">
                 {formatActivityDate(row.activityDate, dateFormatting)}
               </span>
-              <span className="w-24 text-right tabular-nums">
+              <span className="w-24 text-end tabular-nums">
                 {formatActivityAmount(
                   row.amount,
                   amountFormatter,
@@ -373,25 +370,39 @@ function CategorizationProposalsContentImpl({
                 trigger={
                   <button
                     type="button"
-                    className="hover:bg-muted/70 inline-flex items-center gap-1.5 rounded-full border px-2 py-0.5 text-[11px]"
+                    className="hover:bg-muted/70 text-2xs inline-flex items-center gap-1.5 rounded-full border px-2 py-0.5"
                     disabled={isSubmitted}
                   >
                     <span
                       className="h-2 w-2 rounded-full"
                       style={{ backgroundColor: row.categoryColor }}
                     />
-                    <span className="max-w-[180px] truncate">{row.categoryPath}</span>
+                    <span className="max-w-45 truncate">
+                      {getCategoryPathLabel(
+                        t,
+                        row.taxonomyId,
+                        row.categoryId,
+                        row.categoryPath,
+                        result.taxonomies?.find(
+                          (taxonomy) => taxonomy.taxonomyId === row.taxonomyId,
+                        )?.categories ?? [],
+                      )}
+                    </span>
                   </button>
                 }
                 selectedCategoryId={row.categoryId}
-                scope="both"
+                scope={categoryPickerScope(row.taxonomyId) ?? "expense"}
                 onSelect={(taxonomyId, categoryId) =>
                   updateRowCategory(row.activityId, taxonomyId, categoryId)
                 }
               />
               <Badge
-                variant="outline"
-                className={cn("text-[10px] uppercase", confidencePillClass(row.confidence))}
+                variant={confidenceVariant(row.confidence)}
+                className={cn(
+                  "text-2xs uppercase",
+                  confidenceVariant(row.confidence) === "outline" &&
+                    "bg-muted text-muted-foreground border-border",
+                )}
                 title={row.explanation}
               >
                 {confidenceLabel(row.confidence)}
@@ -401,7 +412,7 @@ function CategorizationProposalsContentImpl({
 
           {visibleUnproposed.length > 0 && (
             <div className="mt-3 border-t pt-2">
-              <p className="text-muted-foreground px-4 pb-1 text-[11px] uppercase tracking-wide">
+              <p className="text-muted-foreground text-2xs px-4 pb-1 tracking-wide uppercase">
                 {t("ai:categorization.needsManualChoice", { count: visibleUnproposed.length })}
               </p>
               {visibleUnproposed.map((row) => (
@@ -413,7 +424,7 @@ function CategorizationProposalsContentImpl({
                   <span className="text-muted-foreground w-24 whitespace-nowrap tabular-nums">
                     {formatActivityDate(row.activityDate, dateFormatting)}
                   </span>
-                  <span className="w-24 text-right tabular-nums">
+                  <span className="w-24 text-end tabular-nums">
                     {formatActivityAmount(
                       row.amount,
                       amountFormatter,
@@ -432,14 +443,16 @@ function CategorizationProposalsContentImpl({
                     trigger={
                       <button
                         type="button"
-                        className="text-muted-foreground hover:bg-muted/70 inline-flex items-center gap-1 rounded-full border border-dashed px-2 py-0.5 text-[11px]"
+                        className="text-muted-foreground hover:bg-muted/70 text-2xs inline-flex items-center gap-1 rounded-full border border-dashed px-2 py-0.5"
+                        disabled={!categoryPickerScope(row.allowedTaxonomyId)}
                       >
                         <Icons.Plus className="h-3 w-3" />
                         {t("ai:categorization.pickCategory")}
                       </button>
                     }
-                    scope="both"
+                    scope={categoryPickerScope(row.allowedTaxonomyId) ?? "expense"}
                     onSelect={(taxonomyId, categoryId) => {
+                      if (taxonomyId !== row.allowedTaxonomyId) return;
                       const cat = categoryPathMap.get(categoryId);
                       setPickedUnproposedIds((prev) => {
                         const next = new Set(prev);
@@ -477,26 +490,22 @@ function CategorizationProposalsContentImpl({
             <Alert variant="error">
               <Icons.AlertCircle className="h-4 w-4" />
               <AlertTitle>{t("ai:categorization.failedApplyTitle")}</AlertTitle>
-              <AlertDescription className="break-words text-xs">{submitError}</AlertDescription>
+              <AlertDescription className="text-xs break-words">{submitError}</AlertDescription>
             </Alert>
           </div>
         )}
 
         {isSubmitted && (
           <div className="px-6">
-            <div className="border-success/30 bg-success/10 flex items-center gap-3 rounded-md border px-3 py-2">
-              <div className="bg-success/20 text-success flex h-7 w-7 shrink-0 items-center justify-center rounded-full">
-                <Icons.Check className="h-4 w-4" />
-              </div>
-              <div className="min-w-0 flex-1">
-                <p className="text-success text-sm font-medium">
-                  {t("ai:categorization.transactionsCategorized", { count: appliedCount })}
-                </p>
-                <p className="text-muted-foreground text-xs">
-                  {t("ai:categorization.categoriesSaved")}
-                </p>
-              </div>
-            </div>
+            <Alert variant="success" className="px-3 py-2">
+              <Icons.Check />
+              <AlertTitle>
+                {t("ai:categorization.transactionsCategorized", { count: appliedCount })}
+              </AlertTitle>
+              <AlertDescription className="text-xs">
+                {t("ai:categorization.categoriesSaved")}
+              </AlertDescription>
+            </Alert>
           </div>
         )}
 
@@ -504,9 +513,9 @@ function CategorizationProposalsContentImpl({
           <div className="flex items-center justify-end px-6 pt-1">
             <Button onClick={handleSubmit} disabled={!canSubmit}>
               {isSubmitting ? (
-                <Icons.Spinner className="mr-2 h-4 w-4 animate-spin" />
+                <Spinner className="me-2 h-4 w-4" />
               ) : (
-                <Icons.Check className="mr-2 h-4 w-4" />
+                <Icons.Check className="me-2 h-4 w-4" />
               )}
               {selectedCount > 0
                 ? t("ai:categorization.applySelected", { count: selectedCount })

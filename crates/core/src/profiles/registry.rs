@@ -44,6 +44,8 @@ struct LockRecord {
 
 pub struct ProfileRegistry {
     root: PathBuf,
+    /// An in-memory override for hosts whose sandbox moves between launches.
+    legacy_database_override: Option<PathBuf>,
     data: Mutex<RegistryData>,
     secrets: Arc<dyn SecretStore>,
     secret_gate: Arc<Mutex<()>>,
@@ -54,6 +56,13 @@ pub struct ProfileRegistry {
 
 fn storage_error(error: impl std::fmt::Display) -> ProfileError {
     ProfileError::Unavailable(error.to_string())
+}
+
+fn storage_io_error(error: std::io::Error) -> ProfileError {
+    ProfileError::StorageIo {
+        kind: error.kind(),
+        os_code: error.raw_os_error(),
+    }
 }
 
 fn credential_error(_: crate::Error) -> ProfileError {
@@ -152,14 +161,14 @@ fn atomic_write(path: &Path, bytes: &[u8]) -> ProfileResult<()> {
             .write(true)
             .create_new(true)
             .open(&temporary)
-            .map_err(storage_error)?;
-        file.write_all(bytes).map_err(storage_error)?;
-        file.sync_all().map_err(storage_error)?;
-        fs::rename(&temporary, path).map_err(storage_error)?;
+            .map_err(storage_io_error)?;
+        file.write_all(bytes).map_err(storage_io_error)?;
+        file.sync_all().map_err(storage_io_error)?;
+        fs::rename(&temporary, path).map_err(storage_io_error)?;
         #[cfg(unix)]
-        File::open(path.parent().unwrap())
+        File::open(path.parent().expect("registry files live in a directory"))
             .and_then(|f| f.sync_all())
-            .map_err(storage_error)?;
+            .map_err(storage_io_error)?;
         Ok(())
     })();
     if result.is_err() {
@@ -176,6 +185,14 @@ impl ProfileRegistry {
         secrets: Arc<dyn SecretStore>,
     ) -> ProfileResult<Self> {
         Self::open_with_recovery(root, legacy_database, secrets, false)
+    }
+
+    /// Use the host's current sandbox path for the adopted legacy profile.
+    /// Mobile sandboxes can move; other hosts retain the saved path.
+    /// This does not change the registry on disk or paths for newer profiles.
+    pub fn with_legacy_database_path(mut self, database: PathBuf) -> Self {
+        self.legacy_database_override = Some(database);
+        self
     }
 
     /// Explicit recovery only: preserve orphaned data and credentials, then allow
@@ -224,7 +241,10 @@ impl ProfileRegistry {
                 if source.try_exists().map_err(storage_error)? {
                     let bytes = fs::read(source).map_err(storage_error)?;
                     fs::create_dir_all(&archive).map_err(storage_error)?;
-                    atomic_write(&archive.join(source.file_name().unwrap()), &bytes)?;
+                    let name = source
+                        .file_name()
+                        .expect("registry paths end in a file name");
+                    atomic_write(&archive.join(name), &bytes)?;
                 }
             }
             let data = RegistryData {
@@ -294,6 +314,7 @@ impl ProfileRegistry {
         };
         Ok(Self {
             root,
+            legacy_database_override: None,
             data: Mutex::new(data),
             secrets,
             secret_gate: Arc::new(Mutex::new(())),
@@ -330,7 +351,7 @@ impl ProfileRegistry {
     pub fn deletion_paths(&self, id: Uuid) -> ProfileResult<ProfilePaths> {
         let profile: Profile = serde_json::from_slice(
             &fs::read(self.root.join(DELETIONS_DIR).join(format!("{id}.json")))
-                .map_err(storage_error)?,
+                .map_err(storage_io_error)?,
         )
         .map_err(storage_error)?;
         if profile.id != id {
@@ -402,7 +423,7 @@ impl ProfileRegistry {
         }
         let profile: Profile = serde_json::from_slice(
             &fs::read(self.root.join(DELETIONS_DIR).join(format!("{id}.json")))
-                .map_err(storage_error)?,
+                .map_err(storage_io_error)?,
         )
         .map_err(storage_error)?;
         if profile.id != id {
@@ -504,7 +525,11 @@ impl ProfileRegistry {
         match &profile.legacy_database {
             Some(database) => ProfilePaths {
                 root: self.root.clone(),
-                database: database.clone(),
+                database: self
+                    .legacy_database_override
+                    .as_ref()
+                    .unwrap_or(database)
+                    .clone(),
             },
             None => {
                 let root = self.root.join("profiles").join(profile.id.to_string());
@@ -829,7 +854,7 @@ impl ProfileRegistry {
         data.profiles
             .iter_mut()
             .find(|p| p.id == id)
-            .unwrap()
+            .ok_or(ProfileError::NotFound)?
             .never_protected = false;
         let encoded = serde_json::to_vec_pretty(&*data).map_err(storage_error)?;
         atomic_write(&self.root.join(REGISTRY_FILE), &encoded)?;
@@ -840,7 +865,7 @@ impl ProfileRegistry {
         next.profiles
             .iter_mut()
             .find(|p| p.id == id && !self.is_deleting(id))
-            .unwrap()
+            .ok_or(ProfileError::NotFound)?
             .lock_enabled = password.is_some();
         self.save(&mut data, next)?;
         Ok(recovery)
@@ -868,7 +893,7 @@ fn new_lock_record(password: Option<&str>) -> ProfileResult<(LockRecord, Option<
         let formatted = code
             .as_bytes()
             .chunks(4)
-            .map(|part| std::str::from_utf8(part).unwrap())
+            .map(|part| std::str::from_utf8(part).expect("hex digits are ASCII"))
             .collect::<Vec<_>>()
             .join("-");
         (
@@ -895,11 +920,11 @@ fn recovery_hash(code: &str) -> String {
 fn remove_owned_path(path: &Path) -> ProfileResult<()> {
     match fs::symlink_metadata(path) {
         Ok(meta) if meta.is_dir() && !meta.file_type().is_symlink() => {
-            fs::remove_dir_all(path).map_err(storage_error)
+            fs::remove_dir_all(path).map_err(storage_io_error)
         }
-        Ok(_) => fs::remove_file(path).map_err(storage_error),
+        Ok(_) => fs::remove_file(path).map_err(storage_io_error),
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
-        Err(error) => Err(storage_error(error)),
+        Err(error) => Err(storage_io_error(error)),
     }
 }
 
@@ -1200,6 +1225,77 @@ mod tests {
     }
 
     #[test]
+    fn credential_calls_waiting_on_a_prompt_leave_async_workers_free() {
+        // A keyring read that waits until the unlock prompt is answered.
+        struct PromptingSecrets {
+            prompted: std::sync::mpsc::Sender<()>,
+            answered: (Mutex<bool>, std::sync::Condvar),
+        }
+        impl SecretStore for PromptingSecrets {
+            fn get_secret(&self, key: &str) -> crate::Result<Option<String>> {
+                if key.ends_with(crate::secrets::CLOUD_REFRESH_TOKEN_KEY) {
+                    self.prompted.send(()).unwrap();
+                    let (answered, answer) = &self.answered;
+                    drop(answer.wait_while(answered.lock().unwrap(), |answered| !*answered));
+                }
+                Ok(None)
+            }
+            fn set_secret(&self, _: &str, _: &str) -> crate::Result<()> {
+                Ok(())
+            }
+            fn delete_secret(&self, _: &str) -> crate::Result<()> {
+                Ok(())
+            }
+        }
+        let dir = tempfile::tempdir().unwrap();
+        let (prompted, prompts) = std::sync::mpsc::channel();
+        let secrets = Arc::new(PromptingSecrets {
+            prompted,
+            answered: Default::default(),
+        });
+        let registry = ProfileRegistry::open(
+            dir.path().into(),
+            dir.path().join("app.db"),
+            secrets.clone(),
+        )
+        .unwrap();
+        let store =
+            registry.secret_store(&registry.profile(registry.default_id().unwrap()).unwrap());
+        let runtime = tokio::runtime::Builder::new_multi_thread()
+            .worker_threads(2)
+            .build()
+            .unwrap();
+        let wait = std::time::Duration::from_secs(5);
+        // Answer before any assertion, or dropping the runtime waits on the prompt.
+        let answer = || {
+            *secrets.answered.0.lock().unwrap() = true;
+            secrets.answered.1.notify_all();
+        };
+        // One read waits on the prompt while holding the shared gate, and the
+        // next waits on the gate. Each would otherwise hold one of the workers.
+        let first = runtime.spawn({
+            let store = store.clone();
+            async move { store.get_secret(crate::secrets::CLOUD_REFRESH_TOKEN_KEY) }
+        });
+        let prompted = prompts.recv_timeout(wait);
+        if prompted.is_err() {
+            answer();
+        }
+        assert!(prompted.is_ok(), "the first read did not reach the store");
+        let (done, finished) = std::sync::mpsc::channel();
+        let second = runtime.spawn(async move {
+            // Queued on this worker just before the read blocks it.
+            tokio::spawn(async move { done.send(()).unwrap() });
+            store.get_secret(crate::secrets::CLOUD_REFRESH_TOKEN_KEY)
+        });
+        let unrelated = finished.recv_timeout(wait);
+        answer();
+        assert!(unrelated.is_ok(), "unrelated work waited for the prompt");
+        assert_eq!(runtime.block_on(first).unwrap().unwrap(), None);
+        assert_eq!(runtime.block_on(second).unwrap().unwrap(), None);
+    }
+
+    #[test]
     fn deletion_preserves_other_profiles_and_survives_registry_backup_recovery() {
         let dir = tempfile::tempdir().unwrap();
         let db = dir.path().join("app.db");
@@ -1294,6 +1390,75 @@ mod tests {
             assert!(outside.path().join("keep").exists());
             assert!(!root.exists());
         }
+    }
+
+    #[test]
+    fn legacy_profile_keeps_saved_database_when_launch_candidate_changes() {
+        let dir = tempfile::tempdir().unwrap();
+        let database = dir.path().join("custom-legacy.db");
+        fs::write(&database, b"existing database").unwrap();
+        let secrets = Arc::new(Secrets::default());
+        drop(ProfileRegistry::open(dir.path().into(), database.clone(), secrets.clone()).unwrap());
+        let saved_registry = fs::read(dir.path().join(REGISTRY_FILE)).unwrap();
+
+        for candidate_exists in [false, true] {
+            let candidate = dir.path().join("app.db");
+            if candidate_exists {
+                fs::write(&candidate, b"unrelated database").unwrap();
+            }
+            let registry =
+                ProfileRegistry::open(dir.path().into(), candidate, secrets.clone()).unwrap();
+            let default = registry.profile(registry.default_id().unwrap()).unwrap();
+            assert_eq!(registry.paths(&default).database, database);
+            assert_eq!(
+                fs::read(dir.path().join(REGISTRY_FILE)).unwrap(),
+                saved_registry
+            );
+        }
+    }
+
+    #[test]
+    fn legacy_profile_follows_a_moved_data_directory() {
+        // An iOS update renames the app container but keeps its files.
+        let base = tempfile::tempdir().unwrap();
+        let old_root = base.path().join("OLD-CONTAINER/app");
+        let new_root = base.path().join("NEW-CONTAINER/app");
+        fs::create_dir_all(&old_root).unwrap();
+        fs::write(old_root.join("app.db"), b"existing database").unwrap();
+        let secrets = Arc::new(Secrets::default());
+        drop(
+            ProfileRegistry::open(old_root.clone(), old_root.join("app.db"), secrets.clone())
+                .unwrap(),
+        );
+        fs::rename(
+            base.path().join("OLD-CONTAINER"),
+            base.path().join("NEW-CONTAINER"),
+        )
+        .unwrap();
+
+        let saved_registry = fs::read(new_root.join(REGISTRY_FILE)).unwrap();
+        let registry = ProfileRegistry::open(new_root.clone(), new_root.join("app.db"), secrets)
+            .unwrap()
+            .with_legacy_database_path(new_root.join("app.db"));
+        let default = registry.profile(registry.default_id().unwrap()).unwrap();
+        assert!(ProfileSummary::from(&default).is_legacy);
+        let paths = registry.paths(&default);
+        assert_eq!(paths.root, new_root);
+        assert_eq!(paths.database, new_root.join("app.db"));
+        assert_eq!(
+            fs::read(new_root.join(REGISTRY_FILE)).unwrap(),
+            saved_registry
+        );
+
+        let second = registry.create("Second", DEFAULT_PROFILE_AVATAR).unwrap();
+        let second = registry.profile(second.id).unwrap();
+        assert_eq!(
+            registry.paths(&second).database,
+            new_root
+                .join("profiles")
+                .join(second.id.to_string())
+                .join("app.db")
+        );
     }
 
     #[test]

@@ -277,6 +277,7 @@ export function ReviewStep() {
               ? {
                   status: validation.status,
                   errors: validation.errors,
+                  localErrorMessages: validation.localErrorMessages,
                   warnings: validation.warnings,
                   duplicateOfId: undefined,
                   duplicateOfLineNumber: undefined,
@@ -340,6 +341,7 @@ export function ReviewStep() {
               ? {
                   status: validation.status,
                   errors: validation.errors,
+                  localErrorMessages: validation.localErrorMessages,
                   warnings: validation.warnings,
                   duplicateOfId: undefined,
                   duplicateOfLineNumber: undefined,
@@ -422,7 +424,11 @@ export function ReviewStep() {
         <ImportAlert
           variant="destructive"
           title={t("activity:import.review.backendFailedTitle")}
-          description={state.validationError}
+          description={
+            typeof state.validationError === "string"
+              ? state.validationError
+              : t(state.validationError.key)
+          }
         />
       ) : isStale ? (
         <ImportAlert
@@ -460,7 +466,7 @@ export function ReviewStep() {
             {filterStats.errors > 0 && (
               <Badge
                 variant="outline"
-                className="border-destructive/50 text-destructive hover:bg-destructive/10 cursor-pointer"
+                className="border-destructive/50 text-destructive hover:bg-destructive-subtle hover:text-destructive-subtle-foreground cursor-pointer"
                 onClick={() => setStatusFilter(new Set(["error"]))}
               >
                 {t("activity:import.review.errorsBadge", { count: filterStats.errors })}
@@ -469,7 +475,7 @@ export function ReviewStep() {
             {filterStats.warnings > 0 && (
               <Badge
                 variant="outline"
-                className="cursor-pointer border-yellow-500/50 text-yellow-700 hover:bg-yellow-500/10 dark:text-yellow-400"
+                className="border-warning/50 text-warning-subtle-foreground hover:bg-warning-subtle cursor-pointer"
                 onClick={() => setStatusFilter(new Set(["warning"]))}
               >
                 {t("activity:import.review.warningsBadge", { count: filterStats.warnings })}
@@ -478,7 +484,7 @@ export function ReviewStep() {
             {filterStats.duplicates > 0 && (
               <Badge
                 variant="outline"
-                className="cursor-pointer border-yellow-500/50 text-yellow-700 hover:bg-yellow-500/10 dark:text-yellow-400"
+                className="border-warning/50 text-warning-subtle-foreground hover:bg-warning-subtle cursor-pointer"
                 onClick={() => setStatusFilter(new Set(["duplicate"]))}
               >
                 {t("activity:import.review.duplicatesBadge", { count: filterStats.duplicates })}
@@ -508,7 +514,7 @@ export function ReviewStep() {
       {/* Filter bar */}
       <div className="flex flex-col gap-3">
         <div className="flex flex-wrap items-center gap-2">
-          <span className="text-muted-foreground mr-1 text-sm">
+          <span className="text-muted-foreground me-1 text-sm">
             {t("activity:import.review.activitiesCount", { count: filterStats.all })}
           </span>
           <FacetedFilter

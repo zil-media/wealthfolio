@@ -1,5 +1,5 @@
+import { useTranslation } from "react-i18next";
 import { formatZonedDateKey } from "@/features/spending/lib/timezone";
-import { parseLocalDate } from "@/lib/utils";
 import { calculatePerformanceSummary } from "@/adapters";
 import { BenchmarkCompareBar } from "@/components/benchmark-compare/benchmark-compare-bar";
 import {
@@ -12,6 +12,7 @@ import { useHapticFeedback } from "@/hooks";
 import { useBenchmarkComparison, useBenchmarkSelection } from "@/hooks/use-benchmark-comparison";
 import { useCurrentValuation } from "@/hooks/use-current-account-valuations";
 import { useHoldings } from "@/hooks/use-holdings";
+import { usePersistentState } from "@/hooks/use-persistent-state";
 import { useValuationHistory } from "@/hooks/use-valuation-history";
 import { HoldingType, isAlternativeAssetKind } from "@/lib/constants";
 import { performancePeriodPnl, performanceSummaryReturn } from "@/lib/performance";
@@ -20,23 +21,24 @@ import { useSettingsContext } from "@/lib/settings-provider";
 import { PortfolioUpdateTrigger } from "@/pages/dashboard/portfolio-update-trigger";
 import { keepPreviousData, useQuery } from "@tanstack/react-query";
 import type { TimePeriod as UITimePeriod } from "@wealthfolio/ui";
-import { GainAmount, GainPercent, getInitialIntervalData, IntervalSelector } from "@wealthfolio/ui";
-import { usePersistentState } from "@/hooks/use-persistent-state";
+import { GainAmount, GainPercent, IntervalSelector } from "@wealthfolio/ui";
+import { SpendingDatePicker } from "@/features/spending/components/spending-date-picker";
 import { Skeleton } from "@wealthfolio/ui/components/ui/skeleton";
 import { format } from "date-fns";
 import { useMemo } from "react";
-import { useTranslation } from "react-i18next";
+import { PrivacyToggle } from "@/components/privacy-toggle";
+import type { AccountScope } from "@/lib/types";
+import { accountScopeKey } from "@/pages/allocation-targets/components/target-scope";
 import { AccountsSummary } from "./accounts-summary";
 import Balance from "./balance";
 import SavingGoals from "./goals";
 import TopHoldings from "./top-holdings";
+import { useDashboardPeriod } from "./use-dashboard-period";
 
-const DEFAULT_INTERVAL: UITimePeriod = "3M";
-const INTERVAL_STORAGE_KEY = "dashboard-interval";
 const CHART_MODE_STORAGE_KEY = "dashboard-chart-mode";
 const NO_POINTS: HistoryChartData[] = [];
 
-function getDashboardChartMinDomainSpanRatio(period: UITimePeriod): number {
+function getDashboardChartMinDomainSpanRatio(period: UITimePeriod | null): number {
   switch (period) {
     case "1D":
     case "1W":
@@ -56,7 +58,9 @@ function getDashboardChartMinDomainSpanRatio(period: UITimePeriod): number {
   }
 }
 
-function getDashboardNetContributionMaxDomainSpanRatio(period: UITimePeriod): number | undefined {
+function getDashboardNetContributionMaxDomainSpanRatio(
+  period: UITimePeriod | null,
+): number | undefined {
   switch (period) {
     case "1D":
     case "1W":
@@ -76,26 +80,30 @@ function getDashboardNetContributionMaxDomainSpanRatio(period: UITimePeriod): nu
   }
 }
 
-export function DashboardContent() {
+interface DashboardContentProps {
+  scope?: AccountScope;
+  scopeLabel?: string;
+  accountIds?: string[];
+}
+
+export function DashboardContent({
+  scope = { type: "all" },
+  scopeLabel,
+  accountIds,
+}: DashboardContentProps) {
   const { t } = useTranslation();
   const { settings } = useSettingsContext();
   const todayISO = formatZonedDateKey(new Date(), settings?.timezone);
-  const [selectedInterval, setSelectedInterval] = usePersistentState<UITimePeriod>(
-    INTERVAL_STORAGE_KEY,
-    DEFAULT_INTERVAL,
-  );
-  const dateRange = useMemo(
-    () => getInitialIntervalData(selectedInterval, parseLocalDate(todayISO)).range,
-    [selectedInterval, todayISO],
-  );
+  const period = useDashboardPeriod(todayISO);
+  const { code: selectedInterval, range: dateRange } = period;
   const isAllTime = selectedInterval === "ALL";
 
-  const { holdings: allHoldings, isLoading: isHoldingsLoading } = useHoldings({ type: "all" });
+  const { holdings: allHoldings, isLoading: isHoldingsLoading } = useHoldings(scope);
   const {
     currentValuation: portfolioCurrentValuation,
     isLoading: isCurrentValuationLoading,
     error: currentValuationError,
-  } = useCurrentValuation({ type: "all" }, { includeAccounts: true });
+  } = useCurrentValuation(scope, { includeAccounts: true });
   const { triggerHaptic } = useHapticFeedback();
 
   // Filter holdings for display (exclude alternative assets and cash for TopHoldings)
@@ -113,8 +121,10 @@ export function DashboardContent() {
   const totalValue = portfolioCurrentValuation?.summary.totalValueBase ?? 0;
 
   const valuationHistoryRange = isAllTime ? undefined : dateRange;
-  const { valuationHistory, isLoading: isValuationHistoryLoading } =
-    useValuationHistory(valuationHistoryRange);
+  const { valuationHistory, isLoading: isValuationHistoryLoading } = useValuationHistory(
+    valuationHistoryRange,
+    scope,
+  );
 
   const baseCurrency = settings?.baseCurrency ?? "USD";
 
@@ -123,15 +133,16 @@ export function DashboardContent() {
   const endDate = !isAllTime && dateRange?.to ? format(dateRange.to, "yyyy-MM-dd") : undefined;
   const datesReady = isAllTime || (!!startDate && !!endDate);
 
+  const scopeKey = accountScopeKey(scope);
   const { data: portfolioPerformance, isLoading: isPortfolioPerformanceLoading } = useQuery({
-    queryKey: [QueryKeys.PERFORMANCE_SUMMARY, "dashboard", "all", startDate, endDate],
+    queryKey: [QueryKeys.PERFORMANCE_SUMMARY, "dashboard", scopeKey, startDate, endDate],
     queryFn: () =>
       calculatePerformanceSummary({
         itemType: "account",
-        itemId: "portfolio:all",
+        itemId: scope.type === "all" ? "portfolio:all" : scopeKey,
         startDate,
         endDate,
-        filter: { type: "all" },
+        filter: scope,
         profile: "dashboard",
       }),
     enabled: datesReady,
@@ -152,12 +163,16 @@ export function DashboardContent() {
 
   const chartData = useMemo(() => {
     return (
-      valuationHistory?.map((item) => ({
-        date: item.valuationDate,
-        totalValue: item.totalValueBase,
-        netContribution: item.netContributionBase,
-        currency: item.baseCurrency ?? baseCurrency,
-      })) ?? []
+      valuationHistory
+        // A day the engine could not fully convert carries a partial value;
+        // it is not plotted rather than drawn as if it were complete.
+        ?.filter((item) => item.valueStatus !== "unavailable")
+        .map((item) => ({
+          date: item.valuationDate,
+          totalValue: item.totalValueBase,
+          netContribution: item.netContributionBase,
+          currency: item.baseCurrency ?? baseCurrency,
+        })) ?? []
     );
   }, [valuationHistory, baseCurrency]);
 
@@ -185,14 +200,19 @@ export function DashboardContent() {
 
   return (
     <div className="flex min-h-full flex-col">
-      <div className="px-4 pb-1 pt-2 md:px-6 lg:px-8">
+      <div className="px-4 pt-2 pb-1 md:px-6 lg:px-8">
         <div className="flex items-start justify-between gap-2">
-          <PortfolioUpdateTrigger
-            lastCalculatedAt={portfolioSourceDataAsOf}
-            notices={portfolioCurrentValuation?.summary.warnings}
-          >
-            <div className="flex items-start gap-2">
-              <div>
+          <div className="min-w-0">
+            {scope.type === "portfolio" && scopeLabel && (
+              <p className="text-muted-foreground mb-1 truncate text-xs" title={scopeLabel}>
+                {scopeLabel}
+              </p>
+            )}
+            <div className="flex flex-wrap items-center gap-2">
+              <PortfolioUpdateTrigger
+                lastCalculatedAt={portfolioSourceDataAsOf}
+                notices={portfolioCurrentValuation?.summary.warnings}
+              >
                 <Balance
                   isLoading={isCurrentValuationLoading}
                   isUnavailable={isCurrentValuationUnavailable}
@@ -200,50 +220,50 @@ export function DashboardContent() {
                   currency={baseCurrency}
                   displayCurrency={true}
                 />
-                <div className="text-md flex min-h-5 items-center space-x-3">
-                  {isPortfolioPerformanceLoading ? (
-                    <div className="flex items-center gap-3">
-                      <Skeleton className="h-4 w-24" />
-                      <div className="border-secondary my-1 border-r pr-2" />
-                      <Skeleton className="h-4 w-16" />
-                    </div>
-                  ) : (
-                    <>
-                      {gainLossAmount == null ? (
-                        <span className="text-muted-foreground lg:text-md text-sm font-light">
-                          N/A
-                        </span>
-                      ) : (
-                        <GainAmount
-                          className="lg:text-md text-sm font-light"
-                          value={gainLossAmount}
-                          currency={baseCurrency}
-                          displayCurrency={false}
-                        />
-                      )}
-                      <div className="border-secondary my-1 border-r pr-2" />
-                      {simpleReturn == null ? (
-                        <span className="text-muted-foreground lg:text-md text-sm font-light">
-                          N/A
-                        </span>
-                      ) : (
-                        <GainPercent
-                          className="lg:text-md text-sm font-light"
-                          value={simpleReturn}
-                          animated={true}
-                        />
-                      )}
-                    </>
-                  )}
-                  {selectedInterval && (
-                    <span className="lg:text-md text-muted-foreground ml-1 text-sm font-light">
-                      {t(`ui:interval.${selectedInterval}`)}
-                    </span>
-                  )}
-                </div>
-              </div>
+              </PortfolioUpdateTrigger>
+              <PrivacyToggle variant="ghost" />
             </div>
-          </PortfolioUpdateTrigger>
+            <div className="text-md flex min-h-5 flex-wrap items-center gap-x-3">
+              {isPortfolioPerformanceLoading ? (
+                <div className="flex items-center gap-3">
+                  <Skeleton className="h-4 w-24" />
+                  <div className="border-secondary my-1 border-e pe-2" />
+                  <Skeleton className="h-4 w-16" />
+                </div>
+              ) : (
+                <>
+                  {gainLossAmount == null ? (
+                    <span className="text-muted-foreground lg:text-md text-sm font-light">
+                      {t("performance:not_available")}
+                    </span>
+                  ) : (
+                    <GainAmount
+                      className="lg:text-md text-sm font-light"
+                      value={gainLossAmount}
+                      currency={baseCurrency}
+                      displayCurrency={false}
+                    />
+                  )}
+                  {/* Stretch: the row centres its items, so an empty divider has no height. */}
+                  <div className="border-secondary my-1 self-stretch border-e pe-2" />
+                  {simpleReturn == null ? (
+                    <span className="text-muted-foreground lg:text-md text-sm font-light">
+                      {t("performance:not_available")}
+                    </span>
+                  ) : (
+                    <GainPercent
+                      className="lg:text-md text-sm font-light"
+                      value={simpleReturn}
+                      animated={true}
+                    />
+                  )}
+                </>
+              )}
+              <span className="lg:text-md text-muted-foreground ms-1 text-sm font-light">
+                {period.label}
+              </span>
+            </div>
+          </div>
           <ChartModeToggle value={chartMode} onChange={setChartMode} />
         </div>
         {chartMode === "return" && (
@@ -261,8 +281,8 @@ export function DashboardContent() {
         className="flex grow flex-col"
         style={{
           backgroundImage: isNegative
-            ? `linear-gradient(to top, color-mix(in srgb, var(--destructive) 30%, transparent), color-mix(in srgb, var(--destructive) 15%, transparent) 50%, transparent 100%)`
-            : `linear-gradient(to top, color-mix(in srgb, var(--success) 30%, transparent), color-mix(in srgb, var(--success) 15%, transparent) 50%, transparent 100%)`,
+            ? `linear-gradient(to top, color-mix(in srgb, var(--loss) 30%, transparent), color-mix(in srgb, var(--loss) 15%, transparent) 50%, transparent 100%)`
+            : `linear-gradient(to top, color-mix(in srgb, var(--investments) 30%, transparent), color-mix(in srgb, var(--investments) 15%, transparent) 50%, transparent 100%)`,
         }}
       >
         <div className="h-70">
@@ -279,32 +299,45 @@ export function DashboardContent() {
               scaleMode="fit-visible"
               minDomainSpanRatio={chartMinDomainSpanRatio}
               netContributionMaxDomainSpanRatio={chartNetContributionMaxDomainSpanRatio}
+              color="var(--investments)"
             />
           )}
           {valuationHistory && chartData.length > 0 && (
             <div className="flex w-full justify-center">
-              <IntervalSelector
-                className="pointer-events-auto relative z-20 w-full max-w-screen-sm sm:max-w-screen-md md:max-w-2xl lg:max-w-3xl"
-                onIntervalSelect={setSelectedInterval}
-                onHaptic={triggerHaptic}
-                isLoading={isValuationHistoryLoading}
-                value={selectedInterval}
-              />
+              <div className="pointer-events-auto relative z-20 flex w-full max-w-screen-sm min-w-0 items-center justify-center gap-1.5 pe-4 sm:max-w-screen-md md:max-w-2xl md:pe-0 lg:max-w-3xl">
+                <IntervalSelector
+                  className="w-auto"
+                  onIntervalSelect={period.selectPreset}
+                  onHaptic={triggerHaptic}
+                  isLoading={isValuationHistoryLoading}
+                  value={selectedInterval}
+                />
+                <SpendingDatePicker
+                  customMonth={period.customMonth}
+                  customRange={period.customRange}
+                  maxMonth={period.maxMonth}
+                  onCustomMonthChange={period.selectMonth}
+                  onCustomRangeChange={period.selectRange}
+                />
+              </div>
             </div>
           )}
         </div>
 
-        <div className="grow px-4 pb-[var(--mobile-nav-total-offset)] pt-14 md:px-6 md:pb-6 md:pt-12 lg:px-10 lg:pb-8 lg:pt-14">
-          <div className="grid grid-cols-1 gap-8 lg:grid-cols-3 lg:gap-20">
-            <div className="lg:col-span-2">
+        {/* Two columns once the content area, not the window (the sidebar may be open),
+            fits Accounts beside the 24rem right column. */}
+        <div className="@container grow px-4 pt-14 pb-[var(--mobile-nav-total-offset)] md:px-6 md:pt-12 md:pb-6 lg:px-10 lg:pt-14 lg:pb-8">
+          <div className="grid grid-cols-1 gap-8 @min-[53rem]:grid-cols-[minmax(0,2fr)_minmax(24rem,1fr)] @min-[53rem]:gap-20">
+            <div>
               <AccountsSummary
+                accountIds={accountIds}
                 dateRange={dateRange}
                 isAllTime={isAllTime}
                 currentAccountValuations={portfolioCurrentValuation?.accounts}
                 isLoadingCurrentValuations={isCurrentValuationLoading}
               />
             </div>
-            <div className="space-y-6 lg:col-span-1">
+            <div className="space-y-6">
               <TopHoldings
                 holdings={holdings}
                 isLoading={isHoldingsLoading}

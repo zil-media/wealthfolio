@@ -1,5 +1,13 @@
 import { useSettings } from "@/hooks/use-settings";
-import { ACTIVITY_SUBTYPES, ActivityType, InstrumentType, QuoteMode } from "@/lib/constants";
+import {
+  ACTIVITY_SUBTYPES,
+  ActivityType,
+  DECIMAL_PRECISION,
+  InstrumentType,
+  QuoteMode,
+} from "@/lib/constants";
+import { cryptoMoneyDecimals } from "@/lib/currency-decimals";
+import { invalidTypeError, requiredError } from "@/lib/zod-errors";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { AnimatedToggleGroup } from "@wealthfolio/ui/components/ui/animated-toggle-group";
 import { Button } from "@wealthfolio/ui/components/ui/button";
@@ -22,6 +30,7 @@ import {
   SymbolSearch,
   type AccountSelectOption,
 } from "./fields";
+import { Spinner } from "@wealthfolio/ui";
 
 export type AdjustmentMode = "cash" | "securities";
 
@@ -46,11 +55,13 @@ export const createAdjustmentFormSchema = (t?: TFunction) =>
         message: msg(t, "activity:form.err_select_account", "Please select an account."),
       }),
       activityDate: z.date({
-        required_error: msg(t, "activity:form.err_select_date", "Please select a date."),
+        error: requiredError(msg(t, "activity:form.err_select_date", "Please select a date.")),
       }),
       amount: z.coerce
         .number({
-          invalid_type_error: msg(t, "activity:form.err_amount_number", "Amount must be a number."),
+          error: invalidTypeError(
+            msg(t, "activity:form.err_amount_number", "Amount must be a number."),
+          ),
         })
         .nonnegative({
           message: msg(t, "activity:form.err_amount_non_negative", "Amount must be non-negative."),
@@ -61,10 +72,8 @@ export const createAdjustmentFormSchema = (t?: TFunction) =>
       existingAssetId: z.string().nullable().optional(),
       quantity: z.coerce
         .number({
-          invalid_type_error: msg(
-            t,
-            "activity:form.err_quantity_number",
-            "Quantity must be a number.",
+          error: invalidTypeError(
+            msg(t, "activity:form.err_quantity_number", "Quantity must be a number."),
           ),
         })
         .nonnegative()
@@ -72,21 +81,23 @@ export const createAdjustmentFormSchema = (t?: TFunction) =>
         .nullable(),
       unitPrice: z.coerce
         .number({
-          invalid_type_error: msg(t, "activity:form.err_price_number", "Price must be a number."),
+          error: invalidTypeError(
+            msg(t, "activity:form.err_price_number", "Price must be a number."),
+          ),
         })
         .nonnegative()
         .optional()
         .nullable(),
       comment: z.string().optional().nullable(),
-      currency: z.string().min(1, {
-        message: msg(t, "activity:form.err_currency_required", "Currency is required."),
-      }),
+      currency: z
+        .string({ error: msg(t, "activity:form.err_currency_required", "Currency is required.") })
+        .min(1, {
+          message: msg(t, "activity:form.err_currency_required", "Currency is required."),
+        }),
       fxRate: z.coerce
         .number({
-          invalid_type_error: msg(
-            t,
-            "activity:form.err_fxrate_number",
-            "FX Rate must be a number.",
+          error: invalidTypeError(
+            msg(t, "activity:form.err_fxrate_number", "FX Rate must be a number."),
           ),
         })
         .positive({
@@ -108,6 +119,23 @@ export const createAdjustmentFormSchema = (t?: TFunction) =>
           path: ["assetId"],
           message: msg(t, "activity:form.err_select_symbol", "Please select a symbol."),
         });
+      }
+
+      if (isCostBasisAdjustment(data.subtype)) {
+        if (data.adjustmentMode !== "securities") {
+          ctx.addIssue({
+            code: z.ZodIssueCode.custom,
+            path: ["assetId"],
+            message: msg(t, "activity:form.err_select_symbol", "Please select a symbol."),
+          });
+        }
+        if (!(data.amount != null && data.amount > 0)) {
+          ctx.addIssue({
+            code: z.ZodIssueCode.custom,
+            path: ["amount"],
+            message: msg(t, "activity:form.err_enter_amount", "Please enter an amount."),
+          });
+        }
       }
 
       if (data.subtype?.trim().toUpperCase() === ACTIVITY_SUBTYPES.OPTION_EXPIRY) {
@@ -141,6 +169,15 @@ export const createAdjustmentFormSchema = (t?: TFunction) =>
         }
       }
     });
+
+/** RETURN_OF_CAPITAL / NOTIONAL_DISTRIBUTION: move an asset's cost basis by the amount. */
+function isCostBasisAdjustment(subtype: string | null | undefined): boolean {
+  const normalized = subtype?.trim().toUpperCase();
+  return (
+    normalized === ACTIVITY_SUBTYPES.RETURN_OF_CAPITAL ||
+    normalized === ACTIVITY_SUBTYPES.NOTIONAL_DISTRIBUTION
+  );
+}
 
 export const adjustmentFormSchema = createAdjustmentFormSchema();
 
@@ -205,6 +242,7 @@ export function AdjustmentForm({
     [accounts, accountId],
   );
   const accountCurrency = selectedAccount?.currency;
+  const moneyDecimals = cryptoMoneyDecimals(selectedAccount?.accountType, symbolInstrumentType);
   const isCashMode = adjustmentMode === "cash";
   const subtypeOptions = useMemo(() => {
     const currentSubtype = subtype?.trim();
@@ -213,7 +251,7 @@ export function AdjustmentForm({
       symbolInstrumentType?.trim().toUpperCase() === InstrumentType.OPTION || isCurrentOptionExpiry;
     const options: string[] = canSelectOptionExpiry
       ? [isCurrentOptionExpiry && currentSubtype ? currentSubtype : ACTIVITY_SUBTYPES.OPTION_EXPIRY]
-      : [];
+      : [ACTIVITY_SUBTYPES.RETURN_OF_CAPITAL, ACTIVITY_SUBTYPES.NOTIONAL_DISTRIBUTION];
     if (currentSubtype && !options.includes(currentSubtype)) {
       return [currentSubtype, ...options];
     }
@@ -231,7 +269,10 @@ export function AdjustmentForm({
       form.setValue("assetMetadata", undefined);
       form.setValue("quantity", null);
       form.setValue("unitPrice", null);
-      if (subtype?.trim().toUpperCase() === ACTIVITY_SUBTYPES.OPTION_EXPIRY) {
+      if (
+        subtype?.trim().toUpperCase() === ACTIVITY_SUBTYPES.OPTION_EXPIRY ||
+        isCostBasisAdjustment(subtype)
+      ) {
         form.setValue("subtype", null);
       }
     }
@@ -278,6 +319,7 @@ export function AdjustmentForm({
               name="amount"
               label={t("activity:form.label_amount")}
               currency={currency}
+              maxDecimalPlaces={moneyDecimals}
             />
           ) : (
             <>
@@ -303,13 +345,14 @@ export function AdjustmentForm({
                   name="unitPrice"
                   label={t("activity:form.label_price")}
                   currency={currency}
-                  maxDecimalPlaces={4}
+                  maxDecimalPlaces={DECIMAL_PRECISION}
                 />
               </div>
               <AmountInput
                 name="amount"
                 label={t("activity:form.label_amount")}
                 currency={currency}
+                maxDecimalPlaces={moneyDecimals}
               />
             </>
           )}
@@ -341,11 +384,11 @@ export function AdjustmentForm({
             </Button>
           )}
           <Button type="submit" disabled={isLoading}>
-            {isLoading && <Icons.Spinner className="mr-2 h-4 w-4 animate-spin" />}
+            {isLoading && <Spinner className="me-2 h-4 w-4" />}
             {isEditing ? (
-              <Icons.Check className="mr-2 h-4 w-4" />
+              <Icons.Check className="me-2 h-4 w-4" />
             ) : (
-              <Icons.Plus className="mr-2 h-4 w-4" />
+              <Icons.Plus className="me-2 h-4 w-4" />
             )}
             {isEditing
               ? t("activity:form.button_update")

@@ -9,10 +9,16 @@ import { useTranslation } from "react-i18next";
 
 interface MobileActivityTypeStepProps {
   includeReclassificationTypes?: boolean;
+  /** Offers a conversion, which the sheet form records as its two rows. */
+  onSelectConversion?: () => void;
 }
+
+// A picker choice with no type of its own: it hands over to the sheet form.
+const CONVERSION_CHOICE = "CONVERSION";
 
 export function MobileActivityTypeStep({
   includeReclassificationTypes = false,
+  onSelectConversion,
 }: MobileActivityTypeStepProps) {
   const { control } = useFormContext();
   const { t } = useTranslation();
@@ -96,6 +102,17 @@ export function MobileActivityTypeStep({
           icon: "Split" as const,
           description: t("activity:mobile_type_split_desc"),
         },
+        // Reclassifying edits one stored row; a conversion is two rows.
+        ...(onSelectConversion && !includeReclassificationTypes
+          ? [
+              {
+                value: CONVERSION_CHOICE,
+                label: t("activity:picker.conversion"),
+                icon: "RefreshCw" as const,
+                description: t("activity:mobile_type_conversion_desc"),
+              },
+            ]
+          : []),
         ...(includeReclassificationTypes
           ? [
               {
@@ -129,7 +146,12 @@ export function MobileActivityTypeStep({
           render={({ field }) => (
             <FormItem>
               <FormControl>
-                <RadioGroup onValueChange={field.onChange} value={field.value as string}>
+                <RadioGroup
+                  onValueChange={(value) =>
+                    value === CONVERSION_CHOICE ? onSelectConversion?.() : field.onChange(value)
+                  }
+                  value={field.value as string}
+                >
                   <div className="space-y-6 pb-4">
                     {activityTypes.map((category) => (
                       <div key={category.category}>
@@ -151,7 +173,7 @@ export function MobileActivityTypeStep({
                                   className={cn(
                                     "flex cursor-pointer items-start gap-3 rounded-lg border p-4 transition-all",
                                     "hover:bg-muted/50",
-                                    "peer-data-[state=checked]:border-primary peer-data-[state=checked]:bg-primary/5",
+                                    "peer-data-checked:border-primary peer-data-checked:bg-primary/5",
                                     "active:scale-[0.98]",
                                   )}
                                 >
@@ -160,7 +182,7 @@ export function MobileActivityTypeStep({
                                       className={cn(
                                         "flex h-10 w-10 items-center justify-center rounded-full",
                                         "bg-muted transition-colors",
-                                        "peer-data-[state=checked]:bg-primary/10",
+                                        "peer-data-checked:bg-primary/10",
                                       )}
                                     >
                                       <Icon className="h-5 w-5" />

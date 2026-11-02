@@ -16,7 +16,7 @@ import { Label } from "@wealthfolio/ui/components/ui/label";
 import type { DetectedHtmlTable } from "@/lib/types/custom-provider";
 import { cn } from "@/lib/utils";
 
-import { useNumberFormatting, type FormattingApi } from "@wealthfolio/ui";
+import { useNumberFormatting, type FormattingApi, Spinner } from "@wealthfolio/ui";
 import type { FormValues, SourceKey } from "./custom-provider-form";
 import { RawResponseViewer } from "./response-preview";
 import {
@@ -25,6 +25,8 @@ import {
   type TemplatePlaceholderValues,
 } from "./template-placeholders";
 import type { MappingField, SourceRuntime } from "./use-source-runtime";
+import { Alert, AlertDescription } from "@wealthfolio/ui/components/ui/alert";
+import { copyText } from "@wealthfolio/ui/lib/clipboard";
 
 interface LivePreviewPaneProps {
   form: UseFormReturn<FormValues>;
@@ -52,7 +54,7 @@ const MAPPING_META: {
   },
   {
     field: "currencyPath",
-    labelKey: "settings:market_data_page.field_currency",
+    labelKey: "common:currency",
     color: "bg-amber-500",
     required: false,
   },
@@ -130,7 +132,7 @@ function PreviewUrl({
           <span
             key={i}
             className={cn(
-              "mx-0.5 inline-flex items-center rounded border px-1 py-0.5 font-mono text-[11px]",
+              "text-2xs mx-0.5 inline-flex items-center rounded border px-1 py-0.5 font-mono",
               seg.value
                 ? "border-primary/30 bg-primary/10 text-primary"
                 : "border-muted-foreground/40 bg-muted text-muted-foreground border-dashed",
@@ -156,30 +158,30 @@ function StatusPill({
   const { t } = useTranslation();
   if (isFetching) {
     return (
-      <span className="text-muted-foreground inline-flex shrink-0 items-center gap-1.5 whitespace-nowrap rounded-full border px-3 py-1 text-xs">
-        <Icons.Spinner className="h-3 w-3 animate-spin" />
+      <span className="text-muted-foreground inline-flex shrink-0 items-center gap-1.5 rounded-full border px-3 py-1 text-xs whitespace-nowrap">
+        <Spinner className="h-3 w-3" />
         {t("settings:market_data_page.fetching")}
       </span>
     );
   }
   if (error || status?.ok === false) {
     return (
-      <span className="text-destructive border-destructive/40 bg-destructive/10 inline-flex shrink-0 items-center gap-1.5 whitespace-nowrap rounded-full border px-3 py-1 text-xs">
+      <span className="text-destructive-subtle-foreground bg-destructive-subtle inline-flex shrink-0 items-center gap-1.5 rounded-full border border-transparent px-3 py-1 text-xs whitespace-nowrap">
         <span className="bg-destructive h-1.5 w-1.5 rounded-full" />
-        {t("settings:market_data_page.status_error")}
+        {t("common:error")}
       </span>
     );
   }
   if (status?.ok) {
     return (
-      <span className="text-success border-success/40 bg-success/10 inline-flex shrink-0 items-center gap-1.5 whitespace-nowrap rounded-full border px-3 py-1 text-xs">
+      <span className="text-success-subtle-foreground bg-success-subtle inline-flex shrink-0 items-center gap-1.5 rounded-full border border-transparent px-3 py-1 text-xs whitespace-nowrap">
         <span className="bg-success h-1.5 w-1.5 rounded-full" />
         {t("settings:market_data_page.status_ok", { code: status.code })}
       </span>
     );
   }
   return (
-    <span className="text-muted-foreground inline-flex shrink-0 items-center gap-1.5 whitespace-nowrap rounded-full border px-3 py-1 text-xs">
+    <span className="text-muted-foreground inline-flex shrink-0 items-center gap-1.5 rounded-full border px-3 py-1 text-xs whitespace-nowrap">
       <span className="bg-muted-foreground/40 h-1.5 w-1.5 rounded-full" />
       {t("settings:market_data_page.status_idle")}
     </span>
@@ -189,12 +191,12 @@ function StatusPill({
 function EmptyResponseState() {
   const { t } = useTranslation();
   return (
-    <div className="flex min-h-[220px] flex-col items-center justify-center gap-3 rounded-xl border border-dashed p-6 text-center">
+    <div className="flex min-h-55 flex-col items-center justify-center gap-3 rounded-xl border border-dashed p-6 text-center">
       <Icons.Target className="text-muted-foreground/40 h-6 w-6" />
       <div className="space-y-1">
         <p className="text-muted-foreground text-sm">
           {t("settings:market_data_page.empty_response_before")}
-          <span className="bg-muted rounded px-1.5 py-0.5 font-mono text-[11px]">
+          <span className="bg-muted text-2xs rounded px-1.5 py-0.5 font-mono">
             {t("settings:market_data_page.fetch")}
           </span>
           {t("settings:market_data_page.empty_response_after")}
@@ -265,7 +267,7 @@ function HtmlTableResponse({
     <div className="space-y-3">
       {/* Table selector — shown always when html_table, as a legend + switcher */}
       <div className="flex flex-wrap items-center gap-1">
-        <span className="text-muted-foreground mr-1 text-[11px] font-medium uppercase tracking-wide">
+        <span className="text-muted-foreground text-2xs me-1 font-medium tracking-wide uppercase">
           {t("settings:market_data_page.table")}
         </span>
         {tables.map((tbl, i) => (
@@ -287,7 +289,7 @@ function HtmlTableResponse({
             {i + 1}
           </button>
         ))}
-        <span className="text-muted-foreground ml-auto text-xs">
+        <span className="text-muted-foreground ms-auto text-xs">
           {runtime.armedField
             ? t("settings:market_data_page.table_click_column_to_map_field", {
                 count: table.rowCount,
@@ -299,16 +301,16 @@ function HtmlTableResponse({
         </span>
       </div>
 
-      <div className="bg-background max-h-[420px] overflow-auto rounded-lg border">
+      <div className="bg-background max-h-105 overflow-auto rounded-lg border">
         <table className="w-full text-xs">
           <thead className="bg-muted/40 sticky top-0">
             <tr>
               {table.columns.map((col) => (
-                <th key={col.index} className="px-3 py-2 text-left">
+                <th key={col.index} className="px-3 py-2 text-start">
                   <button
                     type="button"
                     onClick={() => handleHeaderClick(col.index, col.role)}
-                    className="hover:text-foreground group flex flex-col items-start gap-1 text-left"
+                    className="hover:text-foreground group flex flex-col items-start gap-1 text-start"
                   >
                     <span className="text-foreground text-xs font-medium">
                       {col.header ||
@@ -317,7 +319,7 @@ function HtmlTableResponse({
                     {col.role && (
                       <span
                         className={cn(
-                          "rounded px-1.5 py-0.5 text-[10px] font-medium",
+                          "text-2xs rounded px-1.5 py-0.5 font-medium",
                           ROLE_COLOR[col.role] ?? "bg-muted text-muted-foreground",
                         )}
                       >
@@ -333,7 +335,7 @@ function HtmlTableResponse({
             {table.sampleRows.slice(0, 8).map((row, ri) => (
               <tr key={ri} className="border-t">
                 {row.map((cell, ci) => (
-                  <td key={ci} className="text-muted-foreground px-3 py-1.5 font-mono text-[11px]">
+                  <td key={ci} className="text-muted-foreground text-2xs px-3 py-1.5 font-mono">
                     {cell}
                   </td>
                 ))}
@@ -351,7 +353,7 @@ function CsvResponse({ raw, runtime }: { raw: string; runtime: SourceRuntime }) 
   const { headers, rows } = useMemo(() => parseCsv(raw), [raw]);
   if (headers.length === 0) {
     return (
-      <pre className="bg-background max-h-[420px] overflow-auto whitespace-pre-wrap rounded-lg border p-3 font-mono text-xs">
+      <pre className="bg-background max-h-105 overflow-auto rounded-lg border p-3 font-mono text-xs whitespace-pre-wrap">
         {raw.slice(0, 3000)}
       </pre>
     );
@@ -372,12 +374,12 @@ function CsvResponse({ raw, runtime }: { raw: string; runtime: SourceRuntime }) 
             })
           : t("settings:market_data_page.csv_rows_detected", { count: rows.length })}
       </p>
-      <div className="bg-background max-h-[420px] overflow-auto rounded-lg border">
+      <div className="bg-background max-h-105 overflow-auto rounded-lg border">
         <table className="w-full text-xs">
           <thead className="bg-muted/40 sticky top-0">
             <tr>
               {headers.map((h) => (
-                <th key={h} className="px-3 py-2 text-left">
+                <th key={h} className="px-3 py-2 text-start">
                   <button
                     type="button"
                     onClick={() => handleHeaderClick(h)}
@@ -393,7 +395,7 @@ function CsvResponse({ raw, runtime }: { raw: string; runtime: SourceRuntime }) 
             {rows.slice(0, 8).map((row, ri) => (
               <tr key={ri} className="border-t">
                 {headers.map((h) => (
-                  <td key={h} className="text-muted-foreground px-3 py-1.5 font-mono text-[11px]">
+                  <td key={h} className="text-muted-foreground text-2xs px-3 py-1.5 font-mono">
                     {row[h]}
                   </td>
                 ))}
@@ -463,21 +465,21 @@ function HtmlElementsResponse({ runtime }: { runtime: SourceRuntime }) {
               count: runtime.detectedElements.length,
             })}
       </p>
-      <div className="max-h-[420px] space-y-2 overflow-y-auto">
+      <div className="max-h-105 space-y-2 overflow-y-auto">
         {list.map((el) => (
           <button
             key={el.selector}
             type="button"
             onClick={() => runtime.handlePathSelect(el.selector, runtime.armedField ?? "pricePath")}
-            className="bg-background hover:bg-muted/30 group flex w-full items-start gap-3 rounded-lg border p-3 text-left transition-all"
+            className="bg-background hover:bg-muted/30 group flex w-full items-start gap-3 rounded-lg border p-3 text-start transition-all"
           >
             <div className="min-w-0 flex-1 space-y-1">
-              <code className="bg-muted/60 inline-block max-w-full truncate rounded px-1.5 py-0.5 font-mono text-[11px]">
+              <code className="bg-muted/60 text-2xs inline-block max-w-full truncate rounded px-1.5 py-0.5 font-mono">
                 {el.selector}
               </code>
-              {el.label && <p className="text-muted-foreground text-[11px]">{el.label}</p>}
+              {el.label && <p className="text-muted-foreground text-2xs">{el.label}</p>}
               {el.htmlContext && (
-                <pre className="bg-muted/40 text-muted-foreground/80 mt-1.5 overflow-x-auto rounded p-2 font-mono text-[10px] leading-relaxed">
+                <pre className="bg-muted/40 text-muted-foreground/80 text-2xs mt-1.5 overflow-x-auto rounded p-2 font-mono leading-relaxed">
                   {el.htmlContext}
                 </pre>
               )}
@@ -515,7 +517,7 @@ function CopyButton({ text, disabled }: { text: string; disabled?: boolean }) {
   const handleCopy = async () => {
     if (disabled || !text) return;
     try {
-      await navigator.clipboard.writeText(text);
+      await copyText(text);
       setCopied(true);
       setTimeout(() => setCopied(false), 1500);
     } catch {
@@ -530,7 +532,7 @@ function CopyButton({ text, disabled }: { text: string; disabled?: boolean }) {
       title={
         copied ? t("settings:market_data_page.copied") : t("settings:market_data_page.copy_url")
       }
-      className="text-muted-foreground hover:text-foreground hover:bg-muted/50 absolute right-1.5 top-1.5 flex h-7 w-7 items-center justify-center rounded-md transition-colors disabled:cursor-not-allowed disabled:opacity-40"
+      className="text-muted-foreground hover:text-foreground hover:bg-muted/50 absolute end-1.5 top-1.5 flex h-7 w-7 items-center justify-center rounded-md transition-colors disabled:cursor-not-allowed disabled:opacity-40"
     >
       {copied ? (
         <Icons.Check className="text-success h-3.5 w-3.5" />
@@ -554,7 +556,7 @@ function ExtractedRow({
   return (
     <div className="flex items-center gap-3 px-3 py-2">
       <span className={cn("h-2 w-2 shrink-0 rounded-sm", color)} />
-      <span className="text-muted-foreground w-16 shrink-0 text-xs font-medium uppercase tracking-wide">
+      <span className="text-muted-foreground w-16 shrink-0 text-xs font-medium tracking-wide uppercase">
         {label}
       </span>
       <span className="text-foreground min-w-0 flex-1 truncate text-sm font-semibold">
@@ -580,7 +582,7 @@ function TestField({
 }) {
   return (
     <div className={cn("space-y-1", className)}>
-      <Label className="text-muted-foreground text-[11px] font-medium uppercase tracking-wide">
+      <Label className="text-muted-foreground text-2xs font-medium tracking-wide uppercase">
         {label}
       </Label>
       {children}
@@ -612,7 +614,7 @@ function FieldMappingRow({
       type="button"
       onClick={onArm}
       className={cn(
-        "flex w-full items-center gap-3 rounded-lg border p-2.5 text-left transition-all",
+        "flex w-full items-center gap-3 rounded-lg border p-2.5 text-start transition-all",
         armed
           ? "bg-background border-foreground/30 ring-foreground/5 shadow-sm ring-1"
           : "bg-background hover:bg-muted/30",
@@ -623,7 +625,7 @@ function FieldMappingRow({
       <span className="shrink-0 text-sm font-medium">{label}</span>
       <span
         className={cn(
-          "ml-1 h-1.5 w-1.5 shrink-0 rounded-full",
+          "ms-1 h-1.5 w-1.5 shrink-0 rounded-full",
           assigned ? "bg-success" : armed ? "bg-primary" : "bg-muted-foreground/30",
         )}
       />
@@ -638,14 +640,14 @@ function FieldMappingRow({
       {required ? (
         <span
           className={cn(
-            "shrink-0 text-[10px] font-medium uppercase tracking-wide",
+            "text-2xs shrink-0 font-medium uppercase tracking-wide",
             assigned ? "text-muted-foreground" : "text-destructive",
           )}
         >
           {t("settings:market_data_page.required")}
         </span>
       ) : (
-        <span className="text-muted-foreground shrink-0 text-[10px] font-medium uppercase tracking-wide">
+        <span className="text-muted-foreground text-2xs shrink-0 font-medium tracking-wide uppercase">
           {t("settings:market_data_page.optional")}
         </span>
       )}
@@ -722,10 +724,10 @@ export function LivePreviewPane({ form, prefix, runtime }: LivePreviewPaneProps)
       {/* Request URL preview */}
       <section className="space-y-2">
         <div className="flex items-center justify-between">
-          <Label className="text-muted-foreground text-[11px] font-medium uppercase tracking-wide">
+          <Label className="text-muted-foreground text-2xs font-medium tracking-wide uppercase">
             {t("settings:market_data_page.request_url_preview")}
           </Label>
-          <span className="text-muted-foreground text-[11px]">
+          <span className="text-muted-foreground text-2xs">
             {form.watch(`${prefix}.method`) === "POST" ? "POST" : "GET"}
             &nbsp;·&nbsp;
             {isHistorical
@@ -733,7 +735,7 @@ export function LivePreviewPane({ form, prefix, runtime }: LivePreviewPaneProps)
               : t("settings:market_data_page.method_latest")}
           </span>
         </div>
-        <div className="bg-background relative min-h-[40px] rounded-lg border px-3 py-2 pr-10">
+        <div className="bg-background relative min-h-10 rounded-lg border px-3 py-2 pe-10">
           <PreviewUrl template={runtime.urlTemplate} values={previewValues} />
           <CopyButton text={runtime.expandedUrl} disabled={!runtime.urlTemplate} />
         </div>
@@ -742,10 +744,10 @@ export function LivePreviewPane({ form, prefix, runtime }: LivePreviewPaneProps)
       {/* Request body preview (POST only) */}
       {method === "POST" && (
         <section className="space-y-2">
-          <Label className="text-muted-foreground text-[11px] font-medium uppercase tracking-wide">
+          <Label className="text-muted-foreground text-2xs font-medium tracking-wide uppercase">
             {t("settings:market_data_page.request_body_preview")}
           </Label>
-          <div className="bg-background relative min-h-[40px] rounded-lg border px-3 py-2 pr-10">
+          <div className="bg-background relative min-h-10 rounded-lg border px-3 py-2 pe-10">
             <PreviewUrl
               template={bodyTemplate}
               values={previewValues}
@@ -760,10 +762,7 @@ export function LivePreviewPane({ form, prefix, runtime }: LivePreviewPaneProps)
       {/* Test inputs */}
       <section className="space-y-2">
         <div className="flex flex-wrap items-end gap-2">
-          <TestField
-            label={t("settings:market_data_page.test_symbol")}
-            className="min-w-[140px] flex-1"
-          >
+          <TestField label={t("settings:market_data_page.test_symbol")} className="min-w-35 flex-1">
             <Input
               placeholder={t("settings:market_data_page.test_symbol_placeholder")}
               value={inputs.symbol}
@@ -802,6 +801,7 @@ export function LivePreviewPane({ form, prefix, runtime }: LivePreviewPaneProps)
               <TestField label={t("settings:market_data_page.from")} className="w-36">
                 <Input
                   type="date"
+                  aria-label={t("settings:market_data_page.from")}
                   value={inputs.from}
                   onChange={(e) => setInputs({ from: e.target.value })}
                 />
@@ -809,6 +809,7 @@ export function LivePreviewPane({ form, prefix, runtime }: LivePreviewPaneProps)
               <TestField label={t("settings:market_data_page.to")} className="w-36">
                 <Input
                   type="date"
+                  aria-label={t("settings:market_data_page.to")}
                   value={inputs.to}
                   onChange={(e) => setInputs({ to: e.target.value })}
                 />
@@ -823,9 +824,9 @@ export function LivePreviewPane({ form, prefix, runtime }: LivePreviewPaneProps)
             className="h-input-height shrink-0"
           >
             {runtime.isFetching ? (
-              <Icons.Spinner className="mr-1.5 h-3.5 w-3.5 animate-spin" />
+              <Spinner className="me-1.5 h-3.5 w-3.5" />
             ) : (
-              <Icons.PlayCircle className="mr-1.5 h-3.5 w-3.5" />
+              <Icons.PlayCircle className="me-1.5 h-3.5 w-3.5" />
             )}
             {t("settings:market_data_page.fetch")}
           </Button>
@@ -835,11 +836,11 @@ export function LivePreviewPane({ form, prefix, runtime }: LivePreviewPaneProps)
       {/* Response */}
       <section className="space-y-2">
         <div className="flex items-center justify-between">
-          <Label className="text-muted-foreground text-[11px] font-medium uppercase tracking-wide">
+          <Label className="text-muted-foreground text-2xs font-medium tracking-wide uppercase">
             {t("settings:market_data_page.response")} · {formatLabel}
           </Label>
           {runtime.detectedTables[0] && (
-            <span className="text-muted-foreground text-[11px]">
+            <span className="text-muted-foreground text-2xs">
               {t("settings:market_data_page.table_rows_cols", {
                 rows: runtime.detectedTables[0].rowCount,
                 cols: runtime.detectedTables[0].columns.length,
@@ -849,19 +850,17 @@ export function LivePreviewPane({ form, prefix, runtime }: LivePreviewPaneProps)
         </div>
 
         {runtime.fetchError && !runtime.isFetching ? (
-          <div className="border-destructive/30 bg-destructive/5 rounded-lg border p-3">
-            <div className="flex items-start gap-2">
-              <Icons.XCircle className="text-destructive mt-0.5 h-4 w-4 shrink-0" />
-              <div>
-                <p className="text-destructive text-sm">{runtime.fetchError}</p>
-                {/403|forbidden|denied/i.test(runtime.fetchError) && (
-                  <p className="text-muted-foreground mt-1 text-xs">
-                    {t("settings:market_data_page.fetch_error_headers_hint")}
-                  </p>
-                )}
-              </div>
-            </div>
-          </div>
+          <Alert variant="destructive" className="p-3">
+            <Icons.XCircle />
+            <AlertDescription>
+              {runtime.fetchError}
+              {/403|forbidden|denied/i.test(runtime.fetchError) && (
+                <p className="mt-1 text-xs">
+                  {t("settings:market_data_page.fetch_error_headers_hint")}
+                </p>
+              )}
+            </AlertDescription>
+          </Alert>
         ) : !runtime.hasFetched && !runtime.testResult ? (
           <EmptyResponseState />
         ) : format === "html_table" && runtime.detectedTables.length > 0 ? (
@@ -871,7 +870,7 @@ export function LivePreviewPane({ form, prefix, runtime }: LivePreviewPaneProps)
         ) : format === "csv" && runtime.rawResponse ? (
           <CsvResponse raw={runtime.rawResponse} runtime={runtime} />
         ) : format === "json" && runtime.rawResponse ? (
-          <div className="bg-background max-h-[420px] overflow-auto rounded-lg border">
+          <div className="bg-background max-h-105 overflow-auto rounded-lg border">
             <RawResponseViewer
               rawResponse={runtime.rawResponse}
               format="json"
@@ -879,7 +878,7 @@ export function LivePreviewPane({ form, prefix, runtime }: LivePreviewPaneProps)
             />
           </div>
         ) : runtime.rawResponse ? (
-          <div className="bg-background max-h-[420px] overflow-auto rounded-lg border">
+          <div className="bg-background max-h-105 overflow-auto rounded-lg border">
             <RawResponseViewer rawResponse={runtime.rawResponse} format="html" />
           </div>
         ) : (
@@ -890,7 +889,7 @@ export function LivePreviewPane({ form, prefix, runtime }: LivePreviewPaneProps)
       {/* Extraction preview — verifies the current mapping against the response */}
       {runtime.testResult && (
         <section className="space-y-2">
-          <Label className="text-muted-foreground text-[11px] font-medium uppercase tracking-wide">
+          <Label className="text-muted-foreground text-2xs font-medium tracking-wide uppercase">
             {t("settings:market_data_page.extracted")}
           </Label>
           {runtime.testResult.success ? (
@@ -903,7 +902,7 @@ export function LivePreviewPane({ form, prefix, runtime }: LivePreviewPaneProps)
                     <span className="tabular-nums">
                       {formatting.formatDecimal(runtime.testResult.price)}
                       {runtime.testResult.currency && (
-                        <span className="text-muted-foreground ml-1.5 text-xs font-normal">
+                        <span className="text-muted-foreground ms-1.5 text-xs font-normal">
                           {runtime.testResult.currency}
                         </span>
                       )}
@@ -987,12 +986,12 @@ export function LivePreviewPane({ form, prefix, runtime }: LivePreviewPaneProps)
               )}
             </div>
           ) : (
-            <div className="border-destructive/30 bg-destructive/5 flex items-start gap-3 rounded-lg border p-3">
-              <Icons.XCircle className="text-destructive mt-0.5 h-4 w-4 shrink-0" />
-              <p className="text-muted-foreground min-w-0 flex-1 text-xs">
+            <Alert variant="destructive" className="p-3 text-xs">
+              <Icons.XCircle />
+              <AlertDescription>
                 {runtime.testResult.error ?? t("settings:market_data_page.extraction_failed")}
-              </p>
-            </div>
+              </AlertDescription>
+            </Alert>
           )}
         </section>
       )}
@@ -1000,12 +999,12 @@ export function LivePreviewPane({ form, prefix, runtime }: LivePreviewPaneProps)
       {/* Field mapping */}
       <section className="space-y-2">
         <div className="flex items-center justify-between">
-          <Label className="text-muted-foreground text-[11px] font-medium uppercase tracking-wide">
+          <Label className="text-muted-foreground text-2xs font-medium tracking-wide uppercase">
             {isHistorical
               ? t("settings:market_data_page.field_mapping_historical")
               : t("settings:market_data_page.field_mapping_latest")}
           </Label>
-          <span className="text-muted-foreground text-[11px]">
+          <span className="text-muted-foreground text-2xs">
             {t("settings:market_data_page.field_mapping_hint")}
           </span>
         </div>
@@ -1026,16 +1025,21 @@ export function LivePreviewPane({ form, prefix, runtime }: LivePreviewPaneProps)
         </div>
 
         <Collapsible open={moreFieldsOpen} onOpenChange={setMoreFieldsOpen}>
-          <CollapsibleTrigger asChild>
-            <button
-              type="button"
-              className="text-muted-foreground hover:text-foreground mt-1 flex items-center gap-1 text-xs"
-            >
-              <Icons.ChevronRight
-                className={cn("h-3 w-3 transition-transform", moreFieldsOpen && "rotate-90")}
+          <CollapsibleTrigger
+            render={
+              <button
+                type="button"
+                className="text-muted-foreground hover:text-foreground mt-1 flex items-center gap-1 text-xs"
               />
-              {t("settings:market_data_page.more_mapping_fields")}
-            </button>
+            }
+          >
+            <Icons.ChevronRight
+              className={cn(
+                "h-3 w-3 transition-transform",
+                moreFieldsOpen ? "rotate-90" : "rtl:rotate-180",
+              )}
+            />
+            {t("settings:market_data_page.more_mapping_fields")}
           </CollapsibleTrigger>
           <CollapsibleContent className="mt-2 space-y-1.5">
             {MAPPING_META.slice(2).map((m) => {

@@ -13,15 +13,10 @@ import { Icons } from "@wealthfolio/ui/components/ui/icons";
 import { Input } from "@wealthfolio/ui/components/ui/input";
 import { Label } from "@wealthfolio/ui/components/ui/label";
 import { toast } from "@wealthfolio/ui/components/ui/use-toast";
-import { buildClientConfig, STANDARD_PRESET_ID } from "../mcp-client-config";
-import {
-  applyScopeDependencies,
-  READ_SCOPES,
-  scopeDescription,
-  scopeLabel,
-  SCOPES,
-  type ScopeKey,
-} from "../scopes";
+import { applyScopeDependencies, READ_SCOPES, scopeDescription, type ScopeKey } from "../scopes";
+import { ScopeSelector } from "./scope-selector";
+import { ClientSetup } from "./client-setup";
+import { copyText } from "@wealthfolio/ui/lib/clipboard";
 
 const EXPIRY_OPTIONS = [
   {
@@ -50,9 +45,6 @@ const EXPIRY_OPTIONS = [
     label: "settings:agentAccess.expiry_never_label",
   },
 ] as const;
-
-const READ_GROUP = SCOPES.filter((scope) => scope.group === "read");
-const WRITE_GROUP = SCOPES.filter((scope) => scope.group === "write");
 
 interface PatCreateDialogProps {
   open: boolean;
@@ -125,7 +117,7 @@ export function PatCreateDialog({
 
   const handleCopy = async (value: string, label: string) => {
     try {
-      await navigator.clipboard.writeText(value);
+      await copyText(value);
       toast({
         title: t("settings:agentAccess.copied_title"),
         description: t("settings:agentAccess.copied_generic", { label }),
@@ -140,51 +132,6 @@ export function PatCreateDialog({
     }
   };
 
-  const configJson =
-    newToken && serverUrl ? buildClientConfig(STANDARD_PRESET_ID, serverUrl, newToken) : "";
-
-  const renderScope = (scope: (typeof SCOPES)[number]) => {
-    const checked = selectedScopes.includes(scope.key);
-    const label = scopeLabel(t, scope.key);
-    const description = scopeDescription(t, scope.key);
-    const locked =
-      (scope.key === "activities:draft" && selectedScopes.includes("activities:write")) ||
-      (scope.key === "classification:suggest" && selectedScopes.includes("classification:write"));
-    return (
-      <button
-        key={scope.key}
-        type="button"
-        role="checkbox"
-        aria-checked={checked}
-        aria-label={t("settings:agentAccess.dialog_scope_aria", { label, description })}
-        disabled={locked}
-        title={locked ? t("settings:agentAccess.scope_locked_title") : description}
-        onClick={() => toggleScope(scope.key)}
-        className={cn(
-          "flex w-full items-center justify-between gap-2 rounded-md border px-3 py-2 text-left text-sm transition-colors",
-          "focus-visible:ring-ring focus-visible:outline-none focus-visible:ring-2",
-          checked
-            ? "border-success/50 bg-success/10"
-            : "border-border hover:border-muted-foreground/30 hover:bg-muted/40",
-          locked && "cursor-not-allowed opacity-80",
-        )}
-      >
-        <span className="truncate font-medium">{label}</span>
-        <span
-          className={cn(
-            "grid h-4 w-4 shrink-0 place-items-center transition-colors",
-            checked
-              ? "bg-success rounded-[5px] text-white"
-              : "border-muted-foreground/30 rounded-full border-2",
-          )}
-          aria-hidden
-        >
-          {checked && <Icons.Check className="h-2.5 w-2.5" strokeWidth={3} />}
-        </span>
-      </button>
-    );
-  };
-
   return (
     <Dialog open={open} onOpenChange={handleOpenChange}>
       <DialogContent
@@ -194,7 +141,7 @@ export function PatCreateDialog({
           <div className="md:grid md:grid-cols-[1fr_22rem]">
             {/* Left: the form */}
             <div className="flex flex-col md:max-h-[85vh]">
-              <div className="space-y-1 px-6 pb-4 pt-6">
+              <div className="space-y-1 px-6 pt-6 pb-4">
                 <DialogTitle>{t("settings:agentAccess.dialog_new_title")}</DialogTitle>
                 <DialogDescription>
                   {t("settings:agentAccess.dialog_new_description")}
@@ -239,26 +186,18 @@ export function PatCreateDialog({
                   </div>
                 </div>
 
-                <div className="space-y-2">
-                  <p className="text-muted-foreground text-xs font-medium uppercase tracking-wider">
-                    {t("settings:agentAccess.dialog_read_access")}
-                  </p>
-                  <div className="grid gap-2 sm:grid-cols-2">{READ_GROUP.map(renderScope)}</div>
-                </div>
-
-                <div className="space-y-2">
-                  <p className="text-muted-foreground text-xs font-medium uppercase tracking-wider">
-                    {t("settings:agentAccess.dialog_write_access")}
-                  </p>
-                  <div className="grid gap-2 sm:grid-cols-2">{WRITE_GROUP.map(renderScope)}</div>
-                </div>
+                <ScopeSelector
+                  selectedScopes={selectedScopes}
+                  onToggle={toggleScope}
+                  onSelectPreset={(scopes) => setSelected(new Set(scopes))}
+                />
               </div>
             </div>
 
             {/* Right: live capability summary + action */}
-            <aside className="bg-muted/30 flex flex-col border-t md:max-h-[85vh] md:border-l md:border-t-0">
+            <aside className="bg-muted/30 flex flex-col border-t md:max-h-[85vh] md:border-s md:border-t-0">
               <div className="flex-1 space-y-3 overflow-y-auto px-5 py-6">
-                <p className="text-muted-foreground text-[11px] font-medium uppercase tracking-wider">
+                <p className="text-muted-foreground text-2xs font-medium tracking-wider uppercase">
                   {t("settings:agentAccess.dialog_capabilities_title")}
                 </p>
                 {selectedScopes.length === 0 ? (
@@ -316,7 +255,7 @@ export function PatCreateDialog({
             <div className="space-y-1.5">
               <Label>{t("settings:agentAccess.dialog_access_token")}</Label>
               <div className="flex items-center gap-2">
-                <p className="bg-muted min-w-0 flex-1 select-all truncate rounded-md px-3 py-2 font-mono text-xs">
+                <p className="bg-muted min-w-0 flex-1 truncate rounded-md px-3 py-2 font-mono text-xs select-all">
                   {newToken}
                 </p>
                 <Button
@@ -334,29 +273,9 @@ export function PatCreateDialog({
             </div>
 
             {serverUrl && (
-              <div className="space-y-1.5">
+              <div className="space-y-2">
                 <Label>{t("settings:agentAccess.dialog_client_config")}</Label>
-                <p className="text-muted-foreground text-sm">
-                  {t("settings:agentAccess.dialog_client_config_desc")}
-                </p>
-                <div className="flex items-start gap-2">
-                  <pre className="bg-muted text-muted-foreground max-h-64 min-w-0 flex-1 overflow-auto whitespace-pre-wrap break-all rounded-md px-3 py-2 font-mono text-xs leading-relaxed">
-                    {configJson}
-                  </pre>
-                  <Button
-                    variant="ghost"
-                    size="icon"
-                    className="shrink-0"
-                    onClick={() =>
-                      void handleCopy(configJson, t("settings:agentAccess.dialog_client_config"))
-                    }
-                  >
-                    <Icons.Copy className="h-4 w-4" />
-                    <span className="sr-only">
-                      {t("settings:agentAccess.dialog_copy_config_aria")}
-                    </span>
-                  </Button>
-                </div>
+                <ClientSetup serverUrl={serverUrl} token={newToken} />
               </div>
             )}
             <div className="flex justify-end">

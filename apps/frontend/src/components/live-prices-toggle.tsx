@@ -40,30 +40,32 @@ export function LivePricesToggle({
 
   return (
     <Tooltip>
-      <TooltipTrigger asChild>
-        <Button
-          type="button"
-          variant={enabled ? "secondary" : "outline"}
-          size="sm"
-          aria-pressed={enabled}
-          onClick={onToggle}
-          className={cn("h-8 gap-2 rounded-lg px-3", className)}
-        >
-          <span className="relative flex size-2">
-            {enabled && !hasError && (
-              <span className="bg-success absolute inline-flex size-full animate-ping rounded-full opacity-60 motion-reduce:hidden" />
-            )}
-            <span
-              className={cn(
-                "relative inline-flex size-2 rounded-full",
-                !enabled ? "bg-muted-foreground/50" : hasError ? "bg-warning" : "bg-success",
-                enabled && isFetching && "opacity-60",
-              )}
-            />
-          </span>
-          {t("holdings:live")}
-        </Button>
-      </TooltipTrigger>
+      <TooltipTrigger
+        render={
+            <Button
+              type="button"
+              variant={enabled ? "secondary" : "outline"}
+              size="sm"
+              aria-pressed={enabled}
+              onClick={onToggle}
+              className={cn("h-8 gap-2 rounded-lg px-3", className)}
+            >
+              <span className="relative flex size-2">
+                {enabled && !hasError && (
+                  <span className="bg-success absolute inline-flex size-full animate-ping rounded-full opacity-60 motion-reduce:hidden" />
+                )}
+                <span
+                  className={cn(
+                    "relative inline-flex size-2 rounded-full",
+                    !enabled ? "bg-muted-foreground/50" : hasError ? "bg-warning" : "bg-success",
+                    enabled && isFetching && "opacity-60",
+                  )}
+                />
+              </span>
+              {t("holdings:live")}
+            </Button>
+        }
+      />
       <TooltipContent>
         <p>{hint}</p>
       </TooltipContent>

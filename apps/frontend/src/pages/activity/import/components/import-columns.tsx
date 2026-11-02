@@ -132,9 +132,8 @@ export function useImportColumns<T extends ImportRowData>({
         id: "select",
         header: ({ table }) => (
           <Checkbox
-            checked={
-              table.getIsAllRowsSelected() || (table.getIsSomeRowsSelected() && "indeterminate")
-            }
+            checked={table.getIsAllRowsSelected()}
+            indeterminate={table.getIsSomeRowsSelected()}
             onCheckedChange={(checked) => table.toggleAllRowsSelected(Boolean(checked))}
             aria-label={t("activity:import.columns.selectAllRows")}
           />
@@ -229,11 +228,11 @@ export function useImportColumns<T extends ImportRowData>({
       meta: {
         cell: {
           variant: "select",
-          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          // oxlint-disable-next-line typescript/no-explicit-any
           options: getSubtypeOptions as any,
           allowEmpty: true,
           emptyLabel: t("activity:import.columns.none"),
-          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          // oxlint-disable-next-line typescript/no-explicit-any
         } as any,
       },
     });
@@ -253,7 +252,7 @@ export function useImportColumns<T extends ImportRowData>({
             const row = rowData as ImportRowData;
             return !supportsPerformanceBoundary(row.activityType);
           },
-          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          // oxlint-disable-next-line typescript/no-explicit-any
         } as any,
       },
     });
@@ -289,7 +288,10 @@ export function useImportColumns<T extends ImportRowData>({
       meta: {
         cell: {
           variant: "select",
-          options: [...INSTRUMENT_TYPE_OPTIONS],
+          options: INSTRUMENT_TYPE_OPTIONS.map((opt) => ({
+            value: opt.value,
+            label: t(`asset:createSecurity.instrumentType.${opt.value.toLowerCase()}`),
+          })),
           allowEmpty: true,
           emptyLabel: t("activity:import.columns.auto"),
         },

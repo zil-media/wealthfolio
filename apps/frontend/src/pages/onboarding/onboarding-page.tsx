@@ -1,3 +1,4 @@
+import { buttonVariants } from "@wealthfolio/ui";
 import { ExternalLink } from "@/components/external-link";
 import { StartupError } from "@/components/startup-error";
 import { StartupScreen } from "@/components/startup-screen";
@@ -37,6 +38,7 @@ const OnboardingPage = () => {
   const [isStepValid, setIsStepValid] = useState(true);
   const settingsStepRef = useRef<OnboardingStep2Handle>(null);
   const appearanceStepRef = useRef<OnboardingAppearanceHandle>(null);
+  const pageRef = useRef<HTMLDivElement>(null);
   const maxSteps = isMobile ? MOBILE_MAX_STEPS : DESKTOP_MAX_STEPS;
   const completionRoute = isMobile ? "/settings" : "/settings/accounts";
   const isFinalStep = currentStep === maxSteps;
@@ -56,12 +58,17 @@ const OnboardingPage = () => {
     return <Navigate to={completionRoute} replace />;
   }
 
+  // Each step opens at its top, not where the last one was scrolled to reach its buttons.
+  const scrollToTop = () => pageRef.current?.scrollIntoView({ block: "start" });
+
   const handleNext = () => {
     setCurrentStep((prev) => Math.min(prev + 1, maxSteps));
+    scrollToTop();
   };
 
   const handleBack = () => {
     setCurrentStep((prev) => Math.max(prev - 1, 1));
+    scrollToTop();
   };
 
   const handleContinue = () => {
@@ -75,9 +82,12 @@ const OnboardingPage = () => {
   };
 
   return (
+    // `onboarding-page` keeps globals.css's small-screen rule from making this a scroll
+    // container of its own, so the footer sticks to the window's bottom.
     <div
+      ref={pageRef}
       data-testid="onboarding-page"
-      className="bg-background flex min-h-full flex-col pt-[env(safe-area-inset-top)]"
+      className="onboarding-page bg-background flex min-h-full flex-col pt-[env(safe-area-inset-top)]"
     >
       {/* Fixed Header with Logo and Steppers */}
       <header className={cn("flex-none px-4 sm:px-6", isAppearanceStep ? "pt-4" : "pt-8 sm:pt-8")}>
@@ -108,7 +118,8 @@ const OnboardingPage = () => {
       </header>
 
       {/* Main content - centered vertically in remaining space */}
-      <main className="flex flex-1 flex-col items-center justify-center px-4 sm:px-6">
+      {/* The bottom padding keeps the last line clear of the footer's fade. */}
+      <main className="flex flex-1 flex-col items-center justify-center px-4 pb-6 sm:px-6">
         <AnimatePresence mode="wait" initial={false}>
           <motion.div
             key={currentStep}
@@ -138,8 +149,9 @@ const OnboardingPage = () => {
         </AnimatePresence>
       </main>
 
-      {/* Fixed Footer */}
-      <footer className="flex-none pb-[env(safe-area-inset-bottom)]">
+      {/* The footer stays in view while a step scrolls; its fade shows only over
+          content scrolling under it. */}
+      <footer className="bg-background before:from-background sticky bottom-0 z-10 flex-none pb-[var(--inset-bottom)] before:pointer-events-none before:absolute before:inset-x-0 before:-top-6 before:h-6 before:bg-linear-to-t before:to-transparent">
         <div
           className={cn(
             "mx-auto max-w-4xl px-4 sm:px-6",
@@ -150,26 +162,27 @@ const OnboardingPage = () => {
             <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
               <div className="order-2 sm:order-1">
                 <Button variant="ghost" onClick={handleBack} size="sm">
-                  <Icons.ArrowLeft className="mr-1.5 h-4 w-4" />
+                  <Icons.ArrowLeft className="me-1.5 h-4 w-4 rtl:rotate-180" />
                   {t("common:back")}
                 </Button>
               </div>
               <div className="order-1 flex flex-col gap-2 sm:order-2 sm:flex-row sm:gap-3">
                 {!isMobile && (
-                  <Button asChild variant="outline" className="order-2 sm:order-1">
-                    <ExternalLink href={connectLink}>
-                      {t("onboarding:buttons.subscribeConnect")}
-                      <Icons.ExternalLink className="ml-1.5 h-4 w-4" />
-                    </ExternalLink>
-                  </Button>
+                  <ExternalLink
+                    href={connectLink}
+                    className={cn(buttonVariants({ variant: "outline" }), "order-2 sm:order-1")}
+                  >
+                    {t("onboarding:buttons.subscribeConnect")}
+                    <Icons.ExternalLink className="ms-1.5 h-4 w-4" />
+                  </ExternalLink>
                 )}
                 <Button
                   data-testid="onboarding-finish-button"
-                  className="from-primary to-primary/90 bg-linear-to-r order-1 sm:order-2"
+                  className="from-primary to-primary/90 order-1 bg-linear-to-r sm:order-2"
                   onClick={() => updateSettings({ onboardingCompleted: true })}
                 >
                   {t("onboarding:buttons.getStarted")}
-                  <Icons.ArrowRight className="ml-1.5 h-4 w-4" />
+                  <Icons.ArrowRight className="ms-1.5 h-4 w-4 rtl:rotate-180" />
                 </Button>
               </div>
             </div>
@@ -178,7 +191,7 @@ const OnboardingPage = () => {
               <div>
                 {currentStep > 1 && (
                   <Button variant="ghost" onClick={handleBack} size="sm">
-                    <Icons.ArrowLeft className="mr-1.5 h-4 w-4" />
+                    <Icons.ArrowLeft className="me-1.5 h-4 w-4 rtl:rotate-180" />
                     {t("common:back")}
                   </Button>
                 )}
@@ -190,7 +203,7 @@ const OnboardingPage = () => {
                 className="from-primary to-primary/90 bg-linear-to-r"
               >
                 {t("onboarding:buttons.continue")}
-                <Icons.ArrowRight className="ml-1.5 h-4 w-4" />
+                <Icons.ArrowRight className="ms-1.5 h-4 w-4 rtl:rotate-180" />
               </Button>
             </div>
           )}

@@ -15,6 +15,11 @@ import {
   DialogFooter,
   DialogHeader,
   DialogTitle,
+  ProgressIndicator,
+  Sheet,
+  SheetContent,
+  SheetDescription,
+  SheetTitle,
 } from "@wealthfolio/ui";
 import { describe, expect, it } from "vitest";
 
@@ -66,7 +71,7 @@ describe("dialog overflow containment", () => {
 
     expect(screen.getByRole("alertdialog")).toHaveClass(
       "[&>*]:min-w-0",
-      "max-h-[calc(100dvh-env(safe-area-inset-bottom,0px)-2rem)]",
+      "max-h-[calc(100dvh-var(--inset-bottom,env(safe-area-inset-bottom,0px))-2rem)]",
       "overflow-y-auto",
     );
     expect(screen.getByTestId("alert-dialog-footer")).toHaveClass(
@@ -74,5 +79,38 @@ describe("dialog overflow containment", () => {
       "max-sm:[&_button]:shrink",
       "sm:flex-wrap",
     );
+  });
+
+  // globals.css restores max-w-* below 1024 px for these attributes only.
+  it("marks side sheets for the max-width opt-out and leaves bottom sheets out", () => {
+    const sideSheet = render(
+      <Sheet open>
+        <SheetContent>
+          <SheetTitle>Side sheet</SheetTitle>
+          <SheetDescription>Opens from the inline end by default</SheetDescription>
+        </SheetContent>
+      </Sheet>,
+    );
+
+    expect(screen.getByRole("dialog")).toHaveAttribute("data-slot", "sheet-content");
+    expect(screen.getByRole("dialog")).toHaveAttribute("data-side", "inline-end");
+    sideSheet.unmount();
+
+    render(
+      <Dialog open useIsMobile={() => true}>
+        <DialogContent>
+          <DialogTitle>Mobile dialog</DialogTitle>
+          <DialogDescription>Renders as a bottom sheet</DialogDescription>
+        </DialogContent>
+      </Dialog>,
+    );
+
+    expect(screen.getByRole("dialog")).toHaveAttribute("data-side", "bottom");
+  });
+
+  it("marks the progress dialog for the max-width opt-out", () => {
+    render(<ProgressIndicator open title="Importing" />);
+
+    expect(screen.getByRole("dialog")).toHaveAttribute("data-slot", "dialog-content");
   });
 });

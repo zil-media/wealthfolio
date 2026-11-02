@@ -408,6 +408,40 @@ fn test_detect_addon_permissions_assets_and_market_data_sdk_categories() {
 }
 
 #[test]
+fn test_detect_addon_permissions_alternative_assets() {
+    let addon_files = vec![AddonFile {
+        name: "addon.js".to_string(),
+        content: r#"
+            export default async function enable(ctx) {
+                const holdings = await ctx.api.alternativeAssets.getAll();
+            }
+        "#
+        .to_string(),
+        is_main: true,
+    }];
+
+    let detected_permissions = detect_addon_permissions(&addon_files);
+    let alternative_assets_permission = detected_permissions
+        .iter()
+        .find(|permission| permission.category == "alternative-assets")
+        .expect("alternative-assets permissions should be detected");
+
+    assert!(
+        alternative_assets_permission
+            .functions
+            .iter()
+            .any(|function| function.name == "getAll"),
+        "getAll should be detected under alternative-assets"
+    );
+    assert!(
+        detected_permissions
+            .iter()
+            .all(|permission| permission.category != "accounts"),
+        "alternativeAssets.getAll should not be detected under accounts"
+    );
+}
+
+#[test]
 fn test_detect_addon_permissions_historical_exchange_rates() {
     let addon_files = vec![AddonFile {
         name: "addon.js".to_string(),
@@ -533,6 +567,38 @@ fn test_detect_addon_permissions_spending() {
         .functions
         .iter()
         .any(|function| function.name == "searchCashActivities"));
+}
+
+#[test]
+fn spending_metadata_writes_and_budgets_are_detected_under_explicit_high_risk_categories() {
+    let files=vec![AddonFile{name:"addon.js".into(),content:r#"
+        ctx.api.spending.getContext(); ctx.api.spending.getBudget(); ctx.api.spending.getEvents(); ctx.api.spending.getEventTypes();
+        ctx.api.spending.assignCategory('a','expense','c'); ctx.api.spending.unassignCategory('a','expense'); ctx.api.spending.setEvent('a',null);
+        ctx.api.spending.upsertBudgetTarget({});
+    "#.into(),is_main:true}];
+    let permissions = detect_addon_permissions(&files);
+    let functions = |category: &str| {
+        permissions
+            .iter()
+            .find(|p| p.category == category)
+            .unwrap()
+            .functions
+            .iter()
+            .map(|f| f.name.as_str())
+            .collect::<std::collections::HashSet<_>>()
+    };
+    assert_eq!(
+        functions("spending"),
+        std::collections::HashSet::from(["getContext", "getBudget", "getEvents", "getEventTypes"])
+    );
+    assert_eq!(
+        functions("activities"),
+        std::collections::HashSet::from(["assignCategory", "unassignCategory", "setEvent"])
+    );
+    assert_eq!(
+        functions("budgets"),
+        std::collections::HashSet::from(["upsertBudgetTarget"])
+    );
 }
 
 #[test]
@@ -1326,6 +1392,45 @@ fn test_extract_addon_zip_accepts_valid_nested_paths() {
             .any(|file| file.name == "dist/helpers/util.js"),
         "nested helper file should be preserved"
     );
+}
+
+#[test]
+fn test_extract_addon_zip_accepts_windows_separators() {
+    let zip_data = build_test_addon_zip(&[
+        (
+            "my-addon\\manifest.json",
+            r#"{"id":"test-addon","name":"Test Addon","version":"1.0.0","main":"addon.js"}"#,
+        ),
+        ("my-addon\\addon.js", "console.log('ok');"),
+    ]);
+
+    let extracted = extract_addon_zip_internal(zip_data).expect("zip should extract");
+    assert_eq!(extracted.metadata.id, "test-addon");
+    assert!(
+        extracted
+            .files
+            .iter()
+            .any(|file| file.name == "addon.js" && file.is_main),
+        "main file should be found under the normalized package root"
+    );
+}
+
+#[test]
+fn test_extract_addon_zip_rejects_windows_parent_traversal_path() {
+    let zip_data = build_test_addon_zip(&[
+        (
+            "manifest.json",
+            r#"{"id":"test-addon","name":"Test Addon","version":"1.0.0","main":"dist/addon.js"}"#,
+        ),
+        ("dist/addon.js", "console.log('ok');"),
+        ("..\\evil.js", "console.log('bad');"),
+    ]);
+
+    let err = match extract_addon_zip_internal(zip_data) {
+        Ok(_) => panic!("zip should be rejected"),
+        Err(err) => err,
+    };
+    assert!(err.contains("parent traversal"));
 }
 
 #[test]
@@ -2796,5 +2901,258 @@ mod service_tests {
         );
 
         std::fs::remove_dir_all(&temp_dir).ok();
+    }
+
+    /// A manifest as a dev server serves it: source form, with permission
+    /// functions as plain strings.
+    fn dev_network_manifest(id: &str, with_secrets_use: bool) -> String {
+        let secrets_permission = if with_secrets_use {
+            r#",{"category":"secrets","purpose":"Secrets access","functions":["use"]}"#
+        } else {
+            ""
+        };
+        format!(
+            r#"{{
+                "id":"{id}",
+                "name":"Network Addon",
+                "version":"1.0.0",
+                "main":"dist/addon.js",
+                "permissions": [
+                    {{"category":"network","purpose":"Network access","functions":["request"]}}{secrets_permission}
+                ],
+                "network": {{ "allowedHosts": ["api.example.com"] }}
+            }}"#
+        )
+    }
+
+    fn network_request(url: &str, with_auth: bool) -> AddonNetworkRequest {
+        AddonNetworkRequest {
+            url: url.to_string(),
+            method: Some("GET".to_string()),
+            headers: None,
+            body: None,
+            auth: with_auth.then(|| AddonNetworkAuth {
+                auth_type: "bearer".to_string(),
+                secret_key: "api-token".to_string(),
+            }),
+            timeout_secs: None,
+            injected_authorization: with_auth.then(|| "Bearer secret-token".to_string()),
+        }
+    }
+
+    #[tokio::test]
+    async fn test_network_request_for_unknown_addon_is_not_found() {
+        let temp_dir = env::temp_dir().join("wealthfolio_test_dev_network_unknown");
+        if temp_dir.exists() {
+            std::fs::remove_dir_all(&temp_dir).ok();
+        }
+
+        let service = test_addon_service(&temp_dir);
+        let result = service
+            .addon_network_request(
+                "network-addon",
+                network_request("https://api.example.com/v1", false),
+            )
+            .await;
+
+        assert_eq!(result.err().as_deref(), Some("Addon not found"));
+
+        std::fs::remove_dir_all(&temp_dir).ok();
+    }
+
+    #[tokio::test]
+    async fn test_dev_manifest_enforces_declared_hosts() {
+        let temp_dir = env::temp_dir().join("wealthfolio_test_dev_network_hosts");
+        if temp_dir.exists() {
+            std::fs::remove_dir_all(&temp_dir).ok();
+        }
+
+        let service = test_addon_service(&temp_dir);
+        service
+            .register_dev_addon_manifest(&dev_network_manifest("network-addon", false))
+            .expect("dev manifest should register");
+        let result = service
+            .addon_network_request(
+                "network-addon",
+                network_request("https://other.example.com/v1", false),
+            )
+            .await;
+
+        assert!(result
+            .err()
+            .unwrap_or_default()
+            .contains("'other.example.com' is not approved"));
+
+        std::fs::remove_dir_all(&temp_dir).ok();
+    }
+
+    #[tokio::test]
+    async fn test_dev_manifest_network_auth_requires_secrets_use_permission() {
+        let temp_dir = env::temp_dir().join("wealthfolio_test_dev_network_auth");
+        if temp_dir.exists() {
+            std::fs::remove_dir_all(&temp_dir).ok();
+        }
+
+        let service = test_addon_service(&temp_dir);
+        service
+            .register_dev_addon_manifest(&dev_network_manifest("network-addon", false))
+            .expect("dev manifest should register");
+        let result = service
+            .addon_network_request(
+                "network-addon",
+                network_request("https://api.example.com/v1", true),
+            )
+            .await;
+
+        assert!(result
+            .err()
+            .unwrap_or_default()
+            .contains("not allowed to use network auth"));
+
+        std::fs::remove_dir_all(&temp_dir).ok();
+    }
+
+    #[tokio::test]
+    async fn test_dev_manifest_accepts_source_form_secrets_use_permission() {
+        let temp_dir = env::temp_dir().join("wealthfolio_test_dev_network_source_form");
+        if temp_dir.exists() {
+            std::fs::remove_dir_all(&temp_dir).ok();
+        }
+
+        let service = test_addon_service(&temp_dir);
+        service
+            .register_dev_addon_manifest(&dev_network_manifest("network-addon", true))
+            .expect("dev manifest should register");
+        // Passing the auth check means `"functions": ["use"]` was honored; the
+        // undeclared host then stops the request before any network I/O.
+        let result = service
+            .addon_network_request(
+                "network-addon",
+                network_request("https://other.example.com/v1", true),
+            )
+            .await;
+
+        assert!(result
+            .err()
+            .unwrap_or_default()
+            .contains("'other.example.com' is not approved"));
+
+        std::fs::remove_dir_all(&temp_dir).ok();
+    }
+
+    #[tokio::test]
+    async fn test_dev_manifest_takes_precedence_over_installed_addon() {
+        let temp_dir = env::temp_dir().join("wealthfolio_test_dev_network_precedence");
+        if temp_dir.exists() {
+            std::fs::remove_dir_all(&temp_dir).ok();
+        }
+
+        let addon_dir = temp_dir.join("addons").join("network-addon");
+        std::fs::create_dir_all(&addon_dir).expect("addon dir should be created");
+        std::fs::write(
+            addon_dir.join("manifest.json"),
+            r#"{
+                "id":"network-addon",
+                "name":"Network Addon",
+                "version":"1.0.0",
+                "main":"addon.js",
+                "enabled": true,
+                "permissions": [
+                    {
+                        "category":"network",
+                        "purpose":"Network access",
+                        "functions":[{"name":"request","isDeclared":true,"isDetected":false}]
+                    },
+                    {
+                        "category":"secrets",
+                        "purpose":"Secrets access",
+                        "functions":[{"name":"use","isDeclared":true,"isDetected":false}]
+                    }
+                ],
+                "network": {
+                    "allowedHosts": ["api.example.com"],
+                    "approvedHosts": ["api.example.com"]
+                }
+            }"#,
+        )
+        .expect("manifest should be written");
+        std::fs::write(addon_dir.join("addon.js"), "console.log('ok');")
+            .expect("addon should be written");
+
+        let service = test_addon_service(&temp_dir);
+        service
+            .register_dev_addon_manifest(&dev_network_manifest("network-addon", false))
+            .expect("dev manifest should register");
+        let result = service
+            .addon_network_request(
+                "network-addon",
+                network_request("https://api.example.com/v1", true),
+            )
+            .await;
+
+        assert!(result
+            .err()
+            .unwrap_or_default()
+            .contains("not allowed to use network auth"));
+
+        service
+            .unregister_dev_addon_manifest("network-addon")
+            .expect("dev manifest should unregister");
+        // The installed copy permits secrets.use; its host approval now applies again.
+        let result = service
+            .addon_network_request(
+                "network-addon",
+                network_request("https://other.example.com/v1", true),
+            )
+            .await;
+        assert!(result
+            .err()
+            .unwrap_or_default()
+            .contains("'other.example.com' is not approved"));
+
+        service.toggle_addon("network-addon", false).unwrap();
+        let result = service
+            .addon_network_request(
+                "network-addon",
+                network_request("https://api.example.com/v1", false),
+            )
+            .await;
+        assert_eq!(result.err().as_deref(), Some("Addon is disabled"));
+
+        std::fs::remove_dir_all(&temp_dir).ok();
+    }
+
+    #[tokio::test]
+    async fn test_unregister_dev_manifest_restores_unknown_addon_rejection() {
+        let temp_dir = env::temp_dir().join("wealthfolio_test_dev_network_unregister");
+        let service = test_addon_service(&temp_dir);
+        service
+            .register_dev_addon_manifest(&dev_network_manifest("network-addon", false))
+            .unwrap();
+        service
+            .unregister_dev_addon_manifest("network-addon")
+            .unwrap();
+        service
+            .unregister_dev_addon_manifest("network-addon")
+            .unwrap();
+        assert!(service.unregister_dev_addon_manifest("../escape").is_err());
+        let result = service
+            .addon_network_request(
+                "network-addon",
+                network_request("https://api.example.com/v1", false),
+            )
+            .await;
+        assert_eq!(result.err().as_deref(), Some("Addon not found"));
+        std::fs::remove_dir_all(&temp_dir).ok();
+    }
+
+    #[test]
+    fn test_register_dev_addon_manifest_rejects_invalid_id() {
+        let temp_dir = env::temp_dir().join("wealthfolio_test_dev_network_invalid_id");
+        let service = test_addon_service(&temp_dir);
+
+        assert!(service
+            .register_dev_addon_manifest(&dev_network_manifest("../escape", false))
+            .is_err());
     }
 }

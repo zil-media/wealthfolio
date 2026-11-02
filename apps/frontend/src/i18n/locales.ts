@@ -14,6 +14,7 @@ export const SUPPORTED_LOCALES = [
   { code: "ja", label: "日本語" },
   { code: "ko", label: "한국어" },
   { code: "it", label: "Italiano" },
+  { code: "ar", label: "العربية" },
 ] as const;
 
 export type LocaleCode = (typeof SUPPORTED_LOCALES)[number]["code"];
@@ -56,6 +57,7 @@ export function normalizeLocaleCode(language: string): string {
 // Translation namespaces (one JSON file per namespace per locale).
 export const NAMESPACES = [
   "common",
+  "taxonomies",
   "dashboard",
   "holdings",
   "activity",

@@ -1,3 +1,4 @@
+import { getCategoryLabel } from "@/lib/taxonomy-labels";
 import { useMemo, useState } from "react";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@wealthfolio/ui";
 import { useTranslation } from "react-i18next";
@@ -13,14 +14,15 @@ import { hasVisibleAllocation } from "./drift-row-utils";
 
 interface CurrentVsTargetCardProps {
   report: DriftReport;
+  taxonomyId: string;
   taxonomyLabel: string;
   targetLabel: string;
 }
 
 function driftColor(row: DriftRow): string {
   if (row.status === "in_band") return "text-muted-foreground";
-  if (row.status === "overweight" || row.status === "not_targeted") return "text-destructive";
-  return "text-blue-600 dark:text-blue-400";
+  if (row.status === "overweight" || row.status === "not_targeted") return "text-allocation-over";
+  return "text-allocation-under";
 }
 
 function formatTargetBps(bps: number): string {
@@ -30,6 +32,7 @@ function formatTargetBps(bps: number): string {
 
 export function CurrentVsTargetCard({
   report,
+  taxonomyId,
   taxonomyLabel,
   targetLabel,
 }: CurrentVsTargetCardProps) {
@@ -49,9 +52,10 @@ export function CurrentVsTargetCard({
         </CardDescription>
       </CardHeader>
       <CardContent>
-        <div className="grid items-center gap-6 pt-3 xl:grid-cols-[280px_minmax(0,1fr)] xl:pt-5">
+        <div className="grid items-center gap-6 pt-3 xl:grid-cols-[17.5rem_minmax(0,1fr)] xl:pt-5">
           <div className="mx-auto shrink-0">
             <AllocationDonut
+              taxonomyId={taxonomyId}
               rows={visibleRows}
               colorByCategory={colorByCategory}
               totalValue={report.totalValue}
@@ -64,12 +68,12 @@ export function CurrentVsTargetCard({
 
           <div className="min-w-0">
             {/* Column headers */}
-            <div className="text-muted-foreground hidden grid-cols-[minmax(7.5rem,1fr)_minmax(10rem,1.25fr)_3.5rem_3.5rem_5rem] gap-x-3 px-2 pb-2 text-[10px] font-medium uppercase tracking-wider md:grid">
+            <div className="text-muted-foreground text-2xs hidden grid-cols-[minmax(7.5rem,1fr)_minmax(10rem,1.25fr)_3.5rem_3.5rem_5rem] gap-x-3 px-2 pb-2 font-medium tracking-wider uppercase md:grid">
               <span>{t("allocation:vsTarget.category")}</span>
               <span>{t("allocation:vsTarget.currentAllocation")}</span>
-              <span className="text-right">{t("allocation:vsTarget.current")}</span>
-              <span className="text-right">{t("allocation:vsTarget.target")}</span>
-              <span className="text-right">{t("allocation:vsTarget.drift")}</span>
+              <span className="text-end">{t("allocation:vsTarget.current")}</span>
+              <span className="text-end">{t("allocation:vsTarget.target")}</span>
+              <span className="text-end">{t("allocation:vsTarget.drift")}</span>
             </div>
 
             {/* Asset class rows */}
@@ -83,7 +87,11 @@ export function CurrentVsTargetCard({
                   <div
                     key={row.categoryId}
                     className="grid cursor-default grid-cols-[minmax(0,1fr)_5.25rem] items-center gap-x-3 gap-y-2 rounded-sm px-2 py-3 transition-colors md:grid-cols-[minmax(7.5rem,1fr)_minmax(10rem,1.25fr)_3.5rem_3.5rem_5rem]"
-                    style={{ backgroundColor: isHovered ? `${rowColor}22` : undefined }}
+                    style={{
+                      backgroundColor: isHovered
+                        ? `color-mix(in oklab, ${rowColor} 13%, transparent)`
+                        : undefined,
+                    }}
                     onMouseEnter={() => setHoveredId(row.categoryId)}
                     onMouseLeave={() => setHoveredId(null)}
                   >
@@ -92,8 +100,8 @@ export function CurrentVsTargetCard({
                         className="h-2.5 w-2.5 shrink-0 rounded-sm"
                         style={{ background: rowColor }}
                       />
-                      <span className="text-foreground truncate text-[12.5px] font-semibold">
-                        {row.categoryName}
+                      <span className="text-foreground truncate text-xs font-semibold">
+                        {getCategoryLabel(t, taxonomyId, row.categoryId, row.categoryName)}
                       </span>
                     </div>
 
@@ -108,27 +116,27 @@ export function CurrentVsTargetCard({
                         />
                         <span
                           className="bg-foreground absolute -top-1 h-4 w-[2.5px] rounded-sm"
-                          style={{ left: `calc(${(target / maxScale) * 100}% - 1px)` }}
+                          style={{ insetInlineStart: `calc(${(target / maxScale) * 100}% - 1px)` }}
                         />
                       </div>
                     </div>
 
-                    <span className="text-foreground hidden text-right text-[12px] font-semibold tabular-nums md:block">
+                    <span className="text-foreground hidden text-end text-xs font-semibold tabular-nums md:block">
                       {current.toFixed(1)}%
                     </span>
-                    <span className="text-muted-foreground hidden text-right text-[12px] font-medium tabular-nums md:block">
+                    <span className="text-muted-foreground hidden text-end text-xs font-medium tabular-nums md:block">
                       {formatTargetBps(row.targetBps)}%
                     </span>
                     <span
                       className={cn(
-                        "col-start-2 row-start-1 text-right text-[12px] font-semibold tabular-nums md:col-start-auto md:row-start-auto",
+                        "col-start-2 row-start-1 text-end text-xs font-semibold tabular-nums md:col-start-auto md:row-start-auto",
                         driftColor(row),
                       )}
                     >
                       {formatPp(row.driftBps)}
                     </span>
 
-                    <div className="text-muted-foreground col-span-2 flex justify-between text-[11px] tabular-nums md:hidden">
+                    <div className="text-muted-foreground text-2xs col-span-2 flex justify-between tabular-nums md:hidden">
                       <span>
                         {t("allocation:vsTarget.current")}{" "}
                         <span className="text-foreground">{current.toFixed(1)}%</span>

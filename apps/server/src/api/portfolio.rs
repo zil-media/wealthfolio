@@ -20,7 +20,7 @@ async fn update_portfolio(
     body: Option<Json<PortfolioRequestBody>>,
 ) -> ApiResult<StatusCode> {
     // Web-mode callers typically omit the body; preserve desktop behavior by defaulting
-    // to an explicit market sync policy (PRD: no implicit sync inside the job runner).
+    // to an explicit market sync policy (the job runner performs no implicit sync).
     // A body is honored as sent, so the on-load refresh can skip the sync (the periodic
     // scheduler keeps market data current).
     let request = match body {
@@ -30,7 +30,7 @@ async fn update_portfolio(
             ..Default::default()
         },
     };
-    let cfg = request.into_config(false);
+    let cfg = request.into_config();
     enqueue_portfolio_job(state, cfg);
     Ok(StatusCode::ACCEPTED)
 }
@@ -48,7 +48,8 @@ async fn recalculate_portfolio(
             days: DEFAULT_HISTORY_DAYS,
         };
     }
-    let cfg = request.into_config(true);
+    request.force_full = true;
+    let cfg = request.into_config();
     enqueue_portfolio_job(state, cfg);
     Ok(StatusCode::ACCEPTED)
 }

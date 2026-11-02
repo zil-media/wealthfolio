@@ -81,7 +81,7 @@ function PasteDialogImpl({
           <label className="flex cursor-pointer items-start gap-3">
             <RadioItem ref={expandRadioRef} name="expand-option" value="expand" defaultChecked />
             <div className="flex flex-col gap-1">
-              <span className="text-sm font-medium leading-none">
+              <span className="text-sm leading-none font-medium">
                 {t("ui:dialog.createNewRows", "Create new rows")}
               </span>
               <span className="text-muted-foreground text-sm">
@@ -94,7 +94,7 @@ function PasteDialogImpl({
           <label className="flex cursor-pointer items-start gap-3">
             <RadioItem name="expand-option" value="no-expand" />
             <div className="flex flex-col gap-1">
-              <span className="text-sm font-medium leading-none">
+              <span className="text-sm leading-none font-medium">
                 {t("ui:dialog.keepCurrentRows", "Keep current rows")}
               </span>
               <span className="text-muted-foreground text-sm">
@@ -120,9 +120,9 @@ function RadioItem({ className, ...props }: React.ComponentProps<"input">) {
       type="radio"
       className={cn(
         "border-input bg-background shadow-xs relative size-4 shrink-0 appearance-none rounded-full border outline-none transition-[color,box-shadow]",
-        "text-primary focus-visible:border-ring focus-visible:ring-ring/50 focus-visible:ring-[3px]",
+        "text-primary focus-visible:outline-solid focus-visible:outline-ring focus-visible:outline-2 focus-visible:outline-offset-2",
         "disabled:cursor-not-allowed disabled:opacity-50",
-        "checked:before:bg-primary checked:before:absolute checked:before:start-1/2 checked:before:top-1/2 checked:before:size-2 checked:before:-translate-x-1/2 checked:before:-translate-y-1/2 checked:before:rounded-full checked:before:content-['']",
+        "checked:before:bg-primary checked:before:absolute checked:before:left-1/2 checked:before:top-1/2 checked:before:size-2 checked:before:-translate-x-1/2 checked:before:-translate-y-1/2 checked:before:rounded-full checked:before:content-['']",
         "dark:bg-input/30",
         className,
       )}

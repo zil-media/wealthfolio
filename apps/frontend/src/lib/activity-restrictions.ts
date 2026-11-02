@@ -8,14 +8,26 @@ import { ActivityType, ACTIVITY_TYPES, isLiabilityAccountType } from "@/lib/cons
 const PICKER_TRANSFER_TYPE = "TRANSFER";
 
 /**
- * All activity types in picker-compatible format.
- * Includes TRANSFER as UI alias for TRANSFER_IN/TRANSFER_OUT.
+ * Picker option for a conversion: its two ADJUSTMENT rows (CONVERSION_OUT and
+ * CONVERSION_IN), which only transactions accounts compute.
  */
-const ALL_PICKER_TYPES: readonly string[] = [...ACTIVITY_TYPES, PICKER_TRANSFER_TYPE];
+const PICKER_CONVERSION_TYPE = "CONVERSION";
+
+/**
+ * All activity types in picker-compatible format.
+ * Includes TRANSFER as UI alias for TRANSFER_IN/TRANSFER_OUT, and CONVERSION.
+ */
+const ALL_PICKER_TYPES: readonly string[] = [
+  ...ACTIVITY_TYPES,
+  PICKER_TRANSFER_TYPE,
+  PICKER_CONVERSION_TYPE,
+];
 
 /**
  * Activity types allowed for manual HOLDINGS tracking mode accounts.
- * These are income/cash activities that don't affect positions directly.
+ * These are income/cash activities that don't affect positions directly,
+ * and splits, which are facts about the asset: a split carries the account's
+ * snapshot quantities across it.
  */
 const HOLDINGS_MODE_ALLOWED_TYPES: readonly string[] = [
   ActivityType.DEPOSIT,
@@ -24,6 +36,7 @@ const HOLDINGS_MODE_ALLOWED_TYPES: readonly string[] = [
   ActivityType.TAX,
   ActivityType.INTEREST,
   ActivityType.DIVIDEND, // Income activity - doesn't change positions
+  ActivityType.SPLIT,
 ];
 
 /**
@@ -32,7 +45,7 @@ const HOLDINGS_MODE_ALLOWED_TYPES: readonly string[] = [
  *
  * - No account selected: all types
  * - TRANSACTIONS mode: all types
- * - HOLDINGS mode (manual): income/cash activities only
+ * - HOLDINGS mode (manual): income/cash activities and splits
  * - HOLDINGS mode (connected): none (sync-only)
  */
 export function getAllowedActivityTypes(account: Account | undefined): readonly string[] {

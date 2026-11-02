@@ -17,7 +17,7 @@ pub const ADDON_STORE_API_BASE_URL: &str = "https://wealthfolio.app/api/addons";
 const MAX_ADDON_ARCHIVE_ENTRIES: usize = 256;
 const MAX_ADDON_ARCHIVE_FILE_SIZE: u64 = 5 * 1024 * 1024;
 const MAX_ADDON_ARCHIVE_TOTAL_SIZE: u64 = 25 * 1024 * 1024;
-const MAX_ADDON_ARCHIVE_COMPRESSED_SIZE: usize = 50 * 1024 * 1024;
+pub const MAX_ADDON_ARCHIVE_COMPRESSED_SIZE: usize = 50 * 1024 * 1024;
 const MAX_ADDON_STORAGE_KEY_LEN: usize = 128;
 /// Upper bound on the serialized `{addon_id, key, value}` sync payload — NOT the
 /// raw value length. A storage write emits a device-sync outbox event whose
@@ -254,7 +254,12 @@ pub fn detect_addon_permissions(addon_files: &[AddonFile]) -> Vec<AddonPermissio
         (
             "activities",
             "spending",
-            vec!["searchCashActivities"],
+            vec![
+                "searchCashActivities",
+                "assignCategory",
+                "unassignCategory",
+                "setEvent",
+            ],
             "Access to categorized spending transactions",
         ),
         (
@@ -262,6 +267,12 @@ pub fn detect_addon_permissions(addon_files: &[AddonFile]) -> Vec<AddonPermissio
             "accounts",
             vec!["getAll", "create"],
             "Access to account information and management",
+        ),
+        (
+            "alternative-assets",
+            "alternativeAssets",
+            vec!["getAll"],
+            "Read-only access to alternative assets and liabilities",
         ),
         (
             "market-data",
@@ -329,6 +340,10 @@ pub fn detect_addon_permissions(addon_files: &[AddonFile]) -> Vec<AddonPermissio
             vec![
                 "isEnabled",
                 "getCategories",
+                "getContext",
+                "getBudget",
+                "getEvents",
+                "getEventTypes",
                 "getReport",
                 "getRules",
                 "saveRule",
@@ -336,6 +351,12 @@ pub fn detect_addon_permissions(addon_files: &[AddonFile]) -> Vec<AddonPermissio
                 "rerunRules",
             ],
             "Access to spending reports, categories, and categorization rules",
+        ),
+        (
+            "budgets",
+            "spending",
+            vec!["upsertBudgetTarget"],
+            "Change default and monthly budget targets",
         ),
         (
             "settings",
@@ -850,7 +871,11 @@ fn extract_addon_zip_archive(zip_data: Vec<u8>) -> Result<ExtractedAddonArchive,
             continue;
         }
 
-        let file_name = file.name().to_string();
+        // Archives zipped on Windows (e.g. Compress-Archive) use '\\' as separator.
+        let file_name = file
+            .name()
+            .map_err(|e| format!("Invalid file name for entry {}: {}", i, e))?
+            .replace('\\', "/");
         validated_addon_archive_path(&file_name)?;
 
         if file_name.ends_with(".map") {
@@ -1412,7 +1437,7 @@ pub fn read_addon_files_recursive(
             // Recursively read subdirectories
             read_addon_files_recursive(&file_path, base_dir, files)?;
         } else if file_path.is_file() {
-            let file_name = file_path.file_name().unwrap().to_string_lossy().to_string();
+            let file_name = entry.file_name().to_string_lossy().to_string();
 
             // Skip the manifest file
             if file_name == "manifest.json" {
@@ -2049,7 +2074,9 @@ pub fn save_addon_to_staging(
             let mut manifest_found = false;
             for i in 0..archive.len() {
                 if let Ok(file) = archive.by_index(i) {
-                    if file.name() == "manifest.json" || file.name().ends_with("/manifest.json") {
+                    if file.name().is_ok_and(|name| {
+                        name == "manifest.json" || name.ends_with("/manifest.json")
+                    }) {
                         manifest_found = true;
                         break;
                     }
@@ -2254,6 +2281,9 @@ pub struct AddonService {
     storage_repo: Arc<dyn AddonStorageRepositoryTrait>,
     package_access: RwLock<()>,
     asset_indexes: Mutex<HashMap<PathBuf, CachedAddonAssets>>,
+    /// Manifests of addons served by a local dev server, keyed by addon id.
+    /// Only populated in debug builds; never persisted.
+    dev_manifests: RwLock<HashMap<String, AddonManifest>>,
 }
 
 impl AddonService {
@@ -2268,7 +2298,50 @@ impl AddonService {
             storage_repo,
             package_access: RwLock::new(()),
             asset_indexes: Mutex::new(HashMap::new()),
+            dev_manifests: RwLock::new(HashMap::new()),
         }
+    }
+
+    /// Registers the manifest of an addon loaded from a dev server so brokered
+    /// network requests can be authorized without installing the addon. The
+    /// declared hosts are treated as approved, and a registered dev manifest
+    /// takes precedence over an installed addon with the same id.
+    pub fn register_dev_addon_manifest(&self, manifest_json: &str) -> Result<(), String> {
+        let mut manifest = parse_manifest_json_metadata(manifest_json)?;
+        if let Some(network) = manifest.network.as_mut() {
+            network.approved_hosts = network.allowed_hosts.clone();
+        }
+        log::info!(
+            "Registered dev addon manifest for '{}' (approved hosts: {:?})",
+            manifest.id,
+            manifest
+                .network
+                .as_ref()
+                .map(|network| network.approved_hosts.as_slice())
+                .unwrap_or_default()
+        );
+        self.dev_manifests
+            .write()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .insert(manifest.id.clone(), manifest);
+        Ok(())
+    }
+
+    fn dev_manifest(&self, addon_id: &str) -> Option<AddonManifest> {
+        self.dev_manifests
+            .read()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .get(addon_id)
+            .cloned()
+    }
+
+    pub fn unregister_dev_addon_manifest(&self, addon_id: &str) -> Result<(), String> {
+        validate_addon_id(addon_id)?;
+        self.dev_manifests
+            .write()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .remove(addon_id);
+        Ok(())
     }
 
     fn package_read_guard(
@@ -3188,7 +3261,11 @@ impl AddonServiceTrait for AddonService {
         addon_id: &str,
         request: AddonNetworkRequest,
     ) -> Result<AddonNetworkResponse, String> {
-        let result = match self.enabled_manifest_for_addon(addon_id) {
+        let manifest = match self.dev_manifest(addon_id) {
+            Some(manifest) => Ok(manifest),
+            None => self.enabled_manifest_for_addon(addon_id),
+        };
+        let result = match manifest {
             Ok(manifest) => {
                 if (request.auth.is_some() || request.injected_authorization.is_some())
                     && !Self::manifest_allows_function(&manifest, "secrets", "use")

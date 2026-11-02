@@ -1,18 +1,30 @@
 {
   "carousel": {
     "previous": "Slide anterior",
-    "next": "Próximo slide"
+    "next": "Próximo slide",
+    "role": "carrossel",
+    "slide": "slide"
   },
   "currency": {
     "selectTitle": "Selecionar moeda",
-    "selectDescription": "Escolha a moeda da sua atividade",
+    "selectDescription": "Escolha uma moeda",
+    "placeholder": "Selecionar moeda",
+    "popular": "Populares",
     "more": "Mais",
     "search": "Buscar moeda...",
     "searchAll": "Buscar todas as moedas...",
     "searchPrompt": "Busque qualquer moeda ou selecione uma das opções populares acima.",
     "useCustom": "Usar \"{{value}}\" como moeda personalizada",
     "noneFound": "Nenhuma moeda encontrada para \"{{query}}\".",
-    "noneFoundShort": "Nenhuma moeda encontrada."
+    "noneFoundShort": "Nenhuma moeda encontrada.",
+    "units": {
+      "GBp": "Pence britânicos",
+      "GBX": "Pence britânicos",
+      "ILA": "Agorot israelenses",
+      "USX": "Centavos americanos",
+      "ZAc": "Centavos sul-africanos",
+      "KWF": "Fils kuwaitianos"
+    }
   },
   "dataGrid": {
     "label": "Grade de dados",
@@ -73,7 +85,13 @@
     "clearSymbol": "Limpar símbolo",
     "currency": "Moeda",
     "searchCurrency": "Buscar moeda...",
-    "noCurrencyFound": "Nenhuma moeda encontrada."
+    "noCurrencyFound": "Nenhuma moeda encontrada.",
+    "copyFailed": "Falha ao copiar para a área de transferência",
+    "cutFailed": "Falha ao recortar para a área de transferência",
+    "pasteFailed": "Falha ao colar. Tente novamente.",
+    "cellsSkipped_one": "{{count}} célula ignorada ao colar por dados inválidos",
+    "cellsSkipped_other": "{{count}} células ignoradas ao colar por dados inválidos",
+    "cellsSkipped_many": "{{count}} células ignoradas ao colar por dados inválidos"
   },
   "dataTable": {
     "noResults": "Sem resultados",
@@ -145,6 +163,7 @@
     "title": "Algo deu errado",
     "description": "Encontramos um erro inesperado. Seus dados estão seguros; tente atualizar para voltar ao normal.",
     "refresh": "Atualizar página",
+    "goHome": "Ir para o painel",
     "hideDetails": "Ocultar detalhes do erro",
     "showDetails": "Mostrar detalhes do erro",
     "errorDetails": "Detalhes do erro"
@@ -190,5 +209,31 @@
   },
   "sheet": {
     "close": "Fechar"
+  },
+  "page": {
+    "back": "Voltar"
+  },
+  "remove": "Remover {{label}}",
+  "actionConfirm": {
+    "pending": "Em andamento…"
+  },
+  "select": {
+    "placeholder": "Selecionar uma opção"
+  },
+  "progress": {
+    "title": "Processando",
+    "message": "Processando…",
+    "description": "Aguarde enquanto processamos sua solicitação. Isso pode levar alguns instantes."
+  },
+  "navigation": {
+    "view": "Visualização {{number}}",
+    "goTo": "Ir para {{name}}"
+  },
+  "quoteImport": {
+    "noFile": "Nenhum arquivo selecionado",
+    "validateFailed": "Falha ao validar CSV",
+    "validateFirst": "Nenhuma cotação para importar. Valide o arquivo primeiro.",
+    "noValid": "Nenhuma cotação válida para importar. Todas apresentam erros de validação.",
+    "importFailed": "Falha ao importar cotações"
   }
 }

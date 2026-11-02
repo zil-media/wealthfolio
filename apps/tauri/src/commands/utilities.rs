@@ -62,7 +62,7 @@ fn pending_export_filename(file_name: &str) -> Result<String, String> {
     Ok(name.to_string())
 }
 
-fn prepare_pending_export_path(
+pub(crate) fn prepare_pending_export_path(
     app_data_dir_path: &Path,
     filename: &str,
 ) -> Result<(String, PathBuf), String> {
@@ -140,8 +140,8 @@ pub struct AppInfo {
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct PendingExport {
-    relative_path: String,
-    filename: String,
+    pub(crate) relative_path: String,
+    pub(crate) filename: String,
 }
 
 #[derive(Serialize)]
@@ -263,8 +263,8 @@ async fn build_data_export_content(
             format_records(&records, format).map_err(|e| e.to_string())
         }
         ExportDataType::Activities => {
-            let records = state
-                .activity_service()
+            let activity_service = state.activity_service();
+            let mut response = activity_service
                 .search_activities(
                     0,
                     EXPORT_ACTIVITY_PAGE_SIZE,
@@ -281,9 +281,13 @@ async fn build_data_export_content(
                     None,
                     None,
                 )
-                .map_err(|e| format!("Failed to load activities for export: {}", e))?
-                .data;
-            format_records(&records, format).map_err(|e| e.to_string())
+                .map_err(|e| format!("Failed to load activities for export: {}", e))?;
+            // Rows of cash and credit-card accounts carry their running balance.
+            activity_service
+                .attach_cash_balances(&mut response)
+                .await
+                .map_err(|e| format!("Failed to load activity balances for export: {}", e))?;
+            format_records(&response.data, format).map_err(|e| e.to_string())
         }
         ExportDataType::Holdings => {
             let base_currency = state.get_base_currency();
@@ -337,6 +341,7 @@ async fn build_data_export_content(
                     None,
                     None,
                 )
+                .await
                 .map_err(|e| format!("Failed to load portfolio history for export: {}", e))?;
             format_records(&records, format).map_err(|e| e.to_string())
         }
@@ -582,7 +587,7 @@ pub async fn delete_database_backup(
     .map_err(|error| error.to_string())
 }
 
-fn check_pending_backup_capacity(root: &Path) -> Result<(), String> {
+pub(crate) fn check_pending_backup_capacity(root: &Path) -> Result<(), String> {
     cleanup_stale_pending_exports(root);
     let directory = root.join(PENDING_EXPORTS_DIR);
     let entries = match fs::read_dir(directory) {
@@ -604,7 +609,7 @@ fn check_pending_backup_capacity(root: &Path) -> Result<(), String> {
             let path = file.map_err(|error| error.to_string())?.path();
             if matches!(
                 path.extension().and_then(|ext| ext.to_str()),
-                Some("db" | "wfbackup")
+                Some("db" | "wfbackup" | "wfrec")
             ) {
                 count += 1;
             }
@@ -687,7 +692,13 @@ pub async fn export_database_backup(
         })
     })
     .await
-    .map_err(|_| "Backup export task failed".to_string())?
+    .map_err(|error| {
+        log::error!(
+            "Backup export task failed (panic={})",
+            matches!(error, tauri::Error::JoinError(ref join) if join.is_panic())
+        );
+        "Backup export task failed".to_string()
+    })?
 }
 
 /// Inspect a private immutable candidate without changing the live database.
@@ -711,12 +722,30 @@ pub async fn inspect_database_backup(
             .validate_import_path(runtime.profile_id, &path)
             .map_err(|e| e.to_string())?;
     }
+    let store = runtime.secret_store.clone();
     let candidate = spawn_blocking(move || {
         let _access = access;
+        let decoded;
+        let is_package = db::cloud_backups::is_recovery_package(&path)?;
+        let import_path = if is_package {
+            decoded = db::cloud_backups::decoded_package(
+                std::fs::File::open(&path)?,
+                store.as_ref(),
+                password.as_deref().map(String::as_str),
+                &scratch,
+            )?;
+            decoded.path()
+        } else {
+            path.as_path()
+        };
         reservation.prepare(
-            &path,
+            import_path,
             &scratch,
-            password.as_deref().map(String::as_str),
+            if is_package {
+                None
+            } else {
+                password.as_deref().map(String::as_str)
+            },
             key,
         )
     })
@@ -821,10 +850,12 @@ pub(crate) fn finish_database_maintenance(
         .emit(event, ())
         .map_err(|e| format!("Failed to emit {} event: {}", event, e))?;
 
+    // Request the restart rather than wait for it: `restart` parks this async
+    // worker forever, stranding the profile worker it just started, which the
+    // exit release then waits on until its deadline.
     #[cfg(not(any(target_os = "ios", target_os = "android")))]
-    app_handle.restart();
+    app_handle.request_restart();
 
-    #[cfg(any(target_os = "ios", target_os = "android"))]
     Ok(())
 }
 

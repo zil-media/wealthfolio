@@ -1,6 +1,7 @@
-import { AnimatedToggleGroup, useAmountFormatting } from "@wealthfolio/ui";
+import { AnimatedToggleGroup } from "@wealthfolio/ui";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@wealthfolio/ui/components/ui/tooltip";
 import { useTranslation } from "react-i18next";
+import { usePrivateAmountFormatting } from "../hooks/use-private-amount-formatting";
 
 export type ChartValueMode = "real" | "nominal";
 
@@ -22,7 +23,7 @@ export function ValueModeToggle({
       ]}
       size="xs"
       rounded="md"
-      className="bg-muted/30 border max-sm:[&_button]:px-2 max-sm:[&_button]:text-[11px]"
+      className="bg-muted/30 max-sm:[&_button]:text-2xs border max-sm:[&_button]:px-2"
     />
   );
 }
@@ -40,7 +41,7 @@ export function ValueModeTooltip({
   nominalValue: number;
   children: React.ReactNode;
 }) {
-  const formatting = useAmountFormatting();
+  const formatting = usePrivateAmountFormatting();
   const { t } = useTranslation();
   const showingLabel =
     valueMode === "real" ? t("goals:value_mode.todays_value") : t("goals:value_mode.nominal");
@@ -50,13 +51,13 @@ export function ValueModeTooltip({
 
   return (
     <Tooltip>
-      <TooltipTrigger asChild>
-        <span className="cursor-help underline decoration-dotted underline-offset-2">
-          {children}
-        </span>
+      <TooltipTrigger
+        render={<span className="cursor-help underline decoration-dotted underline-offset-2" />}
+      >
+        {children}
       </TooltipTrigger>
       <TooltipContent className="max-w-xs text-xs">
-        <div className="text-[10px] font-semibold uppercase tracking-wider">
+        <div className="text-2xs font-semibold tracking-wider uppercase">
           {t("goals:value_mode.showing", { label: showingLabel })}
         </div>
         <div className="mt-1 tabular-nums">

@@ -1,3 +1,4 @@
+import { getCategoryLabel } from "@/lib/taxonomy-labels";
 import {
   forwardRef,
   useCallback,
@@ -8,29 +9,35 @@ import {
   useState,
 } from "react";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
+import type { SortingState } from "@tanstack/react-table";
 import { useVirtualizer } from "@tanstack/react-virtual";
 import { toast } from "sonner";
 import { useSearchParams } from "react-router-dom";
 import { useTranslation } from "react-i18next";
 import type { DateRange } from "react-day-picker";
 
-import { createActivity, deleteActivity, updateActivity } from "@/adapters";
+import { createActivity, deleteActivity, saveActivities, updateActivity } from "@/adapters";
+import { localizeActivityTypeName } from "@/lib/activity-utils";
 import { generateId } from "@/lib/id";
 import { useAccounts } from "@/hooks/use-accounts";
-import { useIsMobileViewport } from "@/hooks/use-platform";
-import { useVirtualScrollContainer } from "@/hooks/use-virtual-scroll-container";
+import { useIsCompactTableViewport, useIsMobileViewport } from "@/hooks/use-platform";
+import { usePersistentState } from "@/hooks/use-persistent-state";
+import {
+  observeCurrentScrollOffset,
+  useVirtualScrollContainer,
+} from "@/hooks/use-virtual-scroll-container";
+import { useHorizontalOverflow } from "@/hooks/use-horizontal-overflow";
 import { useDebouncedValue } from "@/hooks/use-debounced-value";
 import { InfiniteScrollTrigger } from "@/components/infinite-scroll-trigger";
 import { useTaxonomy } from "@/hooks/use-taxonomies";
 import { QueryKeys } from "@/lib/query-keys";
-import { formatDateISO } from "@/lib/utils";
+import { cn, formatDateISO } from "@/lib/utils";
 import type { Account, ActivityDetails, TaxonomyCategory } from "@/lib/types";
 import { useSettingsContext } from "@/lib/settings-provider";
 
 import {
   Button,
   Checkbox,
-  EmptyPlaceholder,
   Icons,
   Skeleton,
   Table,
@@ -39,43 +46,59 @@ import {
   TableHead,
   TableHeader,
   TableRow,
+  Empty,
+  EmptyHeader,
+  EmptyMedia,
+  EmptyTitle,
+  EmptyDescription,
+  EmptyContent,
 } from "@wealthfolio/ui";
 
 import { CashActivityForm } from "./cash-activity-form";
+import { isActivityEditCancelled, useActivitySplitReview } from "./activity-split-review-provider";
 import { ActivityForm } from "@/pages/activity/components/activity-form";
 import { MobileActivityForm } from "@/pages/activity/components/mobile-forms/mobile-activity-form";
 import { TransferMatchDialog } from "@/pages/activity/components/transfer-match-dialog";
+import {
+  ActivityViewModeToggle,
+  type ActivityViewMode,
+} from "@/pages/activity/components/activity-view-controls";
+import { attachTransferCounterpart } from "@/pages/activity/utils/transfer-counterpart";
+import { buildSameAccountFxDuplicate } from "@/pages/activity/utils/duplicate-fx-transfer";
+import { ActivityLoanPaymentSheet } from "@/pages/asset/alternative-assets/components/activity-loan-payment-sheet";
 import { getActivityRestrictionLevel } from "@/lib/activity-restrictions";
 import { ActivityType } from "@/lib/constants";
 import type { AmountRange } from "./amount-range-filter";
 import { DeleteTransactionsDialog, type DeletePreview } from "./delete-transactions-dialog";
 import { TransactionCard } from "./transaction-card";
 import { SelectionToolbar } from "./selection-toolbar";
+import { flattenDayGroups } from "@/lib/day-groups";
 import { TransactionDayHeader, TransactionDayHeading } from "./transaction-day-header";
 import { TransactionRow } from "./transaction-row";
+import { SpendingActivityDataGrid } from "./spending-activity-data-grid";
 import { SplitTransactionSheet } from "./split-transaction-sheet";
 import { TransactionsBulkBar } from "./transactions-bulk-bar";
 import { TransactionsFilterBar, type FilterOption } from "./transactions-filter-bar";
 import type { QuickCategorizeScope } from "./quick-categorize-popover";
 import {
   CASH_ACTIVITY_TYPES,
-  CASH_ACTIVITY_TYPE_LABELS,
   getEffectiveCashActivityType,
   isCreditCardAccountType,
   isSpendingAccountType,
 } from "../lib/constants";
 import { cashActivityFlowMetadata } from "../lib/cash-activity-form-utils";
+import { Card } from "@wealthfolio/ui/components/ui/card";
 import {
   isTransferCashActivity,
   stableArr,
   toRowVM,
   groupRowsByDay,
-  flattenDayGroups,
   netSummary,
   type TransactionDayGroup,
   type TransactionRowVM,
 } from "../lib/transactions-helpers";
-import { useCashActivitySearch } from "../hooks/use-cash-activity-search";
+import { useCashActivityPage, useCashActivitySearch } from "../hooks/use-cash-activity-search";
+import { toActivityDetails } from "../lib/spending-grid";
 import {
   useAssignActivityCategory,
   useBulkAssignCategories,
@@ -90,6 +113,7 @@ import { invalidateSpendingCaches } from "../lib/invalidation";
 import type {
   CashActivitySearchRequest,
   CashActivityStatusFilter,
+  ActivitySplit,
   NewActivitySplit,
 } from "../types/cash-activity";
 
@@ -175,40 +199,6 @@ export interface SpendingTransactionsTabHandle {
   openAddForm: () => void;
 }
 
-function toActivityDetails(row: TransactionRowVM, account?: Account): Partial<ActivityDetails> {
-  const activity = row.activity;
-  const activityType = getEffectiveCashActivityType(activity);
-  return {
-    id: activity.id,
-    activityType: activityType as ActivityType,
-    subtype: activity.subtype ?? null,
-    status: activity.status,
-    date: new Date(activity.activityDate),
-    quantity: activity.quantity ?? null,
-    unitPrice: activity.unitPrice ?? null,
-    amount: activity.amount ?? null,
-    fee: activity.fee ?? null,
-    currency: activity.currency,
-    needsReview: activity.needsReview,
-    comment: activity.notes ?? undefined,
-    fxRate: activity.fxRate ?? null,
-    createdAt: new Date(activity.createdAt),
-    updatedAt: new Date(activity.updatedAt),
-    accountId: activity.accountId,
-    accountName: account?.name ?? activity.accountId,
-    accountCurrency: account?.currency ?? activity.currency,
-    assetId: activity.assetId ?? "",
-    assetSymbol: activity.assetId ?? "",
-    sourceSystem: activity.sourceSystem,
-    sourceRecordId: activity.sourceRecordId,
-    sourceGroupId: activity.sourceGroupId,
-    idempotencyKey: activity.idempotencyKey,
-    importRunId: activity.importRunId,
-    isUserModified: activity.isUserModified,
-    metadata: activity.metadata,
-  };
-}
-
 export const SpendingTransactionsTab = forwardRef<SpendingTransactionsTabHandle>(
   function SpendingTransactionsTab(_, ref) {
     const { t } = useTranslation();
@@ -227,6 +217,7 @@ export const SpendingTransactionsTab = forwardRef<SpendingTransactionsTabHandle>
     const urlAmountMax = searchParams.get("amountMax");
 
     const qc = useQueryClient();
+    const reviewEdits = useActivitySplitReview();
     const { settings } = useSettingsContext();
     const appTimezone = settings?.timezone?.trim() || undefined;
     const applyingUrlParamsRef = useRef(false);
@@ -243,6 +234,7 @@ export const SpendingTransactionsTab = forwardRef<SpendingTransactionsTabHandle>
       mode: "link" | "unlink";
       row: TransactionRowVM | null;
     }>({ open: false, mode: "link", row: null });
+    const [loanPaymentRow, setLoanPaymentRow] = useState<TransactionRowVM | null>(null);
     const [deletingIds, setDeletingIds] = useState<string[] | null>(null);
     const [deletePreview, setDeletePreview] = useState<DeletePreview | undefined>();
 
@@ -379,7 +371,8 @@ export const SpendingTransactionsTab = forwardRef<SpendingTransactionsTabHandle>
     /**
      * Mobile only. The card list hides its checkboxes until the user asks to
      * select, the way a phone list normally does — a checkbox on every row is a
-     * permanent cost for an occasional task. The table always shows them.
+     * permanent cost for an occasional task. The table has hover and keyboard
+     * focus, so it reveals each row's checkbox on those instead.
      */
     const [selectionMode, setSelectionMode] = useState(false);
 
@@ -489,6 +482,8 @@ export const SpendingTransactionsTab = forwardRef<SpendingTransactionsTabHandle>
         maxAmount: amountRange.max ?? undefined,
         sortBy: "date",
         sortDir: "desc",
+        // Filled only when the search covers exactly one account.
+        includeCashBalances: true,
       };
     }, [
       debouncedSearch,
@@ -502,21 +497,44 @@ export const SpendingTransactionsTab = forwardRef<SpendingTransactionsTabHandle>
       amountRange,
     ]);
 
-    const {
-      items,
-      totalCount,
-      net,
-      baseCurrency,
-      isLoading,
-      isFetching,
-      isFetchingNextPage,
-      isFetchNextPageError,
-      isError,
-      error,
-      hasNextPage,
-      fetchNextPage,
-      refetch,
-    } = useCashActivitySearch(searchRequest);
+    const isMobile = useIsMobileViewport();
+    const isCompactTableViewport = useIsCompactTableViewport();
+    const [viewMode, setViewMode] = usePersistentState<ActivityViewMode>(
+      "spending-activity-view-mode",
+      "table",
+    );
+    // The grid needs the room of a desktop table; smaller screens keep the list.
+    const showGrid = viewMode === "datagrid" && !isCompactTableViewport;
+    const [gridSorting, setGridSorting] = usePersistentState<SortingState>(
+      "spending-datagrid-sorting",
+      [{ id: "date", desc: true }],
+    );
+    const [gridPageSize, setGridPageSize] = usePersistentState("spending-datagrid-page-size", 50);
+    const [gridPageIndex, setGridPageIndex] = useState(0);
+    // The server sorts by date or amount; the list always runs newest first.
+    const gridRequest = useMemo(() => {
+      const sort = gridSorting[0];
+      return {
+        ...searchRequest,
+        sortBy: sort?.id === "amount" ? ("amount" as const) : ("date" as const),
+        sortDir: sort?.desc === false ? ("asc" as const) : ("desc" as const),
+        includeCashBalances: false,
+      };
+    }, [gridSorting, searchRequest]);
+
+    const listSearch = useCashActivitySearch(searchRequest, { enabled: !showGrid });
+    const gridPage = useCashActivityPage(gridRequest, {
+      pageIndex: gridPageIndex,
+      pageSize: gridPageSize,
+      enabled: showGrid,
+    });
+    const { items, isFetchingNextPage, isFetchNextPageError, hasNextPage, fetchNextPage } =
+      listSearch;
+    const { totalCount, net, baseCurrency, isLoading, isFetching, isError, error, refetch } =
+      showGrid ? gridPage : listSearch;
+    // Rows carry a balance only when the search covers one cash or
+    // credit-card account, so their presence decides the column.
+    const showBalance = useMemo(() => items.some((item) => item.cashBalance != null), [items]);
 
     const accountById = useMemo(() => {
       const m = new Map<string, Account>();
@@ -599,15 +617,30 @@ export const SpendingTransactionsTab = forwardRef<SpendingTransactionsTabHandle>
       setDateRange(undefined);
     }, []);
 
-    const requestKey = useMemo(() => JSON.stringify(searchRequest), [searchRequest]);
+    const requestKey = useMemo(() => JSON.stringify(gridRequest), [gridRequest]);
     const [lastRequestKey, setLastRequestKey] = useState(requestKey);
     if (lastRequestKey !== requestKey) {
       setLastRequestKey(requestKey);
       setSelectedRowIds(new Set());
+      setGridPageIndex(0);
+    }
+    // Deleting the last rows of the last page leaves fewer pages: step back to
+    // the new last page instead of showing an empty one.
+    const lastGridPage = Math.max(0, gridPage.pageCount - 1);
+    if (showGrid && !gridPage.isFetching && gridPageIndex > lastGridPage) {
+      setGridPageIndex(lastGridPage);
     }
 
     const { mutate: duplicateTransaction } = useMutation({
       mutationFn: async (row: TransactionRowVM) => {
+        const exchange = await buildSameAccountFxDuplicate(toActivityDetails(row.activity));
+        if (exchange) {
+          const result = await saveActivities({ creates: exchange });
+          if (result.errors.length || result.created.length !== 2) {
+            throw new Error("Failed duplicating transfer pair.");
+          }
+          return result.created[0];
+        }
         const a = row.activity;
         const activityType = getEffectiveCashActivityType(a);
         const supportsBoundary =
@@ -627,9 +660,8 @@ export const SpendingTransactionsTab = forwardRef<SpendingTransactionsTabHandle>
           currency: a.currency,
           fxRate: a.fxRate ?? undefined,
           amount: a.amount,
-          activityDate:
-            typeof a.activityDate === "string" ? a.activityDate : new Date().toISOString(),
-          comment: t("spending:txTab.duplicatedComment"),
+          activityDate: new Date().toISOString(),
+          comment: a.notes,
           metadata:
             activityType === ActivityType.CREDIT
               ? cashActivityFlowMetadata(activityType, a.subtype, boundaryMetadata)
@@ -653,17 +685,20 @@ export const SpendingTransactionsTab = forwardRef<SpendingTransactionsTabHandle>
     const markReimbursementMutation = useMutation({
       mutationFn: async (row: TransactionRowVM) => {
         const a = row.activity;
-        return updateActivity({
-          id: a.id,
-          accountId: a.accountId,
-          activityType: "CREDIT",
-          subtype: "REIMBURSEMENT",
-          activityDate: a.activityDate,
-          amount: Math.abs(Number.parseFloat(a.amount ?? "0")),
-          currency: a.currency,
-          comment: a.notes ?? null,
-          metadata: cashActivityFlowMetadata("CREDIT", "REIMBURSEMENT", a.metadata),
-        });
+        const [reviewed] = await reviewEdits([
+          {
+            id: a.id,
+            accountId: a.accountId,
+            activityType: "CREDIT",
+            subtype: "REIMBURSEMENT",
+            activityDate: a.activityDate,
+            amount: Math.abs(Number.parseFloat(a.amount ?? "0")),
+            currency: a.currency,
+            comment: a.notes ?? null,
+            metadata: cashActivityFlowMetadata("CREDIT", "REIMBURSEMENT", a.metadata),
+          },
+        ]);
+        return updateActivity(reviewed);
       },
       onSuccess: (_, row) => {
         invalidateSpendingCaches(qc);
@@ -684,7 +719,10 @@ export const SpendingTransactionsTab = forwardRef<SpendingTransactionsTabHandle>
         setShowForm(true);
         toast.success(t("spending:txTab.markedReimbursement"));
       },
-      onError: () => toast.error(t("spending:txTab.markReimbursementFailed")),
+      onError: (error) => {
+        if (!isActivityEditCancelled(error))
+          toast.error(t("spending:txTab.markReimbursementFailed"));
+      },
     });
 
     const deleteMutation = useMutation({
@@ -711,17 +749,22 @@ export const SpendingTransactionsTab = forwardRef<SpendingTransactionsTabHandle>
       async (taxonomyId: string, categoryId: string) => {
         const ids = Array.from(selectedRowIds);
         if (ids.length === 0) return;
+        if (rows.some((row) => selectedRowIds.has(row.activity.id) && row.splitCount > 0)) {
+          toast.error(t("spending:split.categoryProtected"));
+          return;
+        }
         try {
           const result = await bulkAssignMutation.mutateAsync(
             ids.map((activityId) => ({ activityId, taxonomyId, categoryId })),
           );
           toast.success(t("spending:txTab.categorizedCount", { count: result.length }));
+          setSelectedRowIds(new Set());
         } catch {
           // Hook already toasts on error.
         }
-        setSelectedRowIds(new Set());
+        // Keep the selection on conflict so the user can review a corrected batch.
       },
-      [selectedRowIds, bulkAssignMutation, t],
+      [selectedRowIds, rows, bulkAssignMutation, t],
     );
 
     const handleBulkSetEvent = useCallback(
@@ -777,6 +820,20 @@ export const SpendingTransactionsTab = forwardRef<SpendingTransactionsTabHandle>
       },
       [replaceSplitsMutation, t],
     );
+    const handleReplaceSplitsWithCategory = useCallback(
+      async (
+        activityId: string,
+        taxonomyId: string,
+        categoryId: string,
+        expectedSplits: ActivitySplit[],
+      ) => {
+        await bulkAssignMutation.mutateAsync([
+          { activityId, taxonomyId, categoryId, expectedSplits },
+        ]);
+        toast.success(t("spending:txTab.categorizedCount", { count: 1 }));
+      },
+      [bulkAssignMutation, t],
+    );
     const handleClearSplits = useCallback(
       async (activityId: string) => {
         await clearSplitsMutation.mutateAsync({ activityId });
@@ -786,11 +843,16 @@ export const SpendingTransactionsTab = forwardRef<SpendingTransactionsTabHandle>
     );
 
     const handleEditRow = useCallback(
-      (row: TransactionRowVM) => {
+      async (row: TransactionRowVM) => {
         if (isTransferCashActivity(row.activity)) {
           setEditingActivity(undefined);
           setShowForm(false);
-          setTransferFormActivity(toActivityDetails(row, accountById.get(row.activity.accountId)));
+          // Load the paired leg so the form pre-fills "To Account" (#1563).
+          setTransferFormActivity(
+            await attachTransferCounterpart(
+              toActivityDetails(row.activity, accountById.get(row.activity.accountId)),
+            ),
+          );
           setShowTransferForm(true);
           return;
         }
@@ -833,9 +895,9 @@ export const SpendingTransactionsTab = forwardRef<SpendingTransactionsTabHandle>
 
     const daySelectionState = useCallback(
       (group: TransactionDayGroup): boolean | "indeterminate" => {
-        const selected = group.rows.filter((r) => selectedRowIds.has(r.activity.id)).length;
+        const selected = group.items.filter((r) => selectedRowIds.has(r.activity.id)).length;
         if (selected === 0) return false;
-        return selected === group.rows.length ? true : "indeterminate";
+        return selected === group.items.length ? true : "indeterminate";
       },
       [selectedRowIds],
     );
@@ -843,8 +905,8 @@ export const SpendingTransactionsTab = forwardRef<SpendingTransactionsTabHandle>
     const handleToggleDay = useCallback((group: TransactionDayGroup) => {
       setSelectedRowIds((prev) => {
         const next = new Set(prev);
-        const allSelected = group.rows.every((r) => next.has(r.activity.id));
-        group.rows.forEach((r) =>
+        const allSelected = group.items.every((r) => next.has(r.activity.id));
+        group.items.forEach((r) =>
           allSelected ? next.delete(r.activity.id) : next.add(r.activity.id),
         );
         return next;
@@ -867,19 +929,23 @@ export const SpendingTransactionsTab = forwardRef<SpendingTransactionsTabHandle>
 
     const typeOptions = useMemo<FilterOption[]>(
       () =>
-        CASH_ACTIVITY_TYPES.map((t) => ({
-          value: t,
-          label: CASH_ACTIVITY_TYPE_LABELS[t],
+        CASH_ACTIVITY_TYPES.map((type) => ({
+          value: type,
+          label: localizeActivityTypeName(t, type),
         })),
-      [],
+      [t],
     );
     const accountOptions = useMemo<FilterOption[]>(
       () => spendingAccounts.map((a) => ({ value: a.id, label: a.name })),
       [spendingAccounts],
     );
     const categoryOptions = useMemo<FilterOption[]>(
-      () => topLevelCategories.map((c) => ({ value: c.id, label: c.name })),
-      [topLevelCategories],
+      () =>
+        topLevelCategories.map((c) => ({
+          value: c.id,
+          label: getCategoryLabel(t, c.taxonomyId, c.id, c.name),
+        })),
+      [topLevelCategories, t],
     );
     const subcategoryOptions = useMemo<FilterOption[]>(
       () =>
@@ -887,10 +953,12 @@ export const SpendingTransactionsTab = forwardRef<SpendingTransactionsTabHandle>
           const parent = c.parentId ? allCategories.get(c.parentId) : null;
           return {
             value: c.id,
-            label: parent ? `${parent.name} / ${c.name}` : c.name,
+            label: parent
+              ? `${getCategoryLabel(t, parent.taxonomyId, parent.id, parent.name)} / ${getCategoryLabel(t, c.taxonomyId, c.id, c.name)}`
+              : getCategoryLabel(t, c.taxonomyId, c.id, c.name),
           };
         }),
-      [subcategoriesForFilter, allCategories],
+      [subcategoriesForFilter, allCategories, t],
     );
     const eventOptions = useMemo<FilterOption[]>(
       () => events.map((e) => ({ value: e.id, label: e.name })),
@@ -923,18 +991,23 @@ export const SpendingTransactionsTab = forwardRef<SpendingTransactionsTabHandle>
     useImperativeHandle(ref, () => ({ openAddForm }), [openAddForm]);
 
     const isRefreshing = isFetching && !isFetchingNextPage;
-    const isMobile = useIsMobileViewport();
 
     /**
      * Both layouts render the same day-grouped sequence, so they share one flat
      * item list and one virtualizer; only one of them is ever mounted.
      */
-    const listItems = useMemo(() => flattenDayGroups(dayGroups), [dayGroups]);
+    const listItems = useMemo(
+      () => flattenDayGroups(dayGroups, (row) => row.activity.id),
+      [dayGroups],
+    );
 
     // Neither layout owns its scroll box — the table scrolls with the page, the
     // card list scrolls inside its swipeable pane — so both sit below a filter
     // bar whose height the virtualizer has to offset by.
     const { listRef, scrollElement, scrollMargin } = useVirtualScrollContainer();
+    const [tableBox, setTableBox] = useState<HTMLDivElement | null>(null);
+    const [tableElement, setTableElement] = useState<HTMLTableElement | null>(null);
+    const scrollsSideways = useHorizontalOverflow(tableBox, tableElement);
 
     /**
      * Keyed by activity rather than index, so a row keeps its measured height
@@ -952,6 +1025,7 @@ export const SpendingTransactionsTab = forwardRef<SpendingTransactionsTabHandle>
     const virtualizer = useVirtualizer({
       count: listItems.length,
       getScrollElement: () => scrollElement,
+      observeElementOffset: observeCurrentScrollOffset,
       estimateSize: (index) => {
         const isHeader = listItems[index]?.kind === "header";
         if (isMobile) return isHeader ? MOBILE_HEADING_HEIGHT : MOBILE_CARD_HEIGHT;
@@ -1006,6 +1080,7 @@ export const SpendingTransactionsTab = forwardRef<SpendingTransactionsTabHandle>
         onDelete: handleDeleteRow,
         onLinkTransfer: handleLinkTransfer,
         onUnlinkTransfer: handleUnlinkTransfer,
+        onLoanPayment: setLoanPaymentRow,
       };
     };
 
@@ -1023,7 +1098,7 @@ export const SpendingTransactionsTab = forwardRef<SpendingTransactionsTabHandle>
             key={virtualItem.key}
             data-index={virtualItem.index}
             ref={virtualizer.measureElement}
-            className="absolute left-0 top-0 w-full"
+            className="absolute start-0 top-0 w-full"
             style={{ transform: `translateY(${virtualItem.start - scrollMargin}px)` }}
           >
             {item.kind === "header" ? (
@@ -1036,7 +1111,7 @@ export const SpendingTransactionsTab = forwardRef<SpendingTransactionsTabHandle>
               />
             ) : (
               <TransactionCard
-                {...sharedRowProps(item.row)}
+                {...sharedRowProps(item.item)}
                 showAccount={showAccount}
                 selectionMode={selectionMode}
               />
@@ -1058,7 +1133,11 @@ export const SpendingTransactionsTab = forwardRef<SpendingTransactionsTabHandle>
       <>
         {firstItemStart > 0 && (
           <TableRow aria-hidden className="hover:bg-transparent">
-            <TableCell colSpan={6} className="p-0" style={{ height: firstItemStart }} />
+            <TableCell
+              colSpan={showBalance ? 7 : 6}
+              className="p-0"
+              style={{ height: firstItemStart }}
+            />
           </TableRow>
         )}
         {virtualItems.map((virtualItem) => {
@@ -1074,20 +1153,26 @@ export const SpendingTransactionsTab = forwardRef<SpendingTransactionsTabHandle>
               selectionState={daySelectionState(item.group)}
               onToggleDay={handleToggleDay}
               isPartial={hasNextPage === true && item.isLastGroup}
+              showBalance={showBalance}
             />
           ) : (
             <TransactionRow
               key={virtualItem.key}
               ref={virtualizer.measureElement}
               data-index={virtualItem.index}
-              {...sharedRowProps(item.row)}
+              {...sharedRowProps(item.item)}
               showAccount={showAccount}
+              showBalance={showBalance}
             />
           );
         })}
         {totalSize - lastItemEnd > 0 && (
           <TableRow aria-hidden className="hover:bg-transparent">
-            <TableCell colSpan={6} className="p-0" style={{ height: totalSize - lastItemEnd }} />
+            <TableCell
+              colSpan={showBalance ? 7 : 6}
+              className="p-0"
+              style={{ height: totalSize - lastItemEnd }}
+            />
           </TableRow>
         )}
       </>
@@ -1142,9 +1227,25 @@ export const SpendingTransactionsTab = forwardRef<SpendingTransactionsTabHandle>
           filteredNet={filteredNet}
           isRefreshing={isRefreshing}
           isMobile={isMobile}
+          // The grid's pager shows its own count.
+          showCount={!showGrid}
+          viewToggle={
+            isCompactTableViewport ? undefined : (
+              <ActivityViewModeToggle
+                value={viewMode}
+                onChange={(mode) => {
+                  setViewMode(mode);
+                  // The list's checked rows mean nothing in the grid, which has
+                  // its own selection.
+                  setSelectedRowIds(new Set());
+                }}
+                testId="spending-edit-mode-toggle"
+              />
+            )
+          }
         />
 
-        {selectedRowIds.size > 0 && (
+        {!showGrid && selectedRowIds.size > 0 && (
           <TransactionsBulkBar
             selectedCount={selectedRowIds.size}
             categoryScope={bulkCategoryScope}
@@ -1162,34 +1263,72 @@ export const SpendingTransactionsTab = forwardRef<SpendingTransactionsTabHandle>
             <Skeleton className="h-12" />
           </div>
         ) : isError && !isFetchNextPageError ? (
-          <EmptyPlaceholder>
-            <EmptyPlaceholder.Icon name="AlertTriangle" />
-            <EmptyPlaceholder.Title>{t("spending:txTab.loadErrorTitle")}</EmptyPlaceholder.Title>
-            <EmptyPlaceholder.Description>
-              {error?.message ?? t("spending:txTab.tryRefreshing")}
-            </EmptyPlaceholder.Description>
-            <Button variant="outline" onClick={() => void refetch()}>
-              {t("common:retry")}
-            </Button>
-          </EmptyPlaceholder>
+          <Empty>
+            <EmptyHeader>
+              <EmptyMedia variant="icon">
+                <Icons.AlertTriangle />
+              </EmptyMedia>
+              <EmptyTitle>{t("spending:txTab.loadErrorTitle")}</EmptyTitle>
+              <EmptyDescription>
+                {error?.message ?? t("spending:txTab.tryRefreshing")}
+              </EmptyDescription>
+            </EmptyHeader>
+            <EmptyContent>
+              <Button variant="outline" onClick={() => void refetch()}>
+                {t("common:retry")}
+              </Button>
+            </EmptyContent>
+          </Empty>
+        ) : showGrid ? (
+          <SpendingActivityDataGrid
+            items={gridPage.items}
+            accounts={spendingAccounts}
+            categories={allCategories}
+            sorting={gridSorting}
+            onSortingChange={setGridSorting}
+            pageIndex={gridPageIndex}
+            pageSize={gridPageSize}
+            pageCount={gridPage.pageCount}
+            totalRowCount={gridPage.totalCount}
+            isFetching={gridPage.isFetching}
+            onPageChange={setGridPageIndex}
+            onPageSizeChange={(size) => {
+              setGridPageSize(size);
+              setGridPageIndex(0);
+            }}
+            onRefetch={gridPage.refetch}
+            onEdit={handleEditRow}
+            onEditSplits={setSplittingActivity}
+            onMarkReimbursement={(row) => markReimbursementMutation.mutate(row)}
+            onDuplicateTransfer={handleDuplicate}
+            onLinkTransfer={handleLinkTransfer}
+            onUnlinkTransfer={handleUnlinkTransfer}
+            onLoanPayment={setLoanPaymentRow}
+          />
         ) : rows.length === 0 ? (
-          <EmptyPlaceholder>
-            <EmptyPlaceholder.Icon name="Activity" />
-            <EmptyPlaceholder.Title>{t("spending:txTab.noTransactions")}</EmptyPlaceholder.Title>
-            <EmptyPlaceholder.Description>
-              {filtersActive ? t("spending:txTab.noMatchFilters") : t("spending:txTab.addFirst")}
-            </EmptyPlaceholder.Description>
-            {filtersActive ? (
-              <Button variant="outline" onClick={clearAllFilters}>
-                {t("spending:txTab.clearFilters")}
-              </Button>
-            ) : (
-              <Button onClick={openAddForm}>
-                <Icons.Plus className="mr-2 h-4 w-4" aria-hidden="true" />
-                {t("spending:txTab.addTransaction")}
-              </Button>
-            )}
-          </EmptyPlaceholder>
+          <Empty>
+            <EmptyHeader>
+              <EmptyMedia variant="icon">
+                <Icons.Activity />
+              </EmptyMedia>
+              <EmptyTitle>{t("spending:txTab.noTransactions")}</EmptyTitle>
+              <EmptyDescription>
+                {filtersActive ? t("spending:txTab.noMatchFilters") : t("spending:txTab.addFirst")}
+              </EmptyDescription>
+            </EmptyHeader>
+            <EmptyContent>
+              {filtersActive ? (
+                <Button variant="outline" onClick={clearAllFilters}>
+                  {t("spending:txTab.clearFilters")}
+                </Button>
+              ) : (
+                <Button onClick={openAddForm}>
+                  <Icons.Plus className="me-2 h-4 w-4" aria-hidden="true" />
+                  {t("spending:txTab.addTransaction")}
+                </Button>
+              )}
+            </EmptyContent>
+          </Empty>
         ) : isMobile ? (
           <div className="spending-activity-list space-y-2">
             <SelectionToolbar
@@ -1215,15 +1354,29 @@ export const SpendingTransactionsTab = forwardRef<SpendingTransactionsTabHandle>
             {loadMoreTrigger && <div className="flex justify-center pt-1">{loadMoreTrigger}</div>}
           </div>
         ) : (
-          <div className="rounded-md border" style={{ overflowAnchor: "none" }}>
-            <Table>
-              <TableHeader>
+          // Row checkboxes show on hover or focus until something is selected,
+          // then on every row; `data-selecting` is what switches them on.
+          <Card
+            ref={setTableBox}
+            data-virtual-scroll-parent
+            className={cn("group/list", scrollsSideways ? "overflow-auto" : "overflow-clip")}
+            data-selecting={selectedRowIds.size > 0 || undefined}
+            style={{ overflowAnchor: "none" }}
+          >
+            <Table ref={setTableElement} containerClassName="overflow-visible">
+              <TableHeader
+                className={cn(
+                  "bg-card sticky top-0 z-10 [&_th]:shadow-[inset_0_-1px_0_var(--color-border)] [&_tr]:border-b-0",
+                  !scrollsSideways && "[@media(width>1024px)]:top-[var(--page-header-height,0px)]",
+                )}
+              >
                 <TableRow>
+                  {/* Select-all stays visible: with the row boxes hidden at
+                      rest, it is what shows the list can be selected. */}
                   <TableHead className="w-10 px-3">
                     <Checkbox
-                      checked={
-                        allVisibleSelected ? true : someVisibleSelected ? "indeterminate" : false
-                      }
+                      checked={allVisibleSelected}
+                      indeterminate={!allVisibleSelected && someVisibleSelected}
                       onCheckedChange={toggleSelectAllVisible}
                       aria-label={
                         allVisibleSelected
@@ -1239,7 +1392,12 @@ export const SpendingTransactionsTab = forwardRef<SpendingTransactionsTabHandle>
                   <TableHead className="hidden w-44 px-3 sm:table-cell">
                     {t("spending:filters.category")}
                   </TableHead>
-                  <TableHead className="w-28 px-3 text-right">{t("common:amount")}</TableHead>
+                  <TableHead className="w-28 px-3 text-end">{t("common:amount")}</TableHead>
+                  {showBalance && (
+                    <TableHead className="hidden w-28 px-3 text-end sm:table-cell">
+                      {t("activity:table_balance")}
+                    </TableHead>
+                  )}
                   <TableHead className="w-10 px-3" />
                 </TableRow>
               </TableHeader>
@@ -1253,7 +1411,7 @@ export const SpendingTransactionsTab = forwardRef<SpendingTransactionsTabHandle>
                 {loadMoreTrigger}
               </div>
             )}
-          </div>
+          </Card>
         )}
 
         <CashActivityForm
@@ -1267,12 +1425,17 @@ export const SpendingTransactionsTab = forwardRef<SpendingTransactionsTabHandle>
           open={!!splittingActivity}
           row={splittingActivity}
           categories={allCategories}
-          isSaving={replaceSplitsMutation.isPending || clearSplitsMutation.isPending}
+          isSaving={
+            replaceSplitsMutation.isPending ||
+            clearSplitsMutation.isPending ||
+            bulkAssignMutation.isPending
+          }
           onOpenChange={(open) => {
             if (!open) setSplittingActivity(null);
           }}
           onSave={handleSaveSplits}
           onClear={handleClearSplits}
+          onReplace={handleReplaceSplitsWithCategory}
         />
 
         {showTransferForm &&
@@ -1322,6 +1485,15 @@ export const SpendingTransactionsTab = forwardRef<SpendingTransactionsTabHandle>
           }
           onComplete={refetch}
         />
+
+        {loanPaymentRow && (
+          <ActivityLoanPaymentSheet
+            open
+            activity={loanPaymentRow.activity}
+            onOpenChange={(open) => !open && setLoanPaymentRow(null)}
+            onChanged={refetch}
+          />
+        )}
       </div>
     );
   },

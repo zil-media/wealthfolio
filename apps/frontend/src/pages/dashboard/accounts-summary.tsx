@@ -29,6 +29,10 @@ import { format } from "date-fns";
 import React, { useCallback, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { Link } from "react-router-dom";
+import { Alert, AlertDescription, AlertTitle } from "@wealthfolio/ui/components/ui/alert";
+import { cardSurfaceClassName } from "@wealthfolio/ui/components/ui/card";
+import { statusSurfaceVariants } from "@wealthfolio/ui/components/ui/status-surface";
+import { cn } from "@/lib/utils";
 
 interface AccountSummaryDisplayData {
   accountName: string;
@@ -44,6 +48,7 @@ interface AccountSummaryDisplayData {
   accountGroup?: string | null;
   trackingMode?: TrackingMode;
   isGroup?: boolean;
+  isActive?: boolean;
   accountCount?: number;
   accounts?: AccountSummaryDisplayData[];
   displayInAccountCurrency?: boolean;
@@ -73,33 +78,41 @@ function getDashboardAccountPerformanceScopes(
   const seenScopeKeys = new Set<string>();
 
   if (!accountsGrouped) {
-    accounts.forEach((account) => addPerformanceScope(scopes, seenScopeKeys, [account.id]));
+    accounts
+      .filter((account) => account.isActive)
+      .forEach((account) => addPerformanceScope(scopes, seenScopeKeys, [account.id]));
     return scopes;
   }
 
-  const groupedAccountIds = new Map<string, string[]>();
+  // Hidden accounts still count toward their group's totals, so groups are bucketed over
+  // every non-archived account. Only visible accounts get a row, and therefore a scope, of
+  // their own.
+  const groupedAccounts = new Map<string, Account[]>();
   const standaloneAccountIds: string[] = [];
 
   for (const account of accounts) {
     const groupName = account.group ?? "Uncategorized";
     if (groupName === "Uncategorized") {
-      standaloneAccountIds.push(account.id);
+      if (account.isActive) standaloneAccountIds.push(account.id);
       continue;
     }
 
-    groupedAccountIds.set(groupName, [...(groupedAccountIds.get(groupName) ?? []), account.id]);
+    groupedAccounts.set(groupName, [...(groupedAccounts.get(groupName) ?? []), account]);
   }
 
-  for (const [groupName, accountIds] of groupedAccountIds) {
-    if (accountIds.length === 1) {
-      standaloneAccountIds.push(accountIds[0]);
-      continue;
-    }
+  for (const [groupName, groupAccounts] of groupedAccounts) {
+    if (!groupAccounts.some((account) => account.isActive)) continue;
 
-    addPerformanceScope(scopes, seenScopeKeys, accountIds);
+    addPerformanceScope(
+      scopes,
+      seenScopeKeys,
+      groupAccounts.map((account) => account.id),
+    );
 
     if (expandedGroups[groupName]) {
-      accountIds.forEach((accountId) => addPerformanceScope(scopes, seenScopeKeys, [accountId]));
+      groupAccounts
+        .filter((account) => account.isActive)
+        .forEach((account) => addPerformanceScope(scopes, seenScopeKeys, [account.id]));
     }
   }
 
@@ -128,6 +141,8 @@ const AccountSummarySkeleton = () => (
   </div>
 );
 
+// Keep account cards free of backdrop filters: WebKitGTK 2.54.1 can hang
+// as their count grows (https://bugs.webkit.org/show_bug.cgi?id=327701).
 const AccountSummaryComponent = React.memo(
   ({
     item,
@@ -169,7 +184,12 @@ const AccountSummaryComponent = React.memo(
       }
 
       return (
-        <div className="border-border/40 bg-card/90 shadow-xs flex w-full items-center justify-between gap-3 rounded-xl border px-4 py-3 backdrop-blur-xl md:px-5 md:py-4">
+        <div
+          className={cn(
+            cardSurfaceClassName,
+            "flex w-full items-center justify-between gap-3 px-4 py-3 md:px-5 md:py-4",
+          )}
+        >
           {skeletonContent}
         </div>
       );
@@ -250,7 +270,7 @@ const AccountSummaryComponent = React.memo(
           {gainAmountToDisplay != null && (
             <>
               <GainAmount
-                className="text-xs font-medium md:text-sm md:font-medium"
+                className="text-xs md:text-sm"
                 value={gainAmountToDisplay}
                 currency={gainDisplayCurrency}
                 displayCurrency={false}
@@ -258,10 +278,7 @@ const AccountSummaryComponent = React.memo(
               <Separator orientation="vertical" className="h-3 md:h-4" />
             </>
           )}
-          <GainPercent
-            className="text-xs font-medium md:text-sm md:font-medium"
-            value={gainPercentToDisplay}
-          />
+          <GainPercent className="text-xs md:text-sm" value={gainPercentToDisplay} />
         </>
       );
       shouldExposeSecondaryMetric = true;
@@ -272,13 +289,15 @@ const AccountSummaryComponent = React.memo(
     const content = (
       <>
         <div className="flex min-w-0 flex-1 flex-col gap-1 md:gap-1.5">
-          <h3 className="flex items-center gap-1.5 text-sm font-semibold leading-tight md:text-base md:font-semibold">
+          <h3 className="flex items-center gap-1.5 text-sm leading-tight font-semibold md:text-base md:font-semibold">
             <span className="truncate">{name}</span>
             {shouldShowWarning && (
               <Tooltip>
-                <TooltipTrigger asChild>
-                  <span className="inline-block h-2 w-2 shrink-0 cursor-help rounded-full bg-amber-500" />
-                </TooltipTrigger>
+                <TooltipTrigger
+                  render={
+                    <span className="bg-warning inline-block h-2 w-2 shrink-0 cursor-help rounded-full" />
+                  }
+                />
                 <TooltipContent className="max-w-80">
                   <div className="space-y-1">
                     {warningMessages.slice(0, 3).map((message) => (
@@ -293,7 +312,7 @@ const AccountSummaryComponent = React.memo(
         </div>
         <div className="flex shrink-0 items-center gap-2 md:gap-3">
           <div className="flex min-h-[3rem] flex-col items-end justify-center gap-1 md:gap-1.5">
-            <p className="text-sm font-semibold leading-tight md:text-base md:font-semibold">
+            <p className="text-sm leading-tight font-semibold md:text-base md:font-semibold">
               <PrivacyAmount value={totalValue} currency={currency} />
             </p>
             {secondaryMetricContent && (
@@ -319,7 +338,7 @@ const AccountSummaryComponent = React.memo(
             !isLoadingValuation &&
             accountId && (
               <div className="flex items-center justify-center">
-                <Icons.ChevronRight className="text-muted-foreground h-5 w-5 shrink-0" />
+                <Icons.ChevronRight className="text-muted-foreground h-5 w-5 shrink-0 rtl:rotate-180" />
               </div>
             )
           )}
@@ -352,7 +371,10 @@ const AccountSummaryComponent = React.memo(
       return (
         <Link
           to={`/accounts/${accountId}`}
-          className="border-border/40 bg-card/90 shadow-xs flex w-full cursor-pointer items-center justify-between gap-3 rounded-xl border px-4 py-3 backdrop-blur-xl transition-all duration-150 hover:shadow-md md:px-5 md:py-4"
+          className={cn(
+            cardSurfaceClassName,
+            "flex w-full cursor-pointer items-center justify-between gap-3 px-4 py-3 transition-all duration-150 hover:shadow-md md:px-5 md:py-4",
+          )}
         >
           {content}
         </Link>
@@ -360,7 +382,12 @@ const AccountSummaryComponent = React.memo(
     }
 
     return (
-      <div className="border-border/40 bg-card/90 shadow-xs flex w-full items-center justify-between gap-3 rounded-xl border px-4 py-3 backdrop-blur-xl md:px-5 md:py-4">
+      <div
+        className={cn(
+          cardSurfaceClassName,
+          "flex w-full items-center justify-between gap-3 px-4 py-3 md:px-5 md:py-4",
+        )}
+      >
         {content}
       </div>
     );
@@ -370,11 +397,13 @@ AccountSummaryComponent.displayName = "AccountSummaryComponent";
 
 export const AccountsSummary = React.memo(
   ({
+    accountIds: selectedAccountIds,
     dateRange,
     isAllTime,
     currentAccountValuations: currentAccountValuationsProp,
     isLoadingCurrentValuations: isLoadingCurrentValuationsProp,
   }: {
+    accountIds?: string[];
     dateRange?: DateRange;
     isAllTime?: boolean;
     currentAccountValuations?: CurrentAccountValuation[];
@@ -384,14 +413,22 @@ export const AccountsSummary = React.memo(
     const { accountsGrouped, setAccountsGrouped, settings } = useSettingsContext();
     const [expandedGroups, setExpandedGroups] = useState<Record<string, boolean>>({});
 
+    // Hidden accounts are excluded from the rendered rows below, but they still carry value
+    // and gain history that belongs to their group's totals.
     const {
       accounts: allAccounts,
       isLoading: isLoadingAccounts,
       isError: isErrorAccounts,
       error: errorAccounts,
-    } = useAccounts({ accountPurpose: AccountPurpose.PERFORMANCE });
+    } = useAccounts({ accountPurpose: AccountPurpose.PERFORMANCE, filterActive: false });
 
-    const accounts = useMemo(() => allAccounts ?? [], [allAccounts]);
+    const accounts = useMemo(
+      () =>
+        selectedAccountIds === undefined
+          ? allAccounts
+          : allAccounts.filter((account) => selectedAccountIds.includes(account.id)),
+      [allAccounts, selectedAccountIds],
+    );
 
     const accountIds = useMemo(() => accounts?.map((acc) => acc.id) ?? [], [accounts]);
 
@@ -463,6 +500,7 @@ export const AccountsSummary = React.memo(
             accountGroup: acc.group ?? null,
             trackingMode: acc.trackingMode,
             isGroup: false,
+            isActive: acc.isActive,
           };
         }
 
@@ -499,6 +537,7 @@ export const AccountsSummary = React.memo(
           accountGroup: acc.group ?? null,
           trackingMode: acc.trackingMode,
           isGroup: false,
+          isActive: acc.isActive,
         };
       });
     }, [accounts, currentAccountValuations, performanceSummaries, settings?.baseCurrency]);
@@ -515,7 +554,7 @@ export const AccountsSummary = React.memo(
         return Array.from({ length: 4 }).map((_, index) => (
           <div
             key={`skeleton-${index}`}
-            className="border-border/40 bg-card/90 shadow-xs rounded-xl border px-4 py-3 backdrop-blur-xl md:px-5 md:py-4"
+            className={cn(cardSurfaceClassName, "px-4 py-3 md:px-5 md:py-4")}
           >
             <AccountSummarySkeleton />
           </div>
@@ -524,37 +563,45 @@ export const AccountsSummary = React.memo(
 
       if (isErrorAccounts) {
         return (
-          <div className="border-destructive/30 bg-destructive/5 rounded-xl border p-4 md:p-5">
-            <div className="flex items-start gap-3">
-              <div className="bg-destructive/10 flex h-8 w-8 shrink-0 items-center justify-center rounded-full">
-                <Icons.AlertTriangle className="text-destructive h-4 w-4" />
-              </div>
-              <div className="min-w-0 flex-1">
-                <p className="text-destructive text-sm font-medium">
-                  {t("dashboard:summary.failed_to_load")}
-                </p>
-                <p className="text-muted-foreground mt-1 break-words text-xs">
-                  {errorAccounts?.message || t("dashboard:summary.unexpected_error")}
-                </p>
-                <p className="text-muted-foreground mt-2 text-xs">
-                  {t("dashboard:summary.try_restarting")}
-                </p>
-              </div>
-            </div>
-          </div>
+          <Alert variant="destructive" className="rounded-xl p-4 md:p-5">
+            <Icons.AlertTriangle />
+            <AlertTitle>{t("dashboard:summary.failed_to_load")}</AlertTitle>
+            <AlertDescription className="text-xs break-words">
+              <p className="mb-2">
+                {errorAccounts?.message || t("dashboard:summary.unexpected_error")}
+              </p>
+              <p>{t("dashboard:summary.try_restarting")}</p>
+            </AlertDescription>
+          </Alert>
         );
       }
 
-      if (!combinedAccountViews || combinedAccountViews.length === 0) {
+      if (!combinedAccountViews || !combinedAccountViews.some((account) => account.isActive)) {
+        const isPortfolioScope = selectedAccountIds !== undefined;
         return (
-          <div className="border-border/50 bg-success/10 rounded-xl border p-6 text-center md:p-8">
-            <p className="text-sm">{t("dashboard:no_accounts_found")}</p>
+          <div
+            className={cn(
+              statusSurfaceVariants({ status: "success" }),
+              "rounded-xl p-6 text-center md:p-8",
+            )}
+          >
+            <p className="text-sm">
+              {t(
+                isPortfolioScope
+                  ? "dashboard:portfolio_filter.empty"
+                  : "dashboard:no_accounts_found",
+              )}
+            </p>
             <Link
-              to="/settings/accounts"
+              to={isPortfolioScope ? "/settings/portfolios" : "/settings/accounts"}
               className="text-muted-foreground hover:text-foreground mt-2 inline-flex items-center gap-1 text-xs underline-offset-4 hover:underline"
             >
-              {t("dashboard:add_first_account")}
-              <Icons.ChevronRight className="h-3 w-3" />
+              {t(
+                isPortfolioScope
+                  ? "dashboard:portfolio_filter.manage"
+                  : "dashboard:add_first_account",
+              )}
+              <Icons.ChevronRight className="h-3 w-3 rtl:rotate-180" />
             </Link>
           </div>
         );
@@ -569,7 +616,7 @@ export const AccountsSummary = React.memo(
         combinedAccountViews.forEach((account) => {
           const groupName = account.accountGroup ?? "Uncategorized";
           if (groupName === "Uncategorized") {
-            standaloneAccounts.push(account);
+            if (account.isActive) standaloneAccounts.push(account);
           } else {
             if (!groups[groupName]) {
               groups[groupName] = [];
@@ -581,42 +628,43 @@ export const AccountsSummary = React.memo(
         const actualGroups: AccountSummaryDisplayData[] = [];
 
         Object.entries(groups).forEach(([groupName, groupAccounts]) => {
-          if (groupAccounts.length === 1) {
-            standaloneAccounts.push(groupAccounts[0]);
-          } else {
-            const baseCurrency = groupAccounts[0]?.baseCurrency ?? settings?.baseCurrency ?? "USD";
-            const groupAccountIds = groupAccounts
-              .map((account) => account.accountId)
-              .filter((id): id is string => Boolean(id));
-            const groupPerformance =
-              performanceSummaries?.[performanceSummaryScopeKey(groupAccountIds)];
+          const visibleAccounts = groupAccounts.filter((account) => account.isActive);
+          if (visibleAccounts.length === 0) return;
 
-            const totalValueBaseCurrency = groupAccounts.reduce(
-              (sum, acc) => sum + Number(acc.totalValueBaseCurrency),
-              0,
-            );
+          const baseCurrency = groupAccounts[0]?.baseCurrency ?? settings?.baseCurrency ?? "USD";
+          // Totals span every group member, hidden included, so value and gain are computed
+          // over the same set — and match the scope key emitted for this group.
+          const groupAccountIds = groupAccounts
+            .map((account) => account.accountId)
+            .filter((id): id is string => Boolean(id));
+          const groupPerformance =
+            performanceSummaries?.[performanceSummaryScopeKey(groupAccountIds)];
 
-            const totalGainLossAmountBase = performancePeriodPnl(groupPerformance);
-            const groupTotalReturnPercentBase = performanceSummaryReturn(groupPerformance);
+          const totalValueBaseCurrency = groupAccounts.reduce(
+            (sum, acc) => sum + Number(acc.totalValueBaseCurrency),
+            0,
+          );
 
-            actualGroups.push({
-              accountName: groupName,
-              totalValueBaseCurrency,
-              baseCurrency,
-              totalGainLossAmountBaseCurrency: totalGainLossAmountBase,
-              totalGainLossPercent: groupTotalReturnPercentBase,
-              accountCurrency: baseCurrency,
-              totalValueAccountCurrency: totalValueBaseCurrency,
-              totalGainLossAmountAccountCurrency: totalGainLossAmountBase,
-              isGroup: true,
-              accountCount: groupAccounts.length,
-              accounts: groupAccounts,
-              trackingMode: groupAccounts.every((account) => account.trackingMode === "HOLDINGS")
-                ? "HOLDINGS"
-                : undefined,
-              displayInAccountCurrency: false,
-            });
-          }
+          const totalGainLossAmountBase = performancePeriodPnl(groupPerformance);
+          const groupTotalReturnPercentBase = performanceSummaryReturn(groupPerformance);
+
+          actualGroups.push({
+            accountName: groupName,
+            totalValueBaseCurrency,
+            baseCurrency,
+            totalGainLossAmountBaseCurrency: totalGainLossAmountBase,
+            totalGainLossPercent: groupTotalReturnPercentBase,
+            accountCurrency: baseCurrency,
+            totalValueAccountCurrency: totalValueBaseCurrency,
+            totalGainLossAmountAccountCurrency: totalGainLossAmountBase,
+            isGroup: true,
+            accountCount: visibleAccounts.length,
+            accounts: visibleAccounts,
+            trackingMode: groupAccounts.every((account) => account.trackingMode === "HOLDINGS")
+              ? "HOLDINGS"
+              : undefined,
+            displayInAccountCurrency: false,
+          });
         });
 
         actualGroups.sort(
@@ -637,7 +685,10 @@ export const AccountsSummary = React.memo(
               return (
                 <div
                   key={group.accountName}
-                  className="border-border/40 bg-card/90 shadow-xs overflow-hidden rounded-xl border backdrop-blur-xl transition-shadow duration-150 hover:shadow-md"
+                  className={cn(
+                    cardSurfaceClassName,
+                    "overflow-hidden transition-shadow duration-150 hover:shadow-md",
+                  )}
                 >
                   <div className="cursor-pointer">
                     <AccountSummaryComponent
@@ -682,9 +733,9 @@ export const AccountsSummary = React.memo(
           </>
         );
       } else {
-        const sortedAccounts = [...combinedAccountViews].sort(
-          (a, b) => Number(b.totalValueBaseCurrency) - Number(a.totalValueBaseCurrency),
-        );
+        const sortedAccounts = combinedAccountViews
+          .filter((account) => account.isActive)
+          .sort((a, b) => Number(b.totalValueBaseCurrency) - Number(a.totalValueBaseCurrency));
 
         return sortedAccounts.map((account) => (
           <AccountSummaryComponent
@@ -698,6 +749,7 @@ export const AccountsSummary = React.memo(
       }
     }, [
       combinedAccountViews,
+      selectedAccountIds,
       accountsGrouped,
       expandedGroups,
       toggleGroup,
@@ -717,7 +769,7 @@ export const AccountsSummary = React.memo(
           <h2 className="text-sm font-semibold tracking-tight">{t("dashboard:accounts")}</h2>
           <Button
             variant="ghost"
-            className="text-muted-foreground hover:bg-success/10"
+            className="text-muted-foreground hover:bg-success-subtle"
             size="sm"
             onClick={() => setAccountsGrouped(!accountsGrouped)}
             aria-label={accountsGrouped ? t("dashboard:list_view") : t("dashboard:group_view")}
@@ -736,19 +788,13 @@ export const AccountsSummary = React.memo(
           </Button>
         </div>
         {isPerformanceError && (
-          <div className="border-destructive/30 bg-destructive/5 mb-2 rounded-lg border p-3">
-            <div className="flex items-start gap-2">
-              <Icons.AlertTriangle className="text-destructive mt-0.5 h-4 w-4 shrink-0" />
-              <div className="min-w-0">
-                <p className="text-destructive text-sm font-medium">
-                  {t("dashboard:summary.failed_to_load_performance")}
-                </p>
-                <p className="text-muted-foreground mt-1 break-words text-xs">
-                  {performanceError?.message || t("dashboard:summary.values_without_returns")}
-                </p>
-              </div>
-            </div>
-          </div>
+          <Alert variant="destructive" className="mb-2 p-3">
+            <Icons.AlertTriangle />
+            <AlertTitle>{t("dashboard:summary.failed_to_load_performance")}</AlertTitle>
+            <AlertDescription className="text-xs break-words">
+              {performanceError?.message || t("dashboard:summary.values_without_returns")}
+            </AlertDescription>
+          </Alert>
         )}
         <div className="space-y-2 md:space-y-3">{renderedContent}</div>
       </div>

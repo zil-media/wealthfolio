@@ -1,3 +1,4 @@
+import { getCategoryLabel } from "@/lib/taxonomy-labels";
 import { useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { Navigate } from "react-router-dom";
@@ -17,10 +18,16 @@ import {
   DropdownMenuItem,
   DropdownMenuSeparator,
   DropdownMenuTrigger,
-  EmptyPlaceholder,
   Icons,
   Input,
   Skeleton,
+  Spinner,
+  Empty,
+  EmptyHeader,
+  EmptyMedia,
+  EmptyTitle,
+  EmptyDescription,
+  EmptyContent,
 } from "@wealthfolio/ui";
 import { cn } from "@/lib/utils";
 import { useAccounts } from "@/hooks/use-accounts";
@@ -103,11 +110,12 @@ export default function SpendingRulesPage() {
           const parent = c.parentId ? byId.get(c.parentId) : null;
           return {
             value: `${taxonomyId}:${c.id}`,
-            label: c.name,
+            label: getCategoryLabel(t, taxonomyId, c.id, c.name),
             taxonomyId,
             categoryId: c.id,
             color: c.color,
-            parentName: parent?.name ?? null,
+            icon: c.icon ?? null,
+            parentName: parent ? getCategoryLabel(t, taxonomyId, parent.id, parent.name) : null,
           } satisfies RuleFormCategoryOption;
         });
     };
@@ -127,7 +135,7 @@ export default function SpendingRulesPage() {
       meta[o.categoryId] ??= entry;
     });
     return { categoryOptions: opts, categoryMeta: meta };
-  }, [spending.data?.categories, income.data?.categories, savings.data?.categories]);
+  }, [spending.data?.categories, income.data?.categories, savings.data?.categories, t]);
 
   const presetMeta = useMemo<Record<string, RulePresetMeta>>(() => {
     const meta: Record<string, RulePresetMeta> = {};
@@ -175,11 +183,11 @@ export default function SpendingRulesPage() {
     remove.mutate(rule.id);
   };
 
-  const handleSave = (values: RuleFormValues) => {
+  const handleSave = async (values: RuleFormValues) => {
     const { amountOp, amountValue, amountValue2 } = ruleAmountPayload(values);
-    if (selectedRule) {
-      update.mutate(
-        {
+    try {
+      if (selectedRule) {
+        await update.mutateAsync({
           id: selectedRule.id,
           patch: {
             name: values.name,
@@ -197,14 +205,9 @@ export default function SpendingRulesPage() {
             isGlobal: values.accountId === null,
             accountId: values.accountId,
           },
-        },
-        {
-          onSuccess: () => setVisibleModal(false),
-        },
-      );
-    } else {
-      create.mutate(
-        {
+        });
+      } else {
+        await create.mutateAsync({
           name: values.name,
           pattern: values.pattern,
           matchType: values.matchType,
@@ -217,11 +220,11 @@ export default function SpendingRulesPage() {
           priority: values.priority,
           isGlobal: values.accountId === null,
           accountId: values.accountId,
-        },
-        {
-          onSuccess: () => setVisibleModal(false),
-        },
-      );
+        });
+      }
+      setVisibleModal(false);
+    } catch {
+      // The mutation reports the error; the modal stays open to try again.
     }
   };
 
@@ -256,20 +259,22 @@ export default function SpendingRulesPage() {
         >
           <div className="flex items-center gap-2">
             <DropdownMenu>
-              <DropdownMenuTrigger asChild>
-                <Button
-                  variant="outline"
-                  size="sm"
-                  disabled={rerun.isPending || rules.length === 0}
-                >
-                  {rerun.isPending ? (
-                    <Icons.Spinner className="mr-2 h-3.5 w-3.5 animate-spin" />
-                  ) : (
-                    <Icons.Refresh className="mr-2 h-3.5 w-3.5" />
-                  )}
-                  {t("settings:spending.rules.rerun")}
-                  <Icons.ChevronDown className="ml-2 h-3.5 w-3.5 opacity-60" />
-                </Button>
+              <DropdownMenuTrigger
+                render={
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    disabled={rerun.isPending || rules.length === 0}
+                  />
+                }
+              >
+                {rerun.isPending ? (
+                  <Spinner className="me-2 h-3.5 w-3.5" />
+                ) : (
+                  <Icons.Refresh className="me-2 h-3.5 w-3.5" />
+                )}
+                {t("settings:spending.rules.rerun")}
+                <Icons.ChevronDown className="ms-2 h-3.5 w-3.5 opacity-60" />
               </DropdownMenuTrigger>
               <DropdownMenuContent align="end" className="w-72">
                 <DropdownMenuItem
@@ -285,8 +290,8 @@ export default function SpendingRulesPage() {
                 </DropdownMenuItem>
                 <DropdownMenuSeparator />
                 <DropdownMenuItem
-                  onSelect={(e) => {
-                    e.preventDefault();
+                  closeOnClick={false}
+                  onClick={() => {
                     setConfirmRerunAllOpen(true);
                   }}
                   className="flex-col items-start gap-0.5"
@@ -309,7 +314,7 @@ export default function SpendingRulesPage() {
               <Icons.Plus className="h-3.5 w-3.5" />
             </Button>
             <Button size="sm" className="hidden sm:inline-flex" onClick={handleAddRule}>
-              <Icons.Plus className="mr-2 h-3.5 w-3.5" />
+              <Icons.Plus className="me-2 h-3.5 w-3.5" />
               {t("settings:spending.rules.add")}
             </Button>
           </div>
@@ -322,31 +327,37 @@ export default function SpendingRulesPage() {
             <Skeleton className="h-12 w-full" />
           </div>
         ) : hasLoadError ? (
-          <EmptyPlaceholder>
-            <EmptyPlaceholder.Icon name="AlertTriangle" />
-            <EmptyPlaceholder.Title>
-              {t("settings:spending.rules.error_title")}
-            </EmptyPlaceholder.Title>
-            <EmptyPlaceholder.Description>{loadError}</EmptyPlaceholder.Description>
-          </EmptyPlaceholder>
+          <Empty>
+            <EmptyHeader>
+              <EmptyMedia variant="icon">
+                <Icons.AlertTriangle />
+              </EmptyMedia>
+              <EmptyTitle>{t("settings:spending.rules.error_title")}</EmptyTitle>
+              <EmptyDescription>{loadError}</EmptyDescription>
+            </EmptyHeader>
+          </Empty>
         ) : totalRulesCount === 0 ? (
           <div className="space-y-6">
             <div className="bg-muted/30 rounded-lg border p-4">
               <RulePresetPicker />
             </div>
-            <EmptyPlaceholder>
-              <EmptyPlaceholder.Icon name="ListFilter" />
-              <EmptyPlaceholder.Title>
-                {t("settings:spending.rules.empty_title")}
-              </EmptyPlaceholder.Title>
-              <EmptyPlaceholder.Description>
-                {t("settings:spending.rules.empty_description")}
-              </EmptyPlaceholder.Description>
-              <Button variant="outline" onClick={handleAddRule}>
-                <Icons.Plus className="mr-2 h-4 w-4" />
-                {t("settings:spending.rules.add_manually")}
-              </Button>
-            </EmptyPlaceholder>
+            <Empty>
+              <EmptyHeader>
+                <EmptyMedia variant="icon">
+                  <Icons.ListFilter />
+                </EmptyMedia>
+                <EmptyTitle>{t("settings:spending.rules.empty_title")}</EmptyTitle>
+                <EmptyDescription>
+                  {t("settings:spending.rules.empty_description")}
+                </EmptyDescription>
+              </EmptyHeader>
+              <EmptyContent>
+                <Button variant="outline" onClick={handleAddRule}>
+                  <Icons.Plus className="me-2 h-4 w-4" />
+                  {t("settings:spending.rules.add_manually")}
+                </Button>
+              </EmptyContent>
+            </Empty>
           </div>
         ) : (
           <div className="space-y-4">
@@ -357,13 +368,13 @@ export default function SpendingRulesPage() {
             {/* Search + preset filter chips */}
             <div className="space-y-2">
               <div className="relative">
-                <Icons.Search className="text-muted-foreground/60 absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2" />
+                <Icons.Search className="text-muted-foreground/60 absolute start-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2" />
                 <Input
                   type="search"
                   value={searchQuery}
                   onChange={(e) => setSearchQuery(e.target.value)}
                   placeholder={t("settings:spending.rules.search_placeholder")}
-                  className="bg-muted/40 border-border/60 placeholder:text-muted-foreground/60 h-7 pl-8 text-xs"
+                  className="bg-muted/40 border-border/60 placeholder:text-muted-foreground/60 h-7 ps-8 text-xs"
                   aria-label={t("settings:spending.rules.search_aria")}
                 />
               </div>
@@ -455,10 +466,7 @@ export default function SpendingRulesPage() {
           </AlertDialogHeader>
           <AlertDialogFooter>
             <AlertDialogCancel>{t("common:cancel")}</AlertDialogCancel>
-            <AlertDialogAction
-              onClick={() => rerun.mutate(false)}
-              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
-            >
+            <AlertDialogAction onClick={() => rerun.mutate(false)} variant="destructive">
               {t("settings:spending.rules.recategorize_all")}
             </AlertDialogAction>
           </AlertDialogFooter>

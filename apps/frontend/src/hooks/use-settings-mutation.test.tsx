@@ -126,6 +126,10 @@ describe("useSettingsMutation", () => {
     expect(invalidated).toContain(QueryKeys.RETIREMENT_OVERVIEW);
     expect(invalidated).toContain(QueryKeys.SAVE_UP_OVERVIEW);
     expect(invalidated).toContain(QueryKeys.SAVE_UP_PREVIEW);
+    // Loan payments and activity searches are dated in the zone too.
+    expect(invalidated).toContain(QueryKeys.ALTERNATIVE_HOLDINGS);
+    expect(invalidated).toContain(QueryKeys.ASSET_DATA);
+    expect(invalidated).toContain(QueryKeys.ACTIVITIES);
   });
 
   it("leaves spending caches alone for an unrelated setting", async () => {
@@ -150,5 +154,35 @@ describe("useSettingsMutation", () => {
     expect(invalidated).not.toContain(QueryKeys.RETIREMENT_OVERVIEW);
     expect(invalidated).not.toContain(QueryKeys.SAVE_UP_OVERVIEW);
     expect(invalidated).not.toContain(QueryKeys.SAVE_UP_PREVIEW);
+    expect(invalidated).not.toContain(QueryKeys.ALTERNATIVE_HOLDINGS);
+  });
+
+  it("saves appearance changes without a confirmation toast", async () => {
+    vi.mocked(updateSettings).mockResolvedValue({
+      language: "en",
+      onboardingCompleted: true,
+    } as Settings);
+    const queryClient = new QueryClient({
+      defaultOptions: { mutations: { retry: false }, queries: { retry: false } },
+    });
+    const wrapper = ({ children }: { children: ReactNode }) => (
+      <QueryClientProvider client={queryClient}>{children}</QueryClientProvider>
+    );
+    const { result } = renderHook(() => useSettingsMutation(vi.fn(), vi.fn()), { wrapper });
+
+    // Theme, mode, gain and loss colours, font, text size and menu bar show the moment they apply.
+    await act(async () => {
+      await result.current.mutateAsync({ themeId: "signature", theme: "dark", font: "font-sans" });
+      await result.current.mutateAsync({ gainColors: "red-up" });
+      await result.current.mutateAsync({ textSize: "large" });
+      await result.current.mutateAsync({ menuBarVisible: false });
+    });
+    expect(toast).not.toHaveBeenCalled();
+
+    // Any other setting still confirms.
+    await act(async () => {
+      await result.current.mutateAsync({ theme: "dark", language: "en" });
+    });
+    expect(toast).toHaveBeenCalledOnce();
   });
 });

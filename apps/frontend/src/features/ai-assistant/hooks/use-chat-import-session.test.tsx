@@ -1,7 +1,10 @@
+import i18n from "i18next";
+import enAi from "@/i18n/locales/en/ai.json";
+import zhAi from "@/i18n/locales/zh/ai.json";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { act, renderHook, waitFor } from "@testing-library/react";
 import type { ReactNode } from "react";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { AccountType, ActivityType } from "@/lib/constants";
 import type { ImportCsvMappingOutput } from "../types";
@@ -76,6 +79,23 @@ const mapping = {
 } as ImportCsvMappingOutput;
 
 describe("useChatImportSession", () => {
+  it("localizes missing CSV without starting provider or import work", async () => {
+    i18n.addResourceBundle("zh", "ai", zhAi, true, true);
+    await i18n.changeLanguage("zh");
+    try {
+      const { result, unmount } = renderHook(
+        () => useChatImportSession({ mapping: { ...mapping, csvContent: "" } }),
+        { wrapper: createWrapper() },
+      );
+      await waitFor(() => expect(result.current.error).toBe(zhAi.importSessionErrors.missingCsv));
+      expect(adapterMocks.parseCsv).not.toHaveBeenCalled();
+      expect(adapterMocks.importActivities).not.toHaveBeenCalled();
+      unmount();
+    } finally {
+      await i18n.changeLanguage("en");
+    }
+  });
+
   beforeEach(() => {
     vi.clearAllMocks();
     adapterMocks.parseCsv.mockResolvedValue({
@@ -150,31 +170,18 @@ describe("useChatImportSession", () => {
   });
 
   it("saves the repaired mapping used for a successful chat import", async () => {
-    adapterMocks.parseCsv
-      .mockResolvedValueOnce({
-        headers: ["2024-01-15", "NEWCO", "2", "10", "Buy"],
-        rows: [],
-        detectedConfig: {
-          defaultCurrency: "USD",
-          dateFormat: "auto",
-          decimalSeparator: ".",
-          thousandsSeparator: ",",
-        },
-        errors: [],
-        rowCount: 0,
-      })
-      .mockResolvedValue({
-        headers: ["Date", "Symbol", "Quantity", "Price", "Type"],
-        rows: [["2024-01-15", "NEWCO", "2", "10", "Buy"]],
-        detectedConfig: {
-          defaultCurrency: "USD",
-          dateFormat: "auto",
-          decimalSeparator: ".",
-          thousandsSeparator: ",",
-        },
-        errors: [],
-        rowCount: 1,
-      });
+    adapterMocks.parseCsv.mockResolvedValue({
+      headers: ["Date", "Symbol", "Quantity", "Price", "Type"],
+      rows: [["2024-01-15", "NEWCO", "2", "10", "Buy"]],
+      detectedConfig: {
+        defaultCurrency: "USD",
+        dateFormat: "auto",
+        decimalSeparator: ".",
+        thousandsSeparator: ",",
+      },
+      errors: [],
+      rowCount: 1,
+    });
     const staleMapping: ImportCsvMappingOutput = {
       ...mapping,
       appliedMapping: {
@@ -215,8 +222,14 @@ describe("useChatImportSession", () => {
           unitPrice: "Price",
           activityType: "Type",
         }),
-        parseConfig: expect.objectContaining({ skipTopRows: 0 }),
+        parseConfig: expect.objectContaining({ skipTopRows: 1 }),
       }),
+    );
+    // The tool's skipTopRows is used as given; the file is never reparsed without it.
+    expect(adapterMocks.parseCsv).toHaveBeenCalledTimes(1);
+    expect(adapterMocks.parseCsv).toHaveBeenCalledWith(
+      expect.any(File),
+      expect.objectContaining({ skipTopRows: 1 }),
     );
     const savedMapping = adapterMocks.saveAccountImportMapping.mock.calls[0]?.[0];
     expect(savedMapping.accountMappings).toEqual({
@@ -375,37 +388,19 @@ describe("useChatImportSession", () => {
     });
   });
 
-  it("keeps the repaired parse config when account selection changes the import profile", async () => {
-    adapterMocks.parseCsv.mockImplementation(
-      async (_file: File, config?: { skipTopRows?: number }) => {
-        if ((config?.skipTopRows ?? 0) > 0) {
-          return {
-            headers: ["2024-01-15", "Starbucks", "12.50", "Purchase"],
-            rows: [],
-            detectedConfig: {
-              defaultCurrency: "USD",
-              dateFormat: "auto",
-              decimalSeparator: ".",
-              thousandsSeparator: ",",
-            },
-            errors: [],
-            rowCount: 0,
-          };
-        }
-        return {
-          headers: ["Date", "Merchant", "Amount", "Type"],
-          rows: [["2024-01-15", "Starbucks", "12.50", "Purchase"]],
-          detectedConfig: {
-            defaultCurrency: "USD",
-            dateFormat: "auto",
-            decimalSeparator: ".",
-            thousandsSeparator: ",",
-          },
-          errors: [],
-          rowCount: 1,
-        };
+  it("keeps the tool's parse config when account selection changes the import profile", async () => {
+    adapterMocks.parseCsv.mockResolvedValue({
+      headers: ["Date", "Merchant", "Amount", "Type"],
+      rows: [["2024-01-15", "Starbucks", "12.50", "Purchase"]],
+      detectedConfig: {
+        defaultCurrency: "USD",
+        dateFormat: "auto",
+        decimalSeparator: ".",
+        thousandsSeparator: ",",
       },
-    );
+      errors: [],
+      rowCount: 1,
+    });
 
     const staleAmbiguousStatement: ImportCsvMappingOutput = {
       ...mapping,
@@ -458,7 +453,7 @@ describe("useChatImportSession", () => {
     await waitFor(() => expect(result.current.drafts[0]?.accountId).toBe("card-1"));
     expect(adapterMocks.parseCsv).toHaveBeenLastCalledWith(
       expect.any(File),
-      expect.objectContaining({ skipTopRows: 0 }),
+      expect.objectContaining({ skipTopRows: 1 }),
     );
     await waitFor(() => expect(result.current.canConfirm).toBe(true));
 
@@ -468,8 +463,257 @@ describe("useChatImportSession", () => {
 
     expect(adapterMocks.saveAccountImportMapping).toHaveBeenCalledWith(
       expect.objectContaining({
-        parseConfig: expect.objectContaining({ skipTopRows: 0 }),
+        parseConfig: expect.objectContaining({ skipTopRows: 1 }),
       }),
     );
+  });
+
+  describe("held error language changes", () => {
+    beforeEach(async () => {
+      i18n.addResourceBundle("zh", "ai", zhAi, true, true);
+      await i18n.changeLanguage("en");
+    });
+    afterEach(async () => {
+      await act(() => i18n.changeLanguage("en"));
+    });
+
+    function workCalls() {
+      return [
+        adapterMocks.parseCsv,
+        adapterMocks.checkActivitiesImport,
+        adapterMocks.previewImportAssets,
+        adapterMocks.createAsset,
+        adapterMocks.importActivities,
+        adapterMocks.saveAccountImportMapping,
+        adapterMocks.updateToolResult,
+      ].map((mock) => mock.mock.calls.length);
+    }
+
+    async function expectHeldError(
+      result: { current: ReturnType<typeof useChatImportSession> },
+      english: string,
+      chinese: string,
+    ) {
+      await waitFor(() => expect(result.current.error).toBe(english));
+      const calls = workCalls();
+      const drafts = result.current.drafts;
+      const status = result.current.status;
+      const revalidate = result.current.revalidate;
+      const confirm = result.current.confirm;
+      await act(() => i18n.changeLanguage("zh"));
+      expect(result.current.error).toBe(chinese);
+      await act(() => i18n.changeLanguage("en"));
+      expect(result.current.error).toBe(english);
+      expect(workCalls()).toEqual(calls);
+      expect(result.current.drafts).toBe(drafts);
+      expect(result.current.status).toBe(status);
+      expect(result.current.revalidate).toBe(revalidate);
+      expect(result.current.confirm).toBe(confirm);
+    }
+
+    it.each(["missingCsv", "emptyCsv", "prepareFailed"] as const)(
+      "retranslates an already-held %s initialization error without parsing again",
+      async (key) => {
+        const currentMapping = key === "missingCsv" ? { ...mapping, csvContent: "" } : mapping;
+        if (key === "emptyCsv") {
+          adapterMocks.parseCsv.mockResolvedValueOnce({
+            headers: [],
+            rows: [],
+            detectedConfig: {},
+          });
+        } else if (key === "prepareFailed") {
+          adapterMocks.parseCsv.mockRejectedValueOnce({ code: "unexpected" });
+        }
+        const { result } = renderHook(() => useChatImportSession({ mapping: currentMapping }), {
+          wrapper: createWrapper(),
+        });
+        await expectHeldError(result, enAi.importSessionErrors[key], zhAi.importSessionErrors[key]);
+        expect(adapterMocks.parseCsv).toHaveBeenCalledTimes(key === "missingCsv" ? 0 : 1);
+      },
+    );
+
+    it.each(["nothing", "allInvalid", "revalidateFailed", "importFailed"] as const)(
+      "retranslates an already-held %s action error without repeating work",
+      async (key) => {
+        const { result } = renderHook(() => useChatImportSession({ mapping }), {
+          wrapper: createWrapper(),
+        });
+        await waitFor(() => expect(result.current.status).toBe("ready"));
+        if (key === "nothing") {
+          act(() => result.current.skipRow(0));
+        } else if (key === "allInvalid") {
+          adapterMocks.checkActivitiesImport.mockResolvedValueOnce([
+            { lineNumber: 1, isValid: false, errors: { general: ["Backend diagnostic"] } },
+          ]);
+        } else if (key === "revalidateFailed") {
+          adapterMocks.checkActivitiesImport.mockRejectedValueOnce({ code: "unexpected" });
+        } else {
+          adapterMocks.importActivities.mockRejectedValueOnce({ code: "unexpected" });
+        }
+        await act(async () => {
+          if (key === "revalidateFailed") await result.current.revalidate();
+          else await result.current.confirm();
+        });
+        await expectHeldError(result, enAi.importSessionErrors[key], zhAi.importSessionErrors[key]);
+      },
+    );
+
+    it.each([
+      { name: "missing summary", response: {}, raw: undefined },
+      { name: "null summary", response: { summary: null }, raw: undefined },
+      {
+        name: "undefined error",
+        response: { summary: { success: false, imported: 0, errorMessage: undefined } },
+        raw: undefined,
+      },
+      {
+        name: "missing error",
+        response: { summary: { success: false, imported: 0 } },
+        raw: undefined,
+      },
+      {
+        name: "null error",
+        response: { summary: { success: false, imported: 0, errorMessage: null } },
+        raw: undefined,
+      },
+      {
+        name: "failure with imported rows",
+        response: { summary: { success: false, imported: 1 } },
+        raw: undefined,
+      },
+      {
+        name: "success with zero rows",
+        response: { summary: { success: true, imported: 0 } },
+        raw: undefined,
+      },
+      ...[
+        "",
+        "   ",
+        "ai:importSessionErrors.reviewAndRetry",
+        "Provider detail: row 7 rejected.",
+        "Import failed. Review the errors and try again.",
+      ].map((raw) => ({
+        name: `raw error ${JSON.stringify(raw)}`,
+        response: { summary: { success: false, imported: 0, errorMessage: raw } },
+        raw,
+      })),
+    ])(
+      "retains a failed-import summary message across language changes: $name",
+      async ({ response, raw }) => {
+        adapterMocks.importActivities.mockResolvedValueOnce({
+          ...response,
+          activities: [
+            { lineNumber: 1, isValid: false, errors: { general: ["Provider row diagnostic"] } },
+          ],
+        });
+        const { result } = renderHook(() => useChatImportSession({ mapping }), {
+          wrapper: createWrapper(),
+        });
+        await waitFor(() => expect(result.current.status).toBe("ready"));
+        await act(() => result.current.confirm());
+        await expectHeldError(
+          result,
+          raw ?? enAi.importSessionErrors.reviewAndRetry,
+          raw ?? zhAi.importSessionErrors.reviewAndRetry,
+        );
+        expect(enAi.importSessionErrors.reviewAndRetry).toBe(
+          "Import failed. Review the errors and try again.",
+        );
+        expect(result.current.status).toBe("error");
+        expect(result.current.submitted).toBe(false);
+        expect(result.current.drafts[0].errors.general).toEqual(["Provider row diagnostic"]);
+        expect(adapterMocks.importActivities).toHaveBeenCalledTimes(1);
+        expect(adapterMocks.saveAccountImportMapping).not.toHaveBeenCalled();
+        expect(adapterMocks.updateToolResult).not.toHaveBeenCalled();
+      },
+    );
+
+    it.each(["initialization", "revalidation", "submission"] as const)(
+      "preserves raw Error and key-looking string diagnostics from %s",
+      async (phase) => {
+        for (const diagnostic of [
+          new Error("Provider's raw diagnostic"),
+          new Error("ai:importSessionErrors.nothing"),
+          "ai:importSessionErrors.nothing",
+        ]) {
+          if (phase === "initialization") adapterMocks.parseCsv.mockRejectedValueOnce(diagnostic);
+          const { result, unmount } = renderHook(() => useChatImportSession({ mapping }), {
+            wrapper: createWrapper(),
+          });
+          if (phase !== "initialization") {
+            await waitFor(() => expect(result.current.status).toBe("ready"));
+            if (phase === "revalidation")
+              adapterMocks.checkActivitiesImport.mockRejectedValueOnce(diagnostic);
+            else adapterMocks.importActivities.mockRejectedValueOnce(diagnostic);
+            await act(async () => {
+              if (phase === "revalidation") await result.current.revalidate();
+              else await result.current.confirm();
+            });
+          }
+          const raw = diagnostic instanceof Error ? diagnostic.message : diagnostic;
+          const fallbackKey = phase === "revalidation" ? "revalidateFailed" : "importFailed";
+          const passesThrough = diagnostic instanceof Error || phase === "initialization";
+          await expectHeldError(
+            result,
+            passesThrough ? raw : enAi.importSessionErrors[fallbackKey],
+            passesThrough ? raw : zhAi.importSessionErrors[fallbackKey],
+          );
+          unmount();
+        }
+      },
+    );
+  });
+
+  it("carries local row-error provenance through edits and backend merges without sending it", async () => {
+    const currentMapping: ImportCsvMappingOutput = {
+      ...mapping,
+      accountId: "",
+      appliedMapping: { ...mapping.appliedMapping, accountId: "" },
+      availableAccounts: [
+        ...mapping.availableAccounts,
+        { id: "acct-2", name: "Second", currency: "USD" },
+      ],
+    };
+    const { result } = renderHook(() => useChatImportSession({ mapping: currentMapping }), {
+      wrapper: createWrapper(),
+    });
+    await waitFor(() => expect(result.current.status).toBe("ready"));
+    expect(result.current.drafts[0].localErrorMessages?.accountId?.[0].key).toBe(
+      "activity:validation.account_is_required",
+    );
+    act(() => result.current.setAccountId("acct-1"));
+    await waitFor(() => expect(result.current.drafts[0].errors.accountId).toBeUndefined());
+    expect(result.current.drafts[0].localErrorMessages?.accountId).toBeUndefined();
+
+    act(() => result.current.editDraft(0, { activityDate: "" }));
+    const localError = result.current.drafts[0].errors.activityDate[0];
+    expect(result.current.drafts[0].localErrorMessages?.activityDate).toEqual([
+      { key: "activity:validation.date_is_required", originalMessage: localError },
+    ]);
+    act(() => result.current.bulkSkip([0]));
+    act(() => result.current.bulkUnskip([0]));
+    expect(result.current.drafts[0].localErrorMessages?.activityDate?.[0].originalMessage).toBe(
+      localError,
+    );
+    adapterMocks.checkActivitiesImport.mockResolvedValueOnce([
+      {
+        lineNumber: 1,
+        isValid: false,
+        errors: { activityDate: ["ai:importSessionErrors.nothing"] },
+      },
+    ]);
+    await act(() => result.current.revalidate());
+    expect(result.current.drafts[0].errors.activityDate).toEqual([
+      localError,
+      "ai:importSessionErrors.nothing",
+    ]);
+    expect(result.current.drafts[0].localErrorMessages?.activityDate).toHaveLength(1);
+    for (const call of adapterMocks.checkActivitiesImport.mock.calls) {
+      for (const activity of call[0].activities)
+        expect(activity).not.toHaveProperty("localErrorMessages");
+    }
+    act(() => result.current.editDraft(0, { activityDate: "2024-01-15" }));
+    expect(result.current.drafts[0].errors.activityDate).toBeUndefined();
+    expect(result.current.drafts[0].localErrorMessages?.activityDate).toBeUndefined();
   });
 });

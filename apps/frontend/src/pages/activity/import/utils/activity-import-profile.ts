@@ -61,6 +61,7 @@ const CASH_ACTIVITY_TYPES = [
 const CREDIT_CARD_ACTIVITY_TYPES = [
   ActivityType.WITHDRAWAL,
   ActivityType.TRANSFER_IN,
+  ActivityType.TRANSFER_OUT,
   ActivityType.CREDIT,
   ActivityType.FEE,
   ActivityType.INTEREST,
@@ -139,6 +140,7 @@ export const CREDIT_CARD_TRANSACTION_IMPORT_PROFILE: ActivityImportProfile = {
   activityTypeLabels: {
     [ActivityType.WITHDRAWAL]: "Charge",
     [ActivityType.TRANSFER_IN]: "Payment",
+    [ActivityType.TRANSFER_OUT]: "Balance Transfer / Cash Advance",
     [ActivityType.CREDIT]: "Refund / Credit",
     [ActivityType.INTEREST]: "Interest Charge",
   },
@@ -262,9 +264,19 @@ export function getActivityTypeLabelForImportProfile(
   profile: ActivityImportProfile,
   t?: TFunction,
 ): string {
+  const labelKeys: Partial<Record<ActivityType, string>> = {
+    [ActivityType.WITHDRAWAL]: "activity:import.creditCard.charge",
+    [ActivityType.TRANSFER_IN]: "activity:import.creditCard.payment",
+    [ActivityType.TRANSFER_OUT]: "activity:import.creditCard.transfer",
+    [ActivityType.CREDIT]: "activity:import.creditCard.refund",
+    [ActivityType.INTEREST]: "activity:import.creditCard.interest",
+  };
+  const override = profile.activityTypeLabels?.[activityType];
+  if (t && profile === CREDIT_CARD_TRANSACTION_IMPORT_PROFILE && labelKeys[activityType]) {
+    return t(labelKeys[activityType]!);
+  }
   return (
-    profile.activityTypeLabels?.[activityType] ??
-    (t ? localizeActivityTypeName(t, activityType) : ActivityTypeNames[activityType])
+    override ?? (t ? localizeActivityTypeName(t, activityType) : ActivityTypeNames[activityType])
   );
 }
 

@@ -1,5 +1,26 @@
 # Wealthfolio CLI and MCP Agent Access Design
 
+## Spending access
+
+See [Spending MCP access](spending-mcp-implementation.md) for the implemented
+permission matrix, tools, reviewed writes, compatibility and accounting limits.
+Spending read/organization/budget grants are independent of asset
+classification; old stored tokens require explicit reauthorization. Default and
+monthly budgets share `budget:write` and retain native inheritance semantics.
+
+## Editing API key permissions
+
+Existing API key permissions can be edited from AI Agent Access through the
+application-authenticated management API or profile-scoped Tauri command. Both
+validate the complete scope replacement before updating only `scopes_json`
+through the existing SQLite writer. MCP authentication resolves the token for
+each request, so the next request uses the new permissions, including within an
+existing session. No authorization cache, tool catalog, or session rebuild is
+needed. The credential and expiration stay unchanged; editing an expired key
+does not reactivate it. Calls already authorized continue. Clients caching tool
+lists may need to refresh or reconnect. This operation is not exposed as an MCP
+tool.
+
 ## Overview
 
 This document defines how external AI agents and command line workflows interact
@@ -409,8 +430,9 @@ There are **two catalogs** (`crates/agent-tools/src/catalog.rs`):
 - `assistant_catalog()` — read + draft/suggest tools, for the in-app assistant.
   It excludes the commit and CSV-import tools (the assistant persists through
   its own confirmation widget / `import_csv` flow).
-- `mcp_catalog()` — everything (read + draft/suggest + commit + import),
-  scope-filtered at the MCP boundary so a token sees only what its scopes reach.
+- `mcp_catalog()` — everything (read + draft/suggest + commit + categorization
+  rules + import + transfer linking + quote import), scope-filtered at the MCP
+  boundary so a token sees only what its scopes reach.
 
 ### Read Tools
 
@@ -433,6 +455,15 @@ get_net_worth
 get_contribution_limits
 ```
 
+`get_health_status` reads the Health Center's cached status. With
+`refresh: true` it first runs the full checks through
+`AgentEnvironment::run_health_checks`, which each host implements with the same
+`HealthServiceTrait::run_full_checks` call as its Health Center (local reads
+only, the configured timezone, no client timezone) and which refreshes the cache
+the Health Center shows. A refresh within a minute of the last run returns that
+run; refreshes take a lock while they check this and run, so concurrent calls
+run the checks once.
+
 ### Draft / Suggest Tools (assistant + MCP)
 
 ```text
@@ -450,7 +481,61 @@ commit_activity_draft              -- persist one reviewed draft
 commit_activity_drafts             -- persist a batch
 commit_asset_classification_draft  -- persist one reviewed classification draft
 commit_categorization_rule         -- persist one reviewed categorization rule draft
+commit_transaction_categories     -- persist reviewed transaction category assignments
 ```
+
+### MCP-only Categorization Rule Tools
+
+```text
+list_categorization_rules          -- list saved rules with their origin
+rerun_categorization_rules         -- re-apply the rules to the spending accounts
+```
+
+`list_categorization_rules` returns every saved rule, highest priority (the one
+that wins a match) first: pattern, match type, target taxonomy and category
+(with the category's key and name), activity type, amount condition, priority
+and account scope. `origin` is `user`, `preset` (with `presetId`,
+`presetVersion` and `presetModified`) or `addon` (with `addonId`, read from the
+`addon:<addonId>:` prefix of the ids add-ons give their rules). It filters by
+`taxonomyId` and `origin`. `rerun_categorization_rules` runs the same rerun as
+the rules page over the accounts opted in to spending tracking, and does nothing
+when tracking is off. With `onlyUncategorized` (default `true`) it only fills
+activities without a category in the rule's taxonomy; with `false` it also
+replaces rule, import and AI categories. Manual categories and split allocations
+are never changed. It returns the number of spending accounts and of activities
+a rule matched.
+
+### MCP-only Transaction Category Management
+
+```text
+list_transaction_categories        -- list categories in the three activity taxonomies
+prepare_transaction_category      -- validate and draft one new category without saving
+commit_transaction_category       -- persist the reviewed category after confirmation
+```
+
+These tools only support `spending_categories`, `income_sources`, and
+`savings_categories`; they never create or modify asset taxonomies. Listing
+requires `spending:read` and works before any accounts or transactions exist.
+Preparation also uses `spending:read`; committing additionally requires
+`spending:write`.
+
+Call `list_transaction_categories` with an optional `taxonomyId` to discover
+existing category IDs, keys, and parent relationships. Prepare a category with
+`taxonomyId`, `name`, `key`, and optional `parentId`, `color` (`#RRGGBB`,
+default `#808080`), and `description`. Show the returned `category` object to
+the user, then pass that object to `commit_transaction_category` after
+confirmation. Committing revalidates the draft against current data, rejects
+duplicate keys and IDs, and requires the parent to belong to the selected
+taxonomy. Keys are case-sensitive, unique within a taxonomy, and cannot contain
+whitespace or control characters. Reusing a committed draft fails rather than
+creating a second category. Creation uses the native taxonomy service and SQLite
+writer. All native `create_category` callers, including REST and Tauri, now
+reject duplicate keys in these three activity taxonomies, including concurrent
+creates. Native updates and moves share the same parent/cycle checks and reject
+changed keys that introduce collisions. Unchanged legacy duplicate keys permit
+cosmetic edits. Bulk import remains unchanged; this is not a global SQL
+uniqueness constraint or a cleanup of existing data. Names, keys, descriptions,
+and parent IDs are redacted from MCP audit arguments.
 
 ### MCP-only CSV Import Tools
 
@@ -463,20 +548,227 @@ commit_activity_import             -- import through the real pipeline
 `import_csv` remains **assistant/UI-only** — it is not exposed over MCP; the
 agent-facing CSV path is the three import tools above.
 
+### MCP-only Transfer Linking Tools
+
+```text
+find_transfer_matches              -- unlinked transfers + their candidates
+link_transfer_activities           -- link confirmed pairs (batch)
+unlink_transfer_activities         -- unlink pairs linked by mistake (batch)
+```
+
+An unlinked TRANSFER_OUT / TRANSFER_IN pair between owned accounts counts as
+spending and income. `find_transfer_matches` scans posted transfers in active
+accounts with no linked other side
+(`ActivityServiceTrait::find_unlinked_transfers`). The scan reads the activities
+once, off the async workers, and includes archived accounts when resolving
+pairs, so a transfer whose other side sits in an archived account counts as
+linked. Each listed transfer comes with its `TransferLinkState`, the state the
+Health Center also reads (`TransferPairResolution::link_state`), and the
+candidates the Link Transfer dialog suggests, drawn from open accounts. The
+Health Center reports `needs_counterpart` and `broken_link`; the scan also lists
+`external` transfers, because imports mark transfers external unless the source
+says internal, so an internal move can carry the marker. `linkStates` narrows
+the scan, `offset`/`limit` page it, and a lookup by `activityId` of a transfer
+that is already linked returns its other side (`linkedTo`) and state
+(`linkedState`) instead of an entry.
+
+The Health Center resolves pairs over archived accounts the same way and reports
+only transfers in active accounts.
+
+Link and unlink call the same core methods as the dialog, so they apply its
+validation, trigger recalculation and set the user-edit flag that keeps broker
+syncs from undoing them. Linking a pair that is already linked to each other
+repairs it: the pair keeps its group and loses an external marker left on either
+leg, which the Health Center reports as a conflicting marker. Each pair in a
+batch (up to 100) succeeds or fails on its own, and the audit log keeps only the
+pair ids. The in-app assistant has no confirmation card for linking and does not
+get these tools.
+
+### MCP-only Quote Import Tools
+
+```text
+prepare_quote_import               -- preview reviewed closing prices
+commit_quote_import                -- save them as manual quotes (batch)
+```
+
+These save the closing prices a statement reports for existing assets, so the
+portfolio's value on the statement date can match it without changing
+activities, quantities or cost basis. Each row names an asset by `assetId`
+(tickers are never resolved; `get_asset_taxonomy_assignments`, under
+`classification:read`, finds an id), a `date` (`YYYY-MM-DD`, not in the future),
+a `price` in the asset's quote currency, that `currency`, and an optional
+`overwrite` flag. Only investment assets are accepted: FX rates, alternative
+assets and liabilities keep their own valuation paths.
+
+`prepare_quote_import` (`QuoteServiceTrait::preview_quote_import`) reports per
+row the asset, the quote valuations use for that day (a manual quote before a
+provider one) with its source, and the outcome: `create` (no quote that day, or
+a provider or broker quote with the same price and currency, which is saved as a
+manual quote so a later refetch cannot change the day), `skip` (a manual quote
+with the same price and currency is stored), `update` (a different price is
+stored and the row sets `overwrite`), `conflict` (a different price without
+`overwrite`) or `invalid` (unknown or non-investment asset, bad or future date,
+non-positive price, a currency other than the asset's quote currency, or a
+second row for the same asset and date).
+
+`commit_quote_import` runs the preview again and saves nothing if any row is
+invalid or a conflict. Otherwise it passes the create and update rows to
+`QuoteServiceTrait::import_quotes`, the pipeline behind the quote CSV import,
+which saves them as `MANUAL` quotes. A manual quote takes precedence over the
+provider quote of its day, and provider syncs skip days that have one. Creating
+or editing a BUY or SELL of a manually priced asset still writes its trade price
+as that day's manual quote, replacing a saved statement price. The batch may
+overwrite only when a row lands on a day that has a quote (an approved update,
+or an equal provider price saved as manual), so in a batch of rows on empty days
+a quote stored after the check is never replaced. Skipped rows make a repeated
+call a no-op. `import_quotes` emits one `PriceHistoryChanged` per batch that
+saves a quote; the runtime planners debounce it and recalculate valuations from
+saved quotes, from each quote's day, without a market sync. The commit reports
+`recalculation: "queued"` so the agent can verify the result with
+`get_valuation_history` or `get_net_worth` a few seconds later. Single-quote
+writes (`add_quote`, `update_quote`, `delete_quote`, used by activities, manual
+snapshots and alternative assets) emit no event.
+
+A batch holds up to 100 rows, and the audit log keeps only the asset ids, dates
+and counts of the arguments, never prices. As for every tool, an argument that
+fails to parse is recorded in the error message, which may quote it. The in-app
+assistant has no confirmation card for quotes and does not get these tools.
+
+### MCP-only Activity Update Tools
+
+```text
+prepare_activity_updates           -- preview corrections to existing activities (batch)
+commit_activity_updates            -- apply confirmed corrections in place (batch)
+prepare_activity_deletions         -- preview deleting existing activities (batch)
+commit_activity_deletions          -- delete confirmed activities (batch)
+```
+
+These correct an activity already stored, such as adding the acquisition cost
+and fee to a transfer in recorded before they were known, without re-importing
+it. A row names an `activityId` and only the fields to change, from those the
+activity grid edits: date, account, type, subtype, asset, quantity, unit price,
+amount, currency, fee, tax, FX rate, notes, `approve` (the grid's Approve:
+clears the review flag and posts a draft), and `void`. `void: true` sets a
+posted activity's status to VOID and clears its review flag: it stays stored but
+no longer counts in holdings, cash or performance, and `void: false` posts it
+again. Only a posted activity is voided, so a restore always posts it. Omitted
+fields keep their stored value and `null` clears an optional one; unknown fields
+are refused.
+
+Both tools go through `ActivityServiceTrait`. The preview calls
+`preview_activity_update`, which runs `update_activity`'s validation and returns
+what it would write for the activity and a linked transfer's other leg, without
+its writes (asset creation, quote-mode changes, manual quotes, FX pair
+registration). Each row lists every field that would change with its current and
+proposed value, including values core derives, and the changes mirrored onto the
+other leg. The commit validates each row again and calls `update_activity`, so a
+bare date lands on that day in the configured timezone, the other leg of a
+linked transfer receives the mirrored date, notes, amount and approval, the
+portfolio recalculates from the earlier date, and the row is marked
+user-modified so broker syncs keep the edit. It reports each changed field as
+stored before and after. Updates never create activities and never use the
+import flow.
+
+The tools refuse, per row:
+
+- an asset named by symbol: the asset changes only by the id of a stored asset,
+  since resolving a symbol can look up or create assets through market-data
+  providers;
+- a change to the account, currency, type or asset of a linked transfer leg (or
+  the quantity of a security transfer leg, or the FX rate of a cross-currency
+  cash transfer leg, since core mirrors the amount with the pair's stored rate),
+  which would break the pair; the error says to unlink first with
+  `unlink_transfer_activities`;
+- a missing activity, an invalid value, or a row that changes nothing;
+- voiding a draft or a pending activity (which count toward nothing yet; delete
+  them instead), voiding an activity already void, restoring one that is not,
+  `void` together with `approve`, or voiding or restoring one leg of a linked
+  transfer whose legs differ in status (core mirrors the status onto the other
+  leg, so a draft leg would otherwise be posted without approval).
+
+The deletion tools take a list of activity ids. The preview reads each activity
+and, through `get_transfer_pair_for_activity`, the other leg of a linked
+transfer, and lists both as stored; the commit checks each id again and calls
+`delete_activities_checked`, which returns all deleted rows and recalculates the
+portfolio. The existing SQLite writer transaction refuses the whole row if its
+source-group cascade would remove an id outside that reviewed deletion set. This
+also covers a link created between tool validation and the write, without adding
+a lock or changing the native grid's deletion policy. The preview checks the
+same stored group and refuses groups other than a recognized linked pair, even
+when all group ids are named; those activities can be voided instead. Both legs
+of a linked transfer must be named: a leg whose other leg is missing from the
+call is refused, so a transfer linked after the preview cannot delete an
+activity the user never reviewed. The row naming the second leg reports the row
+that deletes it (`deletedWith`); a repeated id is refused. A row warns when an
+activity came from a broker sync, which may add a deleted activity back; voiding
+keeps it out of calculations and, because the update marks it user-modified,
+broker syncs keep it void. The commit reports each deleted activity as it was
+stored. The audit log keeps only the ids.
+
+Each row in a batch (up to 100) succeeds or fails on its own. The audit log
+keeps only each row's activity id and the names of the fields it sets, never
+their values. The in-app assistant does not get these tools; users edit in the
+activity grid.
+
+For transaction categories, show the proposals from
+`propose_transaction_categories` to the user first. After confirmation, pass the
+selected `activityId`, `taxonomyId`, and `categoryId` values to
+`commit_transaction_categories`:
+
+```json
+{
+  "assignments": [
+    {
+      "activityId": "activity-1",
+      "taxonomyId": "spending_categories",
+      "categoryId": "category-1"
+    }
+  ]
+}
+```
+
+The tool accepts 1–100 assignments and rejects blank IDs or duplicate
+activity/taxonomy pairs. It calls the same bulk spending service as the in-app
+Apply action. Activities must belong to eligible, opted-in spending accounts
+with spending enabled; each taxonomy must match the activity's cash-flow bucket,
+and each category must belong to that taxonomy. The entire batch succeeds or
+fails together. Split replacement requires explicit intent and the expected
+current split state.
+
+Each confirmed assignment replaces the current category for its
+activity/taxonomy pair. Ordinary assignments protect split transactions: if any
+submitted row has splits, the whole batch conflicts and nothing is written. An
+explicit single-category replacement includes `expectedSplits`, the full current
+split rows returned by `search_spending_transactions`. Inside the existing
+SQLite writer transaction, IDs, categories, amounts, notes, sort order and
+timestamps are compared before clearing splits and assigning the category.
+Changed state returns `draftStatus: "conflict"`, `assignmentCount: 0` and
+per-row `conflicts`. Native bulk Apply uses the same guard; the split editor has
+a separate confirmed replacement action. Financial activity fields stay
+unchanged. The result includes `draftStatus: "applied"`, `assignmentCount`, the
+stored `assignments` (source `manual`, weight `10000`), and `appliedAt`.
+Repeating the same payload keeps one assignment with its existing ID; timestamps
+may change. There is no draft-version check: a delayed commit or retry can
+overwrite an intervening single-category edit. New or changed splits are
+protected. Refresh the proposals and reconfirm when the intended assignment
+changes. Audit arguments retain only the assignment count.
+
 For categorization rules, `create_categorization_rule` returns an in-memory
 draft and does not save it. After showing that draft to the user and receiving
 confirmation, an MCP client passes the returned `rule` object to
 `commit_categorization_rule`. The commit calls the same rule service as the
 in-app confirmation widget; there is no server-side pending-draft queue. The
 commit saves the rule for future categorization; it does not rerun rules over
-existing transactions.
+existing transactions. `rerun_categorization_rules` does that once the user
+asks.
 
 Rules:
 
 - Draft and import-preview tools never mutate data; activity commits require
-  `activities:write` (which itself requires `activities:draft`), and
-  classification commits require `classification:write` (which itself requires
-  `classification:suggest`).
+  `activities:write` (which itself requires `activities:draft`), classification
+  commits require `classification:write` (which itself requires
+  `classification:suggest`), and quote imports require `market-data:write`
+  (which itself requires `holdings:read`).
 - CSV / activity-row content must not be persisted in raw audit logs: the
   write/import tools redact their `activities`/row arguments to a count
   (`"[N rows]"`) via per-tool audit sanitization.
@@ -512,40 +804,76 @@ accounts:read            get_accounts, get_cash_balances, get_portfolios
 holdings:read            get_holdings, get_asset_allocation,
                          get_valuation_history, get_income, get_net_worth
 performance:read         get_performance
-activities:read          search_activities, get_import_mapping
+activities:read          search_activities, get_import_mapping,
+                         find_transfer_matches
 financial-planning:read  get_goals, get_contribution_limits
 health:read              get_health_status
-classification:read      list_asset_taxonomies, get_asset_taxonomy_assignments,
-                         list_categorization_context
+classification:read      list_asset_taxonomies, get_asset_taxonomy_assignments
+spending:read            get_spending_context, search_spending_transactions,
+                         list_transaction_categories, list_categorization_context,
+                         list_categorization_rules, propose_transaction_categories,
+                         create_categorization_rule
 ```
 
 Write / draft / suggest scopes:
 
 ```text
 activities:draft         record_activity, record_activities,
-                         prepare_activity_import
+                         prepare_activity_import,
+                         prepare_activity_updates,
+                         prepare_activity_deletions (each also requires
+                         activities:read)
 activities:write         commit_activity_draft / commit_activity_drafts,
                          commit_activity_import  (each also requires
+                         activities:draft),
+                         link_transfer_activities / unlink_transfer_activities,
+                         commit_activity_updates,
+                         commit_activity_deletions
+                         (each also requires activities:read and
                          activities:draft)
-classification:suggest   propose_transaction_categories,
-                         create_categorization_rule,
-                         prepare_asset_classification
-classification:write     commit_asset_classification_draft,
-                         commit_categorization_rule
+classification:suggest   prepare_asset_classification
+classification:write     commit_asset_classification_draft
                          (also requires classification:suggest)
+spending:write           commit_categorization_rule, commit_transaction_categories,
+                         rerun_categorization_rules (also requires spending:read)
+budget:write             budget management (also requires spending:read;
+                         independent of spending:write)
+market-data:write        prepare_quote_import, commit_quote_import
+                         (each also requires holdings:read)
 ```
+
+Spending tools no longer accept `classification:*` or `activities:read` as a
+substitute for `spending:read`. Persisted tokens keep their exact grants; there
+is no automatic scope migration or compatibility alias. Investment and general
+activity tools retain their own scopes. Both Spending writes require
+`spending:read` and neither implies the other.
+
+`get_spending_context` reports disabled/no-account states, effective enrollment,
+exclusions, currency and timezone. `search_spending_transactions` intersects all
+filters with that enrollment and returns native-currency rows, full splits,
+canonical `effectiveAllocations`, a `hasHiddenAssignment` diagnostic for legacy
+dual-state rows, and explicit pagination. It requests no FX. Category discovery
+is independent of transaction history and the enabled toggle.
 
 Dependency rules: `activities:write` requires `activities:draft`, and
 `classification:write` requires `classification:suggest` (you cannot commit
-without the matching draft/suggest capability). Token creation validates this.
+without the matching draft/suggest capability). `market-data:write` requires
+`holdings:read`: both quote tools return stored quotes, so the scope reaches no
+tool without it. Token creation validates this, and no preset grants
+`market-data:write`.
 
 Presets (`AgentScopeSet` constructors):
 
-- `read-only` — all read scopes.
+- `read-only` — all read scopes, including `spending:read` for newly minted
+  tokens.
+- `spending-view` — `spending:read`.
+- `spending-organize` — `spending:read` + `spending:write`.
+- `spending-budgets` — `spending:read` + `budget:write`.
 - `read-activity-draft` — read + `activities:draft`.
 - `read-activity-write` — read + `activities:draft` + `activities:write`.
 - `read-activity-write-classification-suggest` — the above plus
-  `classification:suggest` and `classification:write`.
+  `classification:suggest` and `classification:write` for assets; no Spending
+  writes.
 
 Scope strings are parsed with `AgentScope::parse`, which rejects unknown scopes
 (including the removed `portfolio:read`). Token creation rejects unknown scopes;

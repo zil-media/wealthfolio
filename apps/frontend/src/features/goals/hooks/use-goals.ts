@@ -1,7 +1,8 @@
 import { createGoal, deleteGoal, getGoals, updateGoal } from "@/adapters";
 import { QueryKeys } from "@/lib/query-keys";
-import type { Goal, NewGoal } from "@/lib/types";
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import type { Goal, GoalUpdate, NewGoal } from "@/lib/types";
+import { type QueryClient, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useTranslation } from "react-i18next";
 import { toast } from "sonner";
 
 export function useGoals() {
@@ -31,7 +32,17 @@ export function useGoals() {
   };
 }
 
+/**
+ * Retirement counts what savings goals leave free, so a savings goal's shares,
+ * lifecycle or deletion also change the retirement goal's summary and overview.
+ */
+export function invalidateRetirementGoal(queryClient: QueryClient) {
+  queryClient.invalidateQueries({ queryKey: [QueryKeys.GOAL] });
+  queryClient.invalidateQueries({ queryKey: [QueryKeys.RETIREMENT_OVERVIEW] });
+}
+
 export function useGoalMutations() {
+  const { t } = useTranslation();
   const queryClient = useQueryClient();
 
   const invalidate = () => {
@@ -42,28 +53,29 @@ export function useGoalMutations() {
     mutationFn: (goal: NewGoal) => createGoal(goal),
     onSuccess: () => {
       invalidate();
-      toast.success("Goal created successfully.");
+      toast.success(t("goals:goal_saved"));
     },
-    onError: () => toast.error("Failed to create goal."),
+    onError: () => toast.error(t("goals:goal_error")),
   });
 
+  // Callers toast success: the save-up plan save also syncs the goal summary through it.
   const updateMutation = useMutation({
-    mutationFn: (goal: Goal) => updateGoal(goal),
-    onSuccess: (_, goal) => {
+    mutationFn: (goal: GoalUpdate) => updateGoal(goal),
+    onSuccess: () => {
       invalidate();
-      queryClient.invalidateQueries({ queryKey: QueryKeys.goal(goal.id) });
-      toast.success("Goal updated successfully.");
+      invalidateRetirementGoal(queryClient);
     },
-    onError: () => toast.error("Failed to update goal."),
+    onError: () => toast.error(t("goals:goal_error")),
   });
 
   const deleteMutation = useMutation({
     mutationFn: (goalId: string) => deleteGoal(goalId),
     onSuccess: () => {
       invalidate();
-      toast.success("Goal deleted successfully.");
+      invalidateRetirementGoal(queryClient);
+      toast.success(t("goals:goal_deleted"));
     },
-    onError: () => toast.error("Failed to delete goal."),
+    onError: () => toast.error(t("goals:goal_delete_error")),
   });
 
   return { createMutation, updateMutation, deleteMutation };

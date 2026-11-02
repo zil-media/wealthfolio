@@ -1,6 +1,7 @@
+import i18n from "i18next";
 import {
   getMcpStatus,
-  isDesktop,
+  isTauri,
   logger,
   setMcpAuditEnabled,
   setMcpAutoStart,
@@ -19,7 +20,7 @@ export function useMcpServer() {
   const statusQuery = useQuery({
     queryKey: [QueryKeys.AGENT_MCP_STATUS],
     queryFn: getMcpStatus,
-    enabled: isDesktop,
+    enabled: isTauri,
   });
 
   const applyStatus = (status: McpServerStatus) => {
@@ -32,8 +33,9 @@ export function useMcpServer() {
     onError: (error) => {
       logger.error(`Error updating Agent Access: ${String(error)}`);
       toast({
-        title: "Failed to update Agent Access",
-        description: error instanceof Error ? error.message : "An unknown error occurred",
+        title: i18n.t("common:notifications.failed_to_update_agent_access"),
+        description:
+          error instanceof Error ? error.message : i18n.t("common:globalEvents.unknownError"),
         variant: "destructive",
       });
     },
@@ -45,8 +47,9 @@ export function useMcpServer() {
     onError: (error) => {
       logger.error(`Error updating MCP auto-start: ${String(error)}`);
       toast({
-        title: "Failed to update auto-start",
-        description: error instanceof Error ? error.message : "An unknown error occurred",
+        title: i18n.t("common:notifications.failed_to_update_auto_start"),
+        description:
+          error instanceof Error ? error.message : i18n.t("common:globalEvents.unknownError"),
         variant: "destructive",
       });
     },
@@ -58,8 +61,9 @@ export function useMcpServer() {
     onError: (error) => {
       logger.error(`Error starting MCP server: ${String(error)}`);
       toast({
-        title: "Failed to start server",
-        description: error instanceof Error ? error.message : "An unknown error occurred",
+        title: i18n.t("common:notifications.failed_to_start_server"),
+        description:
+          error instanceof Error ? error.message : i18n.t("common:globalEvents.unknownError"),
         variant: "destructive",
       });
     },
@@ -71,8 +75,9 @@ export function useMcpServer() {
     onError: (error) => {
       logger.error(`Error stopping MCP server: ${String(error)}`);
       toast({
-        title: "Failed to stop server",
-        description: error instanceof Error ? error.message : "An unknown error occurred",
+        title: i18n.t("common:notifications.failed_to_stop_server"),
+        description:
+          error instanceof Error ? error.message : i18n.t("common:globalEvents.unknownError"),
         variant: "destructive",
       });
     },
@@ -84,8 +89,9 @@ export function useMcpServer() {
     onError: (error) => {
       logger.error(`Error updating MCP audit logging: ${String(error)}`);
       toast({
-        title: "Failed to update audit logging",
-        description: error instanceof Error ? error.message : "An unknown error occurred",
+        title: i18n.t("common:notifications.failed_to_update_audit_logging"),
+        description:
+          error instanceof Error ? error.message : i18n.t("common:globalEvents.unknownError"),
         variant: "destructive",
       });
     },

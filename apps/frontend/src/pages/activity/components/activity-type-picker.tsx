@@ -8,6 +8,7 @@ import {
   CarouselPrevious,
   type CarouselApi,
 } from "@wealthfolio/ui/components/ui/carousel";
+import { useDirection } from "@wealthfolio/ui/components/ui/direction";
 import { Icons, type IconName } from "@wealthfolio/ui/components/ui/icons";
 import { ActivityType as CanonicalActivityType } from "@/lib/constants";
 import { cn } from "@/lib/utils";
@@ -20,6 +21,7 @@ export type PrimaryActivityType =
   | typeof CanonicalActivityType.DIVIDEND
   | "TRANSFER";
 export type SecondaryActivityType =
+  | "CONVERSION"
   | typeof CanonicalActivityType.SPLIT
   | typeof CanonicalActivityType.FEE
   | typeof CanonicalActivityType.INTEREST
@@ -54,6 +56,7 @@ const PRIMARY_ACTIVITY_TYPES: ActivityTypeConfig<PrimaryActivityType>[] = [
 ];
 
 const SECONDARY_ACTIVITY_TYPES: ActivityTypeConfig<SecondaryActivityType>[] = [
+  { value: "CONVERSION", labelKey: "activity:picker.conversion", icon: "RefreshCw" },
   { value: CanonicalActivityType.SPLIT, labelKey: "activity:picker.split", icon: "Split" },
   { value: CanonicalActivityType.FEE, labelKey: "activity:type_fee", icon: "Receipt" },
   { value: CanonicalActivityType.INTEREST, labelKey: "activity:type_interest", icon: "Percent" },
@@ -120,7 +123,7 @@ function ActivityTypeButton({
         "flex flex-col items-center justify-center gap-1.5 rounded-lg border-2 transition-all",
         "hover:bg-muted/50 focus-visible:ring-ring focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-offset-1",
         "cursor-pointer",
-        compact ? "min-h-[72px] min-w-[80px] p-3" : "min-h-[80px] p-4",
+        compact ? "min-h-18 min-w-20 p-3" : "min-h-20 p-4",
         isSelected && "border-foreground bg-primary/5",
         !isSelected && "border-border",
       )}
@@ -193,9 +196,9 @@ function CarouselView({
           setApi={handleSetApi}
           className="w-full"
         >
-          <CarouselContent className="-ml-2">
+          <CarouselContent className="-ms-2">
             {types.map((type) => (
-              <CarouselItem key={type.value} className="basis-auto pl-2">
+              <CarouselItem key={type.value} className="basis-auto ps-2">
                 <ActivityTypeButton
                   type={type}
                   isSelected={value === type.value}
@@ -206,8 +209,8 @@ function CarouselView({
             ))}
           </CarouselContent>
 
-          {canScrollPrev && <CarouselPrevious className="left-0 h-7 w-7" />}
-          {canScrollNext && <CarouselNext className="right-0 h-7 w-7" />}
+          {canScrollPrev && <CarouselPrevious className="start-0 h-7 w-7" />}
+          {canScrollNext && <CarouselNext className="end-0 h-7 w-7" />}
         </Carousel>
       </div>
     </div>
@@ -225,19 +228,23 @@ function GridView({
 }) {
   const { t } = useTranslation();
   const buttonRefs = useRef<(HTMLButtonElement | null)[]>([]);
+  const direction = useDirection();
 
   const handleKeyDown = useCallback(
     (e: React.KeyboardEvent, index: number) => {
       const total = types.length;
       const cols = 5; // 5 columns in grid
+      // The grid mirrors in right-to-left, so "next" is the arrow pointing left.
+      const nextKey = direction === "rtl" ? "ArrowLeft" : "ArrowRight";
+      const previousKey = direction === "rtl" ? "ArrowRight" : "ArrowLeft";
       let newIndex: number | null = null;
 
       switch (e.key) {
-        case "ArrowRight":
+        case nextKey:
           e.preventDefault();
           newIndex = (index + 1) % total;
           break;
-        case "ArrowLeft":
+        case previousKey:
           e.preventDefault();
           newIndex = (index - 1 + total) % total;
           break;
@@ -263,7 +270,7 @@ function GridView({
         buttonRefs.current[newIndex]?.focus();
       }
     },
-    [types.length],
+    [direction, types.length],
   );
 
   return (
@@ -304,8 +311,12 @@ export function ActivityTypePicker({
     setViewMode((prev) => (prev === "carousel" ? "grid" : "carousel"));
   }, []);
 
+  // Reclassifying edits one stored row; a conversion is two rows.
   const availableTypes: ActivityTypeConfig<ActivityType>[] = includeReclassificationTypes
-    ? [...ALL_ACTIVITY_TYPES, ...RECLASSIFICATION_ACTIVITY_TYPES]
+    ? [
+        ...ALL_ACTIVITY_TYPES.filter((type) => type.value !== "CONVERSION"),
+        ...RECLASSIFICATION_ACTIVITY_TYPES,
+      ]
     : ALL_ACTIVITY_TYPES;
 
   // Filter types if allowedTypes is provided

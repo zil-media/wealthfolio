@@ -1,5 +1,5 @@
 import { fireEvent, render, screen } from "@/test/render";
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 import type { AssetLotView } from "@/lib/types";
 
@@ -41,7 +41,107 @@ const ctyLot: AssetLotView = {
   valuationRealizedPnl: null,
 };
 
+const usdLot: AssetLotView = {
+  ...ctyLot,
+  id: "usd-lot",
+  currency: "USD",
+  baseCurrency: "USD",
+  valuationCurrency: "USD",
+  quantity: 3,
+  originalQuantity: 3,
+  remainingQuantity: 3,
+  costBasis: 30.3,
+  costBasisBase: 30.3,
+  unitCost: 10.1,
+  valuationUnitCost: 10.1,
+  valuationCostBasis: 30.3,
+  fxRateToBase: 1,
+};
+
 describe("AssetLotsTable", () => {
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it.each([
+    { marketPrice: 10.1, costBasis: 30.3 },
+    { marketPrice: 0.1, costBasis: 0.3 },
+  ])("shows break-even lots as neutral zero at $marketPrice", ({ marketPrice, costBasis }) => {
+    render(
+      <AssetLotsTable
+        lots={[{ ...usdLot, valuationCostBasis: costBasis }]}
+        currency="USD"
+        marketPrice={marketPrice}
+      />,
+    );
+    fireEvent.click(screen.getByRole("button", { name: /expand all/i }));
+
+    // Overall total, account subtotal, desktop lot row and mobile lot row.
+    const gains = screen.getAllByText("0.00");
+    expect(gains).toHaveLength(4);
+    gains.forEach((gain) => expect(gain.parentElement).toHaveClass("text-foreground"));
+    expect(screen.getAllByText("0.00%")).toHaveLength(4);
+  });
+
+  it.each([
+    { currency: "USD", costBasis: 30.29, expected: "+0.01" },
+    { currency: "USD", costBasis: 30.31, expected: "-0.01" },
+    { currency: "JPY", costBasis: 29.3, expected: "+1" },
+    { currency: "JPY", costBasis: 31.3, expected: "-1" },
+    { currency: "KWD", costBasis: 30.296, expected: "+0.004" },
+    { currency: "KWD", costBasis: 30.304, expected: "-0.004" },
+  ])(
+    "shows $currency lot gains at normal precision ($expected)",
+    ({ currency, costBasis, expected }) => {
+      render(
+        <AssetLotsTable
+          lots={[{ ...usdLot, valuationCurrency: currency, valuationCostBasis: costBasis }]}
+          currency={currency}
+          marketPrice={10.1}
+        />,
+      );
+      fireEvent.click(screen.getByRole("button", { name: /expand all/i }));
+
+      const gains = screen.getAllByText(expected);
+      expect(gains).toHaveLength(4);
+      gains.forEach((gain) =>
+        expect(gain.parentElement).toHaveClass(
+          expected.startsWith("+") ? "text-gain" : "text-loss",
+        ),
+      );
+    },
+  );
+
+  it.each([
+    { costBasis: 100_000_000_000_000 - 0.02, expected: "+0.02" },
+    { costBasis: 100_000_000_000_000 + 0.02, expected: "-0.02" },
+  ])("keeps a cent-sized $expected gain on a large position", ({ costBasis, expected }) => {
+    render(
+      <AssetLotsTable
+        lots={[
+          {
+            ...usdLot,
+            quantity: 10_000_000_000_000,
+            originalQuantity: 10_000_000_000_000,
+            remainingQuantity: 10_000_000_000_000,
+            costBasis,
+            costBasisBase: costBasis,
+            valuationCostBasis: costBasis,
+          },
+        ]}
+        currency="USD"
+        marketPrice={10}
+      />,
+    );
+    fireEvent.click(screen.getByRole("button", { name: /expand all/i }));
+
+    const gains = screen.getAllByText(expected);
+    expect(gains).toHaveLength(4);
+    gains.forEach((gain) =>
+      expect(gain.parentElement).toHaveClass(expected.startsWith("+") ? "text-gain" : "text-loss"),
+    );
+  });
+
   it("uses valuation-normalized lot values for GBp lots", () => {
     render(<AssetLotsTable lots={[ctyLot]} currency="GBP" marketPrice={5.65} />);
 
@@ -104,5 +204,52 @@ describe("AssetLotsTable", () => {
     expect(screen.getAllByText("£283.95").length).toBeGreaterThan(0);
     expect(screen.getAllByText("+26.05").length).toBeGreaterThan(0);
     expect(screen.getAllByText("+9.17%").length).toBeGreaterThan(0);
+  });
+
+  it.each([
+    { isClosed: true, closeDate: "2024-06-10", expected: "held 5mo · closed Jun 10, 2024" },
+    { isClosed: false, closeDate: null, expected: "held 2y 9mo" },
+  ])(
+    "ends the holding period on the sale date ($expected)",
+    ({ isClosed, closeDate, expected }) => {
+      vi.useFakeTimers({ toFake: ["Date"] });
+      vi.setSystemTime(new Date(2026, 9, 24, 12));
+      render(
+        <AssetLotsTable
+          lots={[{ ...usdLot, acquisitionDate: "2024-01-10", isClosed, closeDate }]}
+          currency="USD"
+          marketPrice={10.1}
+        />,
+      );
+      fireEvent.click(screen.getByRole("button", { name: /expand all/i }));
+
+      // Desktop and mobile lot rows.
+      expect(screen.getAllByText(expected)).toHaveLength(2);
+    },
+  );
+
+  it("measures a sold lot by calendar dates west of UTC", () => {
+    const originalTimezone = process.env.TZ;
+    process.env.TZ = "America/Los_Angeles";
+
+    try {
+      vi.useFakeTimers({ toFake: ["Date"] });
+      vi.setSystemTime(new Date(2026, 9, 24, 12));
+      render(
+        <AssetLotsTable
+          lots={[
+            { ...usdLot, acquisitionDate: "2024-02-01", isClosed: true, closeDate: "2024-03-01" },
+          ]}
+          currency="USD"
+          marketPrice={10.1}
+        />,
+      );
+      fireEvent.click(screen.getByRole("button", { name: /expand all/i }));
+
+      expect(screen.getAllByText("held 1mo · closed Mar 1, 2024")).toHaveLength(2);
+    } finally {
+      if (originalTimezone === undefined) delete process.env.TZ;
+      else process.env.TZ = originalTimezone;
+    }
   });
 });

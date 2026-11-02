@@ -1,3 +1,4 @@
+import { getTaxonomyLabel } from "@/lib/taxonomy-labels";
 import type { ToolCallMessagePartProps } from "@assistant-ui/react";
 import { makeAssistantToolUI } from "@assistant-ui/react";
 import { Icons } from "@wealthfolio/ui/components/ui/icons";
@@ -10,6 +11,7 @@ import type {
   ListAssetTaxonomiesArgs,
   ListAssetTaxonomiesOutput,
 } from "../../types";
+import { Spinner } from "@wealthfolio/ui";
 
 type UnknownRecord = Record<string, unknown>;
 
@@ -145,7 +147,7 @@ function InlineToolError({ label }: { label: string }) {
 function InlineLoading({ label }: { label: string }) {
   return (
     <div className="text-muted-foreground flex items-center gap-2 px-1 text-xs">
-      <Icons.Spinner className="h-3 w-3 animate-spin" />
+      <Spinner className="h-3 w-3" />
       <span>{label}</span>
     </div>
   );
@@ -187,12 +189,12 @@ function ListAssetTaxonomiesContentImpl({
           {totalCategoryCount > returnedCategoryCount
             ? t("ai:assetTaxonomy.loadedCategoriesTotal", {
                 count: returnedCategoryCount,
-                taxonomy: focusedTaxonomy.name,
+                taxonomy: getTaxonomyLabel(t, focusedTaxonomy.taxonomyId, focusedTaxonomy.name),
                 total: totalCategoryCount,
               })
             : t("ai:assetTaxonomy.loadedCategories", {
                 count: returnedCategoryCount,
-                taxonomy: focusedTaxonomy.name,
+                taxonomy: getTaxonomyLabel(t, focusedTaxonomy.taxonomyId, focusedTaxonomy.name),
               })}
         </span>
       ) : (

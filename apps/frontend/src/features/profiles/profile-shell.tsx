@@ -1,6 +1,6 @@
 import { AnimatePresence, motion, useReducedMotion } from "motion/react";
 import { DATABASE_STATE_CHANGED } from "../../adapters/tauri/events";
-import { profileErrorMessage } from "./error-messages";
+import { profileErrorCode, profileErrorMessage } from "./error-messages";
 import { clearProfilePreferences } from "@/hooks/use-persistent-state";
 import { DeleteProfileDialog } from "./delete-profile-dialog";
 import { StartupScreen } from "@/components/startup-screen";
@@ -15,6 +15,7 @@ import { PasswordInput } from "@wealthfolio/ui/components/ui/password-input";
 import { useCallback, useEffect, useRef, useState, type ReactNode, type FormEvent } from "react";
 import {
   profileCommand,
+  profileFailureKind,
   profileChangesChannel,
   type ProfileState,
   type ProfileSummary,
@@ -27,11 +28,14 @@ import { ProfileContext } from "./profile-context";
 import {
   installProfileSession,
   profileScope,
+  hasProfileSession,
   revokeProfileSession,
   type ProfileSession,
 } from "./session";
+import { copyText } from "@wealthfolio/ui/lib/clipboard";
 
 const PROFILE_SELECTION_MS = 180;
+const PROFILE_ACTIVITY_INTERVAL_MS = 30_000;
 const MIN_PASSWORD_LENGTH = 4;
 const MAX_PASSWORD_LENGTH = 128;
 const PASSWORD_LENGTH_ERROR = "PROFILE_PASSWORD_LENGTH";
@@ -73,6 +77,7 @@ export function ProfileShell({ children }: { children: ReactNode }) {
   const [avatar, setAvatar] = useState(DEFAULT_PROFILE_AVATAR);
   const [mode, setMode] = useState<"choose" | "create" | "unlock" | "manage" | "recover">("choose");
   const [error, setError] = useState("");
+  const errorCode = profileErrorCode(error);
   const [deleteOpen, setDeleteOpen] = useState(false);
   const deletion = useRef<{ profileId: string; confirmation: string } | undefined>(undefined);
   const [busy, setBusy] = useState(false);
@@ -80,6 +85,9 @@ export function ProfileShell({ children }: { children: ReactNode }) {
   const [copiedRecovery, setCopiedRecovery] = useState<string>();
   const [covered, setCovered] = useState(false);
   const sessionScope = state?.session?.scopeId;
+  const profileProtected = state?.profiles.find(
+    (profile) => profile.id === state.session?.profileId,
+  )?.lockEnabled;
   const [authPending, setAuthPending] = useState(isNativeAuthPending);
   const lock = useCallback(
     async (preserveAuth = false, nextIntent: "lock" | "switch" = "lock") => {
@@ -142,6 +150,7 @@ export function ProfileShell({ children }: { children: ReactNode }) {
       try {
         const next = await profileCommand<ProfileState>("get_profile_state");
         if (cancelled || requestEpoch !== epoch.current || working.current) return;
+        setError("");
         const previous = currentProfile.current;
         if (previous && !next.profiles.some((profile) => profile.id === previous.id)) {
           intent.current = "switch";
@@ -177,7 +186,11 @@ export function ProfileShell({ children }: { children: ReactNode }) {
         } else {
           // Join native teardown before offering another activation. A replacement
           // recovery grant above must reload without being revoked again.
-          if (needsClose.current || phaseRef.current === "active") {
+          if (
+            needsClose.current ||
+            phaseRef.current === "active" ||
+            (isWeb && hasProfileSession())
+          ) {
             needsClose.current = false;
             setState(next);
             if (!isWeb) {
@@ -206,11 +219,25 @@ export function ProfileShell({ children }: { children: ReactNode }) {
             setSelected(next.profiles[0]);
             setMode("choose");
           }
+          // Startup tried to open the only profile; say why it didn't.
+          if (next.autoOpenError) setError(next.autoOpenError);
         }
       } catch (e) {
         if (!cancelled && requestEpoch === epoch.current) {
-          if (isWeb && phaseRef.current === "active") await lock();
-          else setError(String(e));
+          const failure = profileFailureKind(e);
+          // Background connection failures must not replace an open profile or
+          // the user's current selection and form edits on the locked screen.
+          if (
+            failure === "connection" &&
+            (phaseRef.current === "active" || phaseRef.current === "locked")
+          )
+            return;
+          if (failure === "session") revokeProfileSession();
+          setCovered(true);
+          setPhase("loading");
+          setSelected(currentProfile.current);
+          const message = String(e);
+          setError(isWeb && failure === "connection" ? "PROFILE_CONNECTION_FAILED" : message);
         }
       } finally {
         inFlight = false;
@@ -226,7 +253,9 @@ export function ProfileShell({ children }: { children: ReactNode }) {
     const visibleRefresh = () => {
       if (document.visibilityState !== "hidden") void refresh();
     };
-    const wake = () => void refresh();
+    const wake = () => {
+      if (navigator.onLine) void refresh();
+    };
     const profileChanged = (event: MessageEvent) => {
       if (event.data === "changed") void refresh();
     };
@@ -234,8 +263,8 @@ export function ProfileShell({ children }: { children: ReactNode }) {
     const webEvents = [
       [document, "visibilitychange", visibleRefresh],
       [window, "online", wake],
-      [window, "offline", wake],
       [window, "wealthfolio:event-stream-error", wake],
+      [window, "wealthfolio:event-stream-reconnected", wake],
     ] as const;
     if (isWeb)
       for (const [target, name, handler] of webEvents) target.addEventListener(name, handler);
@@ -295,13 +324,17 @@ export function ProfileShell({ children }: { children: ReactNode }) {
   }, [queries, lock, setPhase]);
 
   useEffect(() => {
-    if (!sessionScope || covered) return;
+    if (!sessionScope || covered || !profileProtected) return;
     let last = 0;
     const activity = (event: Event) => {
-      if (!event.isTrusted || Date.now() - last < 15000) return;
+      if (!event.isTrusted || Date.now() - last < PROFILE_ACTIVITY_INTERVAL_MS) return;
       last = Date.now();
-      void profileCommand("profile_activity", { scopeId: profileScope() }, true).catch(() =>
-        revokeProfileSession(),
+      const requestEpoch = epoch.current;
+      void profileCommand("profile_activity", { scopeId: profileScope() }, true).catch(
+        (error: unknown) => {
+          if (requestEpoch !== epoch.current || phaseRef.current !== "active") return;
+          if (profileFailureKind(error) === "session") revokeProfileSession();
+        },
       );
     };
     for (const event of ["pointerdown", "keydown", "touchstart", "wheel"])
@@ -310,7 +343,7 @@ export function ProfileShell({ children }: { children: ReactNode }) {
       for (const event of ["pointerdown", "keydown", "touchstart", "wheel"])
         window.removeEventListener(event, activity);
     };
-  }, [sessionScope, covered, lock]);
+  }, [sessionScope, covered, profileProtected]);
 
   useEffect(() => {
     if (
@@ -587,19 +620,26 @@ export function ProfileShell({ children }: { children: ReactNode }) {
             ? t("profiles.lockFailed", { defaultValue: "Couldn’t finish locking" })
             : phase === "closing"
               ? t("profiles.locking", { defaultValue: "Locking Wealthfolio…" })
-              : undefined
+              : errorCode === "PROFILE_CONNECTION_FAILED" || errorCode === "PROFILE_AUTH_REQUIRED"
+                ? t("profiles.connectionFailed")
+                : undefined
         }
       >
         {error && (
           <Button
             onClick={() => {
               setError("");
-              if (isWeb && error === "PROFILE_SESSION_INTERRUPTED") reloadApplication();
+              if (
+                isWeb &&
+                (errorCode === "PROFILE_SESSION_INTERRUPTED" ||
+                  errorCode === "PROFILE_AUTH_REQUIRED")
+              )
+                reloadApplication();
               else if (closeFailed) void lock(false, intent.current);
               else refreshRef.current?.();
             }}
           >
-            {t("retry")}
+            {errorCode === "PROFILE_AUTH_REQUIRED" ? t("profiles.signInAgain") : t("retry")}
           </Button>
         )}
       </StartupScreen>
@@ -655,7 +695,7 @@ export function ProfileShell({ children }: { children: ReactNode }) {
       <p
         id="profile-form-error"
         role="alert"
-        className="text-destructive break-words text-sm leading-relaxed"
+        className="text-destructive text-sm leading-relaxed break-words"
       >
         {profileErrorMessage(error, t)}
       </p>
@@ -665,7 +705,7 @@ export function ProfileShell({ children }: { children: ReactNode }) {
       className={
         mode === "recover"
           ? "flex flex-col gap-2 pt-2"
-          : "bg-background/95 fixed inset-x-0 bottom-0 z-20 flex justify-center gap-2 border-t px-6 pb-[calc(1rem+env(safe-area-inset-bottom,0px))] pt-3 backdrop-blur-md sm:static sm:justify-start sm:border-0 sm:bg-transparent sm:px-0 sm:pb-0 sm:pt-2 sm:backdrop-blur-none"
+          : "bg-background/95 fixed inset-x-0 bottom-0 z-20 flex justify-center gap-2 border-t px-6 pt-3 pb-[calc(1rem+var(--inset-bottom))] backdrop-blur-md sm:static sm:justify-start sm:border-0 sm:bg-transparent sm:px-0 sm:pt-2 sm:pb-0 sm:backdrop-blur-none"
       }
     >
       <Button disabled={busy} type="submit">
@@ -811,7 +851,7 @@ export function ProfileShell({ children }: { children: ReactNode }) {
       className={`bg-background text-foreground relative flex min-h-dvh items-center justify-center px-6 py-16 ${mode === "unlock" && busy ? "profile-centering" : ""} ${isProfilePicker ? "profile-lock-screen pt-24" : isProfileEditor ? "profile-lock-screen profile-settings-screen" : isRecoveryView ? "profile-lock-screen" : ""}`}
       aria-busy={busy}
     >
-      <div data-tauri-drag-region className="absolute inset-x-0 top-0 z-50 h-8" />
+      <div data-tauri-drag-region className="fixed inset-x-0 top-0 z-50 h-8" />
       {isProfilePicker && (
         <div
           aria-hidden="true"
@@ -827,7 +867,7 @@ export function ProfileShell({ children }: { children: ReactNode }) {
         </div>
       )}
       <div
-        className={`w-full space-y-6 ${isRecoveryView ? "!max-w-md rounded-3xl border border-white/40 bg-white/40 p-6 text-left shadow-xl shadow-black/5 backdrop-blur-xl sm:p-8 dark:border-white/10 dark:bg-white/5" : isProfileEditor ? "max-w-2xl text-left" : "max-w-xl text-center"}`}
+        className={`w-full space-y-6 ${isRecoveryView ? "!max-w-md rounded-3xl border border-white/40 bg-white/40 p-6 text-start shadow-xl shadow-black/5 backdrop-blur-xl sm:p-8 dark:border-white/10 dark:bg-white/5" : isProfileEditor ? "profile-settings-content max-w-2xl text-start" : "max-w-xl text-center"}`}
       >
         {isRecoveryView && selected && (
           <div className="flex items-center gap-3 !overflow-visible">
@@ -872,7 +912,7 @@ export function ProfileShell({ children }: { children: ReactNode }) {
             </p>
             <div className="space-y-2">
               <div className="flex items-start gap-3 rounded-2xl border border-black/5 bg-white/50 p-4 dark:border-white/10 dark:bg-black/15">
-                <code className="min-w-0 flex-1 select-all break-words font-mono text-base leading-7 tracking-wide">
+                <code className="min-w-0 flex-1 font-mono text-base leading-7 tracking-wide break-words select-all">
                   {recovery}
                 </code>
                 <Button
@@ -885,7 +925,7 @@ export function ProfileShell({ children }: { children: ReactNode }) {
                   }
                   onClick={async () => {
                     try {
-                      await navigator.clipboard.writeText(recovery);
+                      await copyText(recovery);
                       setCopiedRecovery(recovery);
                       setError("");
                     } catch {
@@ -962,7 +1002,7 @@ export function ProfileShell({ children }: { children: ReactNode }) {
                           className="size-20 rounded-full [&_.profile-abstract-sculpture]:scale-90"
                         />
                       </span>
-                      <span className="block w-full break-words text-sm font-medium">
+                      <span className="block w-full text-sm font-medium break-words">
                         {profile.name}
                       </span>
                     </motion.button>
@@ -1076,7 +1116,7 @@ export function ProfileShell({ children }: { children: ReactNode }) {
         ) : (
           <form
             onSubmit={submit}
-            className={`mx-auto space-y-5 text-left ${isProfileEditor ? "max-w-2xl" : "max-w-sm"}`}
+            className={`mx-auto space-y-5 text-start ${isProfileEditor ? "max-w-2xl" : "max-w-sm"}`}
           >
             {(mode === "create" || mode === "manage") && (
               <>
@@ -1087,7 +1127,7 @@ export function ProfileShell({ children }: { children: ReactNode }) {
                       className="size-24 rounded-full [&_.profile-abstract-sculpture]:scale-90"
                     />
                   </span>
-                  <div className="min-w-0 max-w-xs flex-1 space-y-2">
+                  <div className="max-w-xs min-w-0 flex-1 space-y-2">
                     <Label htmlFor="profile-name">{t("profiles.name")}</Label>
                     <Input
                       id="profile-name"

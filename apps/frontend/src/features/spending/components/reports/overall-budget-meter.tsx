@@ -46,12 +46,12 @@ export function OverallBudgetMeter({
   }, [pct]);
 
   if (isLoading) {
-    return <Skeleton className="h-[88px] w-full rounded-xl" />;
+    return <Skeleton className="h-22 w-full rounded-xl" />;
   }
 
   if (monthlyTarget <= 0) {
     return (
-      <div className="border-border bg-card shadow-xs rounded-xl border p-4 text-center md:p-5">
+      <div className="border-border bg-card rounded-xl border p-4 text-center shadow-xs md:p-5">
         <p className="text-muted-foreground text-sm">{t("spending:overallBudget.noTarget")}</p>
         <Link
           to="/settings/spending/setup"
@@ -77,7 +77,7 @@ export function OverallBudgetMeter({
         : "var(--success)";
 
   return (
-    <div className="border-border bg-card shadow-xs rounded-xl border p-4 md:p-5">
+    <div className="border-border bg-card rounded-xl border p-4 shadow-xs md:p-5">
       <div className="mb-3 flex items-baseline justify-between gap-3">
         <div>
           <h3 className="text-foreground text-sm font-semibold">
@@ -88,13 +88,13 @@ export function OverallBudgetMeter({
             {t("spending:overallBudget.perMonthTimes", { count: monthsInRange })}
           </p>
         </div>
-        <div className="text-right">
+        <div className="text-end">
           <div className="text-foreground text-xl font-semibold tabular-nums">
             {numberFormatting.formatPercent(pct, { digits: 0 })}
           </div>
           <div
             className={cn(
-              "text-[11px] font-medium tabular-nums",
+              "text-2xs font-medium tabular-nums",
               isOver ? "text-destructive" : "text-success",
             )}
           >
@@ -118,7 +118,7 @@ export function OverallBudgetMeter({
         />
         {overflowPct > 0 && (
           <div
-            className="absolute inset-y-0 right-0 rounded-r-full"
+            className="absolute inset-y-0 end-0 rounded-e-full"
             style={{
               width: `${overflowPct}%`,
               backgroundColor: "var(--destructive)",
@@ -130,7 +130,7 @@ export function OverallBudgetMeter({
         )}
       </div>
 
-      <div className="text-muted-foreground/70 mt-1.5 flex justify-between text-[11px] tabular-nums">
+      <div className="text-muted-foreground/70 text-2xs mt-1.5 flex justify-between tabular-nums">
         <span>
           <PrivacyAmount value={spent} currency={currency} /> {t("spending:overallBudget.spent")}
         </span>

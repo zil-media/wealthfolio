@@ -13,9 +13,11 @@
 
 use std::sync::Arc;
 
+use rust_decimal::prelude::FromPrimitive;
+use rust_decimal::Decimal;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
-use wealthfolio_core::activities::ActivityImport;
+use wealthfolio_core::activities::{ActivityImport, ImportActivitiesSummary};
 use wealthfolio_core::assets::{InstrumentType, QuoteMode};
 
 use crate::env::AgentEnvironment;
@@ -31,7 +33,7 @@ const MAX_IMPORT_ROWS: usize = 1000;
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ActivityImportRow {
-    /// Activity date (the importer accepts ISO and common formats).
+    /// Activity date: `YYYY-MM-DD` or an RFC 3339 timestamp.
     pub date: String,
     pub activity_type: String,
     pub currency: String,
@@ -64,6 +66,13 @@ pub struct ActivityImportRow {
     pub amount: Option<f64>,
     #[serde(default)]
     pub fee: Option<f64>,
+    #[serde(default)]
+    pub tax: Option<f64>,
+    /// Rate converting the activity currency into the account currency.
+    #[serde(default)]
+    pub fx_rate: Option<f64>,
+    #[serde(default)]
+    pub subtype: Option<String>,
     #[serde(default)]
     pub account_id: Option<String>,
     #[serde(default)]
@@ -160,6 +169,11 @@ fn flatten_messages(map: &Option<std::collections::HashMap<String, Vec<String>>>
         .unwrap_or_default()
 }
 
+/// A row validation rejected; duplicates are warnings, not rejections.
+fn is_rejected(row: &ActivityImport) -> bool {
+    !row.is_valid || row.errors.as_ref().is_some_and(|e| !e.is_empty())
+}
+
 fn is_duplicate(row: &ActivityImport) -> bool {
     row.duplicate_of_id.is_some() || row.duplicate_of_line_number.is_some()
 }
@@ -245,6 +259,16 @@ fn to_import_rows(rows: &[ActivityImportRow]) -> Result<Vec<ActivityImport>, Age
     rows.iter()
         .enumerate()
         .map(|(index, row)| {
+            // Core stores the rate as given and checks it only for transfer pairs.
+            // A rate Decimal cannot hold would fail deserialization with its value.
+            if row.fx_rate.is_some_and(|rate| {
+                Decimal::from_f64(rate).is_none_or(|rate| rate <= Decimal::ZERO)
+            }) {
+                return Err(AgentToolError::InvalidInput(format!(
+                    "Row {}: fxRate must be a positive number.",
+                    index + 1
+                )));
+            }
             // Serialize the input allowlist so identity fields survive both tools.
             // Validation status always belongs to the backend, never to the caller.
             let mut obj = serde_json::to_value(row)?;
@@ -430,11 +454,23 @@ impl AgentTool for PrepareActivityImport {
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct CommitActivityImportOutput {
+    /// Confirmed saved IDs (or existing duplicate IDs), for metadata-only follow-up.
+    pub financial_rows: Vec<ImportFinancialRowStatus>,
     pub import_run_id: String,
-    pub summary: wealthfolio_core::activities::ImportActivitiesSummary,
+    pub summary: ImportActivitiesSummary,
     /// Rows that failed validation/import (with their errors).
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub failed: Vec<ImportRowResult>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ImportFinancialRowStatus {
+    pub index: usize,
+    pub line_number: Option<i32>,
+    pub financial_status: &'static str,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub activity_id: Option<String>,
 }
 
 /// Import mapped rows through the real pipeline (dedup-safe, one import run).
@@ -447,7 +483,7 @@ impl AgentTool for CommitActivityImport {
     }
 
     fn description(&self) -> &'static str {
-        "Import a batch of mapped activity rows through Wealthfolio's import pipeline as one import run. Include the reviewed identity fields returned by prepare_activity_import to preserve the selected assets; bare symbols are resolved again. Duplicates are skipped unless a row sets forceImport=true. This MUTATES data — only call after previewing with prepare_activity_import and confirming with the user. Returns the import run id, a summary (imported/skipped/duplicates/assets created), and any failed rows."
+        "Import a batch of mapped activity rows through Wealthfolio's import pipeline as one import run. Include the reviewed identity fields returned by prepare_activity_import to preserve the selected assets; bare symbols are resolved again. Duplicates are skipped unless a row sets forceImport=true. Nothing is imported if any row fails validation; fix or remove the failed rows and retry. A row that passes validation but fails while being written is skipped and listed in failed, with success false; the other rows are still imported. This MUTATES data — only call after previewing with prepare_activity_import and confirming with the user. Returns the import run id, financialRows with saved/existing IDs and per-row financial status, a summary, and failed rows. For Spending category/event columns, use prepare_spending_import_metadata against those saved IDs, review, then commit only metadata. A metadata failure must never trigger reimporting successful financial rows."
     }
 
     fn input_schema(&self) -> serde_json::Value {
@@ -495,6 +531,35 @@ impl AgentTool for CommitActivityImport {
             .await
             .map_err(|e| AgentToolError::ExecutionFailed(e.to_string()))?;
 
+        // Import nothing when validation rejects a row, as the importer does for
+        // the errors it checks itself. Its checks are lighter, so a row the
+        // preview rejected (an unknown ticker that carries a quoteCcy) was
+        // otherwise imported and reported as both imported and failed.
+        let failed: Vec<ImportRowResult> = checked
+            .iter()
+            .filter(|row| is_rejected(row))
+            .map(to_result)
+            .collect();
+        if !failed.is_empty() {
+            let output = CommitActivityImportOutput {
+                financial_rows: Vec::new(),
+                import_run_id: String::new(),
+                summary: ImportActivitiesSummary {
+                    total: checked.len() as u32,
+                    imported: 0,
+                    skipped: checked.len() as u32,
+                    duplicates: 0,
+                    assets_created: 0,
+                    success: false,
+                    error_message: Some("Validation errors found in activities.".to_string()),
+                },
+                failed,
+            };
+            return Ok(AgentToolResult {
+                content: serde_json::to_value(output)?,
+            });
+        }
+
         let result = env
             .activity_service()
             .import_activities(checked)
@@ -509,13 +574,56 @@ impl AgentTool for CommitActivityImport {
         let failed: Vec<ImportRowResult> = result
             .activities
             .iter()
-            .filter(|r| !r.is_valid || r.errors.as_ref().is_some_and(|e| !e.is_empty()))
+            .filter(|row| is_rejected(row))
             .map(to_result)
             .collect();
 
+        // A row the check passed can still fail while being written (a split
+        // with a zero ratio fails its account's batch). The importer skips it
+        // and still reports success; the caller must not read that as success.
+        let mut summary = result.summary;
+        if !failed.is_empty() && summary.success {
+            summary.success = false;
+            summary.error_message.get_or_insert_with(|| {
+                "Some activities failed while being written; see failed.".to_string()
+            });
+        }
+        let financial_rows = result
+            .activities
+            .iter()
+            .enumerate()
+            .map(|(index, row)| {
+                let duplicate = is_duplicate(row) && !row.force_import;
+                let status = if is_rejected(row) {
+                    "failed"
+                } else if duplicate {
+                    "duplicate_skipped"
+                } else {
+                    "imported"
+                };
+                let id = if status == "imported" {
+                    result
+                        .persisted_rows
+                        .iter()
+                        .find(|saved| saved.index == index)
+                        .map(|saved| saved.activity_id.clone())
+                } else if duplicate {
+                    row.duplicate_of_id.clone()
+                } else {
+                    None
+                };
+                ImportFinancialRowStatus {
+                    index,
+                    line_number: row.line_number,
+                    financial_status: status,
+                    activity_id: id,
+                }
+            })
+            .collect();
         let output = CommitActivityImportOutput {
+            financial_rows,
             import_run_id: result.import_run_id,
-            summary: result.summary,
+            summary,
             failed,
         };
         Ok(AgentToolResult {
@@ -529,7 +637,7 @@ fn activity_row_schema() -> serde_json::Value {
     json!({
         "type": "object",
         "properties": {
-            "date": { "type": "string", "description": "Activity date (ISO or common format)." },
+            "date": { "type": "string", "description": "YYYY-MM-DD, or an RFC 3339 timestamp such as 2026-04-01T09:30:00-04:00. A bare date is stored on that day in the configured timezone." },
             "activityType": { "type": "string", "description": "e.g. BUY, SELL, DEPOSIT, DIVIDEND." },
             "currency": { "type": "string" },
             "symbol": { "type": "string", "description": "Ticker or typed symbol such as crypto:BNB-EUR, bond:<ISIN>, option:<OCC>. Omit when selecting assetId or for pure cash activities." },
@@ -546,6 +654,9 @@ fn activity_row_schema() -> serde_json::Value {
             "unitPrice": { "type": "number" },
             "amount": { "type": "number" },
             "fee": { "type": "number" },
+            "tax": { "type": "number", "description": "Tax withheld, such as dividend withholding tax." },
+            "fxRate": { "type": "number", "description": "Rate from the statement converting the activity currency into the account currency. Omit to use the market rate." },
+            "subtype": { "type": "string", "description": "Variation of the activity type, e.g. DRIP for DIVIDEND or STAKING_REWARD for INTEREST." },
             "accountId": { "type": "string" },
             "comment": { "type": "string" },
             "lineNumber": { "type": "integer", "description": "1-based source row, for duplicate messages." },
@@ -578,6 +689,9 @@ mod tests {
             unit_price: Some(150.25),
             amount: None,
             fee: None,
+            tax: None,
+            fx_rate: None,
+            subtype: None,
             account_id: Some("acct-1".to_string()),
             comment: None,
             line_number: None,
@@ -596,6 +710,42 @@ mod tests {
         assert_eq!(r.line_number, Some(1)); // defaulted from index
         assert!(r.force_import); // "import anyway" preserved
         assert!(!r.is_draft);
+    }
+
+    #[test]
+    fn maps_tax_subtype_and_fx_rate() {
+        let mut input = row(false);
+        input.activity_type = "DIVIDEND".to_string();
+        input.subtype = Some("DRIP".to_string());
+        input.tax = Some(1.5);
+        input.fx_rate = Some(1.35);
+
+        let mapped = to_import_rows(&[input]).unwrap();
+
+        assert_eq!(mapped[0].subtype.as_deref(), Some("DRIP"));
+        assert_eq!(mapped[0].tax, Some(Decimal::new(15, 1)));
+        assert_eq!(mapped[0].fx_rate, Some(Decimal::new(135, 2)));
+
+        for rate in [0.0, -1.2, 9.87e30, 1e-30] {
+            let mut input = row(false);
+            input.fx_rate = Some(rate);
+            let error = to_import_rows(&[input]).unwrap_err();
+            assert!(matches!(error, AgentToolError::InvalidInput(_)));
+            // The error reaches the audit log, which keeps no row values.
+            assert!(!error.to_string().contains("1.2"), "{error}");
+            assert!(!error.to_string().contains("9.87"), "{error}");
+        }
+    }
+
+    #[test]
+    fn preserves_unknown_suffix_for_core_import_resolution() {
+        let mut input = row(false);
+        input.symbol = Some("ABC.ZZ".to_string());
+
+        let mapped = to_import_rows(&[input]).unwrap();
+
+        assert_eq!(mapped[0].symbol, "ABC.ZZ");
+        assert_eq!(mapped[0].exchange_mic, None);
     }
 
     #[test]

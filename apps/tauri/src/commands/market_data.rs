@@ -279,7 +279,6 @@ pub async fn import_quotes_csv(
     quotes: Vec<QuoteImport>,
     overwrite_existing: bool,
     state: ProfileAccess,
-    handle: AppHandle,
 ) -> Result<Vec<QuoteImport>, String> {
     let context = state.context()?;
     debug!(
@@ -287,27 +286,15 @@ pub async fn import_quotes_csv(
         quotes.len(),
         overwrite_existing
     );
-    let result = context
+    // The quote service emits PriceHistoryChanged when the batch saves quotes.
+    context
         .quote_service()
         .import_quotes(quotes, overwrite_existing)
         .await
         .map_err(|e| {
             error!("TAURI COMMAND: import_quotes_csv failed: {}", e);
             format!("Failed to import CSV quotes: {}", e)
-        })?;
-
-    // Quote import - no market sync needed, just recalculate
-    let handle = handle.clone();
-    tauri::async_runtime::spawn(async move {
-        debug!("Triggering portfolio recalculation after quote import");
-        let payload = PortfolioRequestPayload::builder()
-            .account_ids(None)
-            .market_sync_mode(MarketSyncMode::None)
-            .build();
-        emit_portfolio_trigger_recalculate(&handle, payload, &context);
-    });
-
-    Ok(result)
+        })
 }
 
 #[tauri::command]
@@ -317,6 +304,7 @@ pub async fn resolve_symbol_quote(
     instrument_type: Option<String>,
     quote_ccy: Option<String>,
     provider_id: Option<String>,
+    provider_symbol: Option<String>,
     state: ProfileAccess,
 ) -> Result<wealthfolio_core::quotes::ResolvedQuote, String> {
     let context = state.context()?;
@@ -331,6 +319,7 @@ pub async fn resolve_symbol_quote(
             inst_type.as_ref(),
             quote_ccy.as_deref(),
             provider_id.as_deref(),
+            provider_symbol.as_deref(),
         )
         .await
         .map_err(|e| format!("Failed to resolve symbol quote: {}", e))

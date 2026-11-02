@@ -10,11 +10,14 @@ import {
 } from "@wealthfolio/ui/components/ui/alert-dialog";
 import { Button } from "@wealthfolio/ui/components/ui/button";
 import { useTranslation } from "react-i18next";
+import { Spinner } from "@wealthfolio/ui";
 
 export interface ActivityDeleteModalProps {
   isOpen?: boolean;
   isDeleting?: boolean;
   linkedTransfer?: boolean;
+  /** A conversion row: its other row is deleted with it. */
+  conversion?: boolean;
   onConfirm: () => void;
   onCancel?: () => void;
 }
@@ -23,6 +26,7 @@ export function ActivityDeleteModal({
   isOpen,
   isDeleting,
   linkedTransfer,
+  conversion,
   onConfirm,
   onCancel,
 }: ActivityDeleteModalProps) {
@@ -31,16 +35,18 @@ export function ActivityDeleteModal({
     <AlertDialog open={isOpen} onOpenChange={onCancel}>
       <AlertDialogContent className="max-sm:gap-5 max-sm:p-5">
         <AlertDialogHeader className="max-sm:items-center max-sm:space-y-3 max-sm:text-center">
-          <div className="bg-destructive/10 text-destructive flex size-12 items-center justify-center rounded-full sm:hidden">
+          <div className="text-destructive-subtle-foreground flex size-12 items-center justify-center rounded-full bg-current/15 sm:hidden">
             <Icons.Trash className="size-5" />
           </div>
           <AlertDialogTitle className="leading-tight max-sm:text-xl">
             {t("activity:delete_modal.title")}
           </AlertDialogTitle>
-          <AlertDialogDescription className="max-sm:text-[15px]">
-            {linkedTransfer
-              ? t("activity:delete_modal.linked_transfer_desc")
-              : t("activity:delete_modal.description")}
+          <AlertDialogDescription className="max-sm:text-base">
+            {conversion
+              ? t("activity:delete_modal.linked_conversion_desc")
+              : linkedTransfer
+                ? t("activity:delete_modal.linked_transfer_desc")
+                : t("activity:delete_modal.description")}
           </AlertDialogDescription>
         </AlertDialogHeader>
         <AlertDialogFooter>
@@ -52,9 +58,9 @@ export function ActivityDeleteModal({
             className="max-sm:h-12"
           >
             {isDeleting ? (
-              <Icons.Spinner className="mr-2 h-4 w-4 animate-spin" />
+              <Spinner className="me-2 h-4 w-4" />
             ) : (
-              <Icons.Trash className="mr-2 h-4 w-4" />
+              <Icons.Trash className="me-2 h-4 w-4" />
             )}
             <span>{t("common:delete")}</span>
           </Button>

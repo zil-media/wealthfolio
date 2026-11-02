@@ -1,18 +1,30 @@
 {
   "carousel": {
     "previous": "Diapositive précédente",
-    "next": "Diapositive suivante"
+    "next": "Diapositive suivante",
+    "role": "carrousel",
+    "slide": "diapositive"
   },
   "currency": {
     "selectTitle": "Sélectionner une devise",
-    "selectDescription": "Choisissez la devise de votre activité",
+    "selectDescription": "Choisissez une devise",
+    "placeholder": "Sélectionner une devise",
+    "popular": "Populaires",
     "more": "Plus",
     "search": "Rechercher une devise...",
     "searchAll": "Rechercher toutes les devises...",
     "searchPrompt": "Recherchez n'importe quelle devise ou sélectionnez-en une parmi les options populaires ci-dessus.",
     "useCustom": "Utiliser « {{value}} » comme devise personnalisée",
     "noneFound": "Aucune devise trouvée pour « {{query}} ».",
-    "noneFoundShort": "Aucune devise trouvée."
+    "noneFoundShort": "Aucune devise trouvée.",
+    "units": {
+      "GBp": "Pence britanniques",
+      "GBX": "Pence britanniques",
+      "ILA": "Agorot israéliens",
+      "USX": "Cents américains",
+      "ZAc": "Cents sud-africains",
+      "KWF": "Fils koweïtiens"
+    }
   },
   "dataGrid": {
     "label": "Grille de données",
@@ -73,7 +85,13 @@
     "clearSymbol": "Effacer le symbole",
     "currency": "Devise",
     "searchCurrency": "Rechercher une devise...",
-    "noCurrencyFound": "Aucune devise trouvée."
+    "noCurrencyFound": "Aucune devise trouvée.",
+    "copyFailed": "Échec de la copie dans le presse-papiers",
+    "cutFailed": "Échec de la coupe dans le presse-papiers",
+    "pasteFailed": "Échec du collage. Veuillez réessayer.",
+    "cellsSkipped_one": "{{count}} cellule ignorée lors du collage en raison de données invalides",
+    "cellsSkipped_other": "{{count}} cellules ignorées lors du collage en raison de données invalides",
+    "cellsSkipped_many": "{{count}} cellules ignorées lors du collage en raison de données invalides"
   },
   "dataTable": {
     "noResults": "Aucun résultat",
@@ -145,6 +163,7 @@
     "title": "Une erreur est survenue",
     "description": "Une erreur inattendue s'est produite. Vos données sont en sécurité — essayez d'actualiser pour reprendre.",
     "refresh": "Actualiser la page",
+    "goHome": "Aller au tableau de bord",
     "hideDetails": "Masquer les détails de l'erreur",
     "showDetails": "Afficher les détails de l'erreur",
     "errorDetails": "Détails de l'erreur"
@@ -190,5 +209,31 @@
   },
   "sheet": {
     "close": "Fermer"
+  },
+  "page": {
+    "back": "Retour"
+  },
+  "remove": "Retirer {{label}}",
+  "actionConfirm": {
+    "pending": "En cours…"
+  },
+  "select": {
+    "placeholder": "Choisir une option"
+  },
+  "progress": {
+    "title": "Traitement",
+    "message": "Traitement en cours…",
+    "description": "Veuillez patienter pendant le traitement de votre demande. Cela peut prendre quelques instants."
+  },
+  "navigation": {
+    "view": "Vue {{number}}",
+    "goTo": "Aller à {{name}}"
+  },
+  "quoteImport": {
+    "noFile": "Aucun fichier sélectionné",
+    "validateFailed": "Échec de la validation du CSV",
+    "validateFirst": "Aucun cours à importer. Veuillez d’abord valider le fichier.",
+    "noValid": "Aucun cours valide à importer. Tous les cours comportent des erreurs de validation.",
+    "importFailed": "Échec de l’importation des cours"
   }
 }

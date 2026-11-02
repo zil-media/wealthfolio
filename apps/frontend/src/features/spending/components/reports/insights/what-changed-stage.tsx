@@ -35,10 +35,11 @@ import type {
 } from "../../../types/report";
 import { CategoryIcon } from "../../category-chips";
 import { formatPercentValue } from "./format";
+import { badgeVariants } from "@wealthfolio/ui";
+import { Card } from "@wealthfolio/ui/components/ui/card";
 
-const CARD_CLASS = "border-border/60 bg-card/40 rounded-2xl border p-5 backdrop-blur-xl";
-const LABEL_CLASS =
-  "text-muted-foreground/70 text-[10px] font-semibold uppercase tracking-[0.12em]";
+const CARD_CLASS = "p-5";
+const LABEL_CLASS = "text-muted-foreground/70 text-2xs font-semibold uppercase tracking-[0.12em]";
 
 const SPARK_MARGIN = { top: 2, right: 0, left: 0, bottom: 0 };
 
@@ -180,16 +181,16 @@ const HeadlineCard: FC<HeadlineCardProps> = ({ headline, currency, isLoading }) 
   const { isBalanceHidden } = useBalancePrivacy();
   if (isLoading) {
     return (
-      <div className={CARD_CLASS}>
+      <Card className={CARD_CLASS}>
         <Skeleton className="h-3 w-32" />
         <Skeleton className="mt-3 h-16 w-full" />
         <Skeleton className="mt-4 h-4 w-2/3" />
-      </div>
+      </Card>
     );
   }
 
   return (
-    <div className={CARD_CLASS}>
+    <Card className={CARD_CLASS}>
       {headline.metaLabel && <div className={LABEL_CLASS}>{headline.metaLabel}</div>}
       <p
         className={cn(
@@ -206,7 +207,7 @@ const HeadlineCard: FC<HeadlineCardProps> = ({ headline, currency, isLoading }) 
           isBalanceHidden={isBalanceHidden}
         />
       )}
-    </div>
+    </Card>
   );
 };
 
@@ -643,7 +644,7 @@ const SparklineRow = memo(function SparklineRow({
     showPill && row.descriptor ? describePill(row.descriptor, t, numberFormatting) : null;
   const clickable = !!onCategoryClick;
   return (
-    <div
+    <Card
       role={clickable ? "button" : undefined}
       tabIndex={clickable ? 0 : undefined}
       onClick={clickable ? () => onCategoryClick?.(row.id) : undefined}
@@ -658,8 +659,8 @@ const SparklineRow = memo(function SparklineRow({
           : undefined
       }
       className={cn(
-        "border-border/60 bg-card/50 flex flex-col gap-1.5 rounded-xl border px-4 pb-4 pt-3",
-        clickable && "hover:border-border/90 hover:bg-card/70 cursor-pointer transition-colors",
+        "flex flex-col gap-1.5 px-4 pb-4 pt-3",
+        clickable && "hover:bg-muted/40 cursor-pointer transition-colors",
       )}
       style={{ backgroundImage: `linear-gradient(to bottom, ${tintBg}, transparent 70%)` }}
     >
@@ -676,9 +677,15 @@ const SparklineRow = memo(function SparklineRow({
         {pill && (
           <span
             className={cn(
-              "rounded-full px-2 py-0.5 text-[11px] font-medium tabular-nums",
-              pill.tone === "up" && "bg-destructive/10 text-destructive",
-              pill.tone === "down" && "bg-success/15 text-success",
+              badgeVariants({
+                variant:
+                  pill.tone === "up"
+                    ? "destructive-subtle"
+                    : pill.tone === "down"
+                      ? "success-subtle"
+                      : "secondary",
+              }),
+              "text-2xs tabular-nums",
               pill.tone === "neutral" && "text-muted-foreground/80 bg-muted/40",
             )}
           >
@@ -709,7 +716,7 @@ const SparklineRow = memo(function SparklineRow({
       <div className="text-muted-foreground/80 text-xs tabular-nums">
         {isBalanceHidden ? "••••" : formatting.formatCompactAmount(row.total, currency)}
       </div>
-    </div>
+    </Card>
   );
 });
 
@@ -736,21 +743,19 @@ function ComparisonTable({
   const hidePct = periodState.kind === "no_prior_period";
 
   return (
-    <div className="border-border/60 bg-card/40 overflow-x-auto rounded-2xl border backdrop-blur-xl">
+    <Card className="overflow-x-auto">
       <table className="w-full text-sm">
         <thead>
-          <tr className="border-border/40 text-muted-foreground/70 border-b text-[10px] font-semibold uppercase tracking-[0.12em]">
-            <th className="px-3 py-3 text-left md:px-4">{t("spending:filters.category")}</th>
-            <th className="px-2 py-3 text-right md:px-3">{labels.current}</th>
-            <th className="px-2 py-3 text-right md:px-3">{labels.prior}</th>
-            <th className="px-2 py-3 text-right md:px-3">
-              {t("spending:whatChanged.deltaDollar")}
-            </th>
-            <th className="hidden px-3 py-3 text-right md:table-cell">
+          <tr className="border-border/40 text-muted-foreground/70 text-2xs border-b font-semibold tracking-[0.12em] uppercase">
+            <th className="px-3 py-3 text-start md:px-4">{t("spending:filters.category")}</th>
+            <th className="px-2 py-3 text-end md:px-3">{labels.current}</th>
+            <th className="px-2 py-3 text-end md:px-3">{labels.prior}</th>
+            <th className="px-2 py-3 text-end md:px-3">{t("spending:whatChanged.deltaDollar")}</th>
+            <th className="hidden px-3 py-3 text-end md:table-cell">
               {t("spending:whatChanged.impact")}
             </th>
             {!hidePct && (
-              <th className="hidden px-4 py-3 text-right md:table-cell">
+              <th className="hidden px-4 py-3 text-end md:table-cell">
                 {t("spending:whatChanged.deltaPct")}
               </th>
             )}
@@ -768,7 +773,7 @@ function ComparisonTable({
           ))}
         </tbody>
       </table>
-    </div>
+    </Card>
   );
 }
 
@@ -805,14 +810,14 @@ const ComparisonRow = memo(function ComparisonRow({
           <span className="text-foreground text-xs md:text-sm">{row.name}</span>
         </div>
       </td>
-      <td className="text-foreground/90 px-2 py-2.5 text-right text-[11px] tabular-nums md:px-3 md:text-xs">
+      <td className="text-foreground/90 text-2xs px-2 py-2.5 text-end tabular-nums md:px-3 md:text-xs">
         {row.current === 0 ? (
           <span className="text-muted-foreground/60">—</span>
         ) : (
           <PrivacyAmount value={row.current} currency={currency} />
         )}
       </td>
-      <td className="text-muted-foreground/80 px-2 py-2.5 text-right text-[11px] tabular-nums md:px-3 md:text-xs">
+      <td className="text-muted-foreground/80 text-2xs px-2 py-2.5 text-end tabular-nums md:px-3 md:text-xs">
         {row.prior === 0 ? (
           <span className="text-muted-foreground/60">—</span>
         ) : (
@@ -821,7 +826,7 @@ const ComparisonRow = memo(function ComparisonRow({
       </td>
       <td
         className={cn(
-          "px-2 py-2.5 text-right text-[11px] font-medium tabular-nums md:px-3 md:text-xs",
+          "text-2xs px-2 py-2.5 text-end font-medium tabular-nums md:px-3 md:text-xs",
           row.delta === 0 ? "text-muted-foreground/70" : isUp ? "text-destructive" : "text-success",
         )}
       >
@@ -834,7 +839,7 @@ const ComparisonRow = memo(function ComparisonRow({
           </>
         )}
       </td>
-      <td className="text-muted-foreground/90 hidden px-3 py-2.5 text-right text-xs tabular-nums md:table-cell">
+      <td className="text-muted-foreground/90 hidden px-3 py-2.5 text-end text-xs tabular-nums md:table-cell">
         {impactPct == null || impactPct === 0
           ? "—"
           : formatPercentValue(impactPct, formatting, { digits: 0 })}
@@ -842,7 +847,7 @@ const ComparisonRow = memo(function ComparisonRow({
       {!hidePct && (
         <td
           className={cn(
-            "hidden px-4 py-2.5 text-right text-xs font-medium tabular-nums md:table-cell",
+            "hidden px-4 py-2.5 text-end text-xs font-medium tabular-nums md:table-cell",
             !row.showPct || row.pct == null
               ? "text-muted-foreground/70"
               : row.pct >= 0

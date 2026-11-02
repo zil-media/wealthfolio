@@ -1,4 +1,6 @@
 import type { ToolCallMessagePartProps } from "@assistant-ui/react";
+import { Alert, AlertDescription, AlertTitle } from "@wealthfolio/ui/components/ui/alert";
+import { Icons } from "@wealthfolio/ui/components/ui/icons";
 import { makeAssistantToolUI } from "@assistant-ui/react";
 import { Badge, Card, CardContent, CardHeader, CardTitle, Skeleton } from "@wealthfolio/ui";
 import { memo, useMemo } from "react";
@@ -119,8 +121,12 @@ function normalizeAccountsResult(
 /**
  * Formats account type for display.
  */
-function formatAccountType(accountType: string): string {
-  return accountType.replace(/_/g, " ").replace(/\b\w/g, (c) => c.toUpperCase());
+function formatAccountType(accountType: string, t: ReturnType<typeof useTranslation>["t"]): string {
+  const knownTypes = ["portfolio", "securities", "cash", "credit_card", "cryptocurrency", "other"];
+  const type = accountType.toLowerCase();
+  return knownTypes.includes(type)
+    ? t(`common:component.account_type_${type}`)
+    : accountType.replace(/_/g, " ").replace(/\b\w/g, (c) => c.toUpperCase());
 }
 
 // ============================================================================
@@ -136,7 +142,7 @@ function AccountsLoadingSkeleton() {
           <Skeleton className="h-5 w-16" />
         </div>
       </CardHeader>
-      <CardContent className="max-h-[320px] space-y-2 overflow-y-auto">
+      <CardContent className="max-h-80 space-y-2 overflow-y-auto">
         {Array.from({ length: 3 }).map((_, index) => (
           <div
             key={index}
@@ -155,12 +161,13 @@ function AccountsLoadingSkeleton() {
 }
 
 function AccountCard({ account }: { account: AccountDto }) {
+  const { t } = useTranslation();
   return (
     <div className="bg-background/60 hover:bg-background/80 flex items-center justify-between rounded-lg border p-3 transition-colors">
       <div className="flex flex-col gap-0.5">
-        <span className="text-sm font-medium leading-tight">{account.name}</span>
+        <span className="text-sm leading-tight font-medium">{account.name}</span>
         <span className="text-muted-foreground text-xs">
-          {formatAccountType(account.accountType)}
+          {formatAccountType(account.accountType, t)}
         </span>
       </div>
       <Badge variant="secondary" className="text-xs uppercase">
@@ -185,12 +192,11 @@ function EmptyState() {
 function ErrorState({ message }: { message?: string }) {
   const { t } = useTranslation();
   return (
-    <Card className="border-destructive/30 bg-destructive/5">
-      <CardContent className="py-4">
-        <p className="text-destructive text-sm font-medium">{t("ai:accounts.error")}</p>
-        {message && <p className="text-muted-foreground mt-1 text-xs">{message}</p>}
-      </CardContent>
-    </Card>
+    <Alert variant="destructive">
+      <Icons.AlertCircle />
+      <AlertTitle>{t("ai:accounts.error")}</AlertTitle>
+      {message && <AlertDescription className="text-xs">{message}</AlertDescription>}
+    </Alert>
   );
 }
 
@@ -200,7 +206,7 @@ function ErrorState({ message }: { message?: string }) {
 
 type AccountsToolUIContentProps = ToolCallMessagePartProps<GetAccountsArgs, GetAccountsResult>;
 
-function AccountsToolUIContentImpl({ args, result, status }: AccountsToolUIContentProps) {
+export function AccountsToolUIContentImpl({ args, result, status }: AccountsToolUIContentProps) {
   const { t } = useTranslation();
   const { settings } = useSettingsContext();
   const baseCurrency = settings?.baseCurrency ?? "USD";
@@ -264,7 +270,7 @@ function AccountsToolUIContentImpl({ args, result, status }: AccountsToolUIConte
           )}
         </div>
       </CardHeader>
-      <CardContent className="max-h-[320px] space-y-2 overflow-y-auto">
+      <CardContent className="max-h-80 space-y-2 overflow-y-auto">
         {accounts.map((account) => (
           <AccountCard key={account.id} account={account} />
         ))}

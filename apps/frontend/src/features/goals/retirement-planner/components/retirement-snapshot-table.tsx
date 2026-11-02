@@ -1,16 +1,9 @@
 import type { RetirementTrajectoryPoint } from "@/lib/types";
-import {
-  Badge,
-  Button,
-  Card,
-  CardContent,
-  CardHeader,
-  CardTitle,
-  useAmountFormatting,
-} from "@wealthfolio/ui";
+import { Badge, Button, Card, CardContent, CardHeader, CardTitle } from "@wealthfolio/ui";
 import { Icons } from "@wealthfolio/ui/components/ui/icons";
 import { useState } from "react";
 import { useTranslation } from "react-i18next";
+import { usePrivateAmountFormatting } from "../hooks/use-private-amount-formatting";
 
 const PAGE_SIZE = 10;
 
@@ -29,7 +22,7 @@ function SnapshotAmount({
   compact?: boolean;
   empty?: string;
 }) {
-  const formatting = useAmountFormatting();
+  const formatting = usePrivateAmountFormatting();
   if (value <= 0) return empty;
   const scaledValue = scaleForModeAtAge(value, age);
   return compact
@@ -54,7 +47,7 @@ export function RetirementSnapshotTable({
   currency: string;
   scaleForModeAtAge: (value: number, age: number) => number;
 }) {
-  const formatting = useAmountFormatting();
+  const formatting = usePrivateAmountFormatting();
   const { t } = useTranslation();
   const [tablePage, setTablePage] = useState(0);
   const totalPages = Math.ceil(snapshots.length / PAGE_SIZE);
@@ -66,7 +59,7 @@ export function RetirementSnapshotTable({
     <Card>
       <CardHeader className="flex-row items-start justify-between pb-3">
         <div>
-          <div className="text-muted-foreground mb-0.5 text-[10px] font-semibold uppercase tracking-wider">
+          <div className="text-muted-foreground text-2xs mb-0.5 font-semibold tracking-wider uppercase">
             {t("goals:snapshot.table")}
           </div>
           <CardTitle className="text-sm">{t("goals:snapshot.title")}</CardTitle>
@@ -85,8 +78,9 @@ export function RetirementSnapshotTable({
               className="h-7 w-7"
               onClick={() => setTablePage((p) => Math.max(0, p - 1))}
               disabled={tablePage === 0}
+              aria-label={t("common:previous")}
             >
-              <Icons.ChevronLeft className="h-3.5 w-3.5" />
+              <Icons.ChevronLeft className="h-3.5 w-3.5 rtl:rotate-180" />
             </Button>
             <Button
               variant="outline"
@@ -94,8 +88,9 @@ export function RetirementSnapshotTable({
               className="h-7 w-7"
               onClick={() => setTablePage((p) => Math.min(totalPages - 1, p + 1))}
               disabled={tablePage >= totalPages - 1}
+              aria-label={t("common:next")}
             >
-              <Icons.ChevronRight className="h-3.5 w-3.5" />
+              <Icons.ChevronRight className="h-3.5 w-3.5 rtl:rotate-180" />
             </Button>
           </div>
         )}
@@ -108,10 +103,10 @@ export function RetirementSnapshotTable({
             const isIncomeRow = incomeStartAges.has(snap.age);
             const plannedSpending = snap.plannedExpenses ?? snap.annualExpenses;
             const rowClassName = isFireRow
-              ? "border-l-green-500 bg-green-50/70 dark:bg-green-950/20"
+              ? "border-s-success bg-success-subtle"
               : isIncomeRow
-                ? "border-l-blue-500 bg-blue-50/70 dark:bg-blue-950/20"
-                : "border-l-transparent bg-background/40";
+                ? "border-s-info bg-info-subtle"
+                : "border-s-transparent bg-background/40";
             const phaseText = isFire ? phaseLabel : t("goals:snapshot.phase_acc");
             const mobileMetrics = [
               { label: t("goals:snapshot.metric_contrib"), value: snap.annualContribution },
@@ -123,7 +118,7 @@ export function RetirementSnapshotTable({
             return (
               <div
                 key={snap.age}
-                className={`border-border border-b border-l-2 px-3 py-2.5 last:border-b-0 ${rowClassName}`}
+                className={`border-border border-s-2 border-b px-3 py-2.5 last:border-b-0 ${rowClassName}`}
               >
                 <div className="grid grid-cols-[2.25rem_minmax(0,1fr)_auto] items-center gap-2">
                   <div className="text-muted-foreground text-xs font-semibold tabular-nums">
@@ -133,12 +128,12 @@ export function RetirementSnapshotTable({
                     <span className="text-xs font-medium tabular-nums">{snap.year}</span>
                     <Badge
                       variant={isFire ? "default" : "secondary"}
-                      className="h-5 shrink-0 px-2 text-[10px]"
+                      className="text-2xs h-5 shrink-0 px-2"
                     >
                       {phaseText}
                     </Badge>
                   </div>
-                  <div className="text-right text-sm font-semibold tabular-nums">
+                  <div className="text-end text-sm font-semibold tabular-nums">
                     <SnapshotAmount
                       value={snap.portfolioEnd}
                       age={snap.age}
@@ -149,11 +144,13 @@ export function RetirementSnapshotTable({
                   </div>
                 </div>
 
-                <div className="mt-1.5 grid grid-cols-4 gap-2 pl-[2.75rem] text-[10px]">
+                {/* At least 3rem a column: four on a phone at the default text size,
+                    fewer once larger text would cut the amounts. */}
+                <div className="text-2xs mt-1.5 grid grid-cols-[repeat(auto-fit,minmax(3rem,1fr))] gap-2 ps-[2.75rem]">
                   {mobileMetrics.map((metric) => (
                     <div key={metric.label} className="min-w-0">
                       <div className="text-muted-foreground leading-3">{metric.label}</div>
-                      <div className="truncate font-medium tabular-nums leading-4">
+                      <div className="truncate leading-4 font-medium tabular-nums">
                         <SnapshotAmount
                           value={metric.value}
                           age={snap.age}
@@ -165,8 +162,8 @@ export function RetirementSnapshotTable({
                     </div>
                   ))}
                   {hasPensionFunds && (
-                    <div className="col-span-4 min-w-0">
-                      <span className="text-muted-foreground mr-1">{t("goals:snapshot.fund")}</span>
+                    <div className="col-span-full min-w-0">
+                      <span className="text-muted-foreground me-1">{t("goals:snapshot.fund")}</span>
                       <span className="font-medium tabular-nums">
                         <SnapshotAmount
                           value={snap.pensionAssets}
@@ -185,22 +182,20 @@ export function RetirementSnapshotTable({
         </div>
 
         <div className="hidden overflow-x-auto md:block">
-          <table className="w-full min-w-[860px] text-xs">
+          <table className="w-full min-w-215 text-xs">
             <thead>
               <tr className="text-muted-foreground border-b">
-                <th className="pb-2 text-left">{t("goals:snapshot.col_age")}</th>
-                <th className="pb-2 text-left">{t("goals:snapshot.col_year")}</th>
-                <th className="pb-2 text-left">{t("goals:snapshot.col_phase")}</th>
-                <th className="pb-2 text-right">{t("goals:snapshot.col_end_portfolio")}</th>
+                <th className="pb-2 text-start">{t("goals:snapshot.col_age")}</th>
+                <th className="pb-2 text-start">{t("goals:snapshot.col_year")}</th>
+                <th className="pb-2 text-start">{t("goals:snapshot.col_phase")}</th>
+                <th className="pb-2 text-end">{t("goals:snapshot.col_end_portfolio")}</th>
                 {hasPensionFunds && (
-                  <th className="pb-2 text-right">{t("goals:snapshot.col_pension_fund")}</th>
+                  <th className="pb-2 text-end">{t("goals:snapshot.col_pension_fund")}</th>
                 )}
-                <th className="pb-2 text-right">{t("goals:snapshot.col_contribution_yr")}</th>
-                <th className="pb-2 text-right">{t("goals:snapshot.col_retirement_income_yr")}</th>
-                <th className="pb-2 text-right">{t("goals:snapshot.col_planned_spending_yr")}</th>
-                <th className="pb-2 text-right">
-                  {t("goals:snapshot.col_portfolio_withdrawal_yr")}
-                </th>
+                <th className="pb-2 text-end">{t("goals:snapshot.col_contribution_yr")}</th>
+                <th className="pb-2 text-end">{t("goals:snapshot.col_retirement_income_yr")}</th>
+                <th className="pb-2 text-end">{t("goals:snapshot.col_planned_spending_yr")}</th>
+                <th className="pb-2 text-end">{t("goals:snapshot.col_portfolio_withdrawal_yr")}</th>
               </tr>
             </thead>
             <tbody>
@@ -213,9 +208,9 @@ export function RetirementSnapshotTable({
                     key={snap.age}
                     className={`border-b last:border-0 ${
                       isFireRow
-                        ? "bg-green-50 font-semibold dark:bg-green-950/20"
+                        ? "bg-success-subtle font-semibold"
                         : isIncomeRow
-                          ? "bg-blue-50 dark:bg-blue-950/20"
+                          ? "bg-info-subtle"
                           : ""
                     }`}
                   >
@@ -226,14 +221,14 @@ export function RetirementSnapshotTable({
                         {isFire ? phaseLabel : t("goals:snapshot.phase_acc")}
                       </Badge>
                     </td>
-                    <td className="py-1.5 text-right">
+                    <td className="py-1.5 text-end">
                       {formatting.formatAmount(
                         scaleForModeAtAge(snap.portfolioEnd, snap.age),
                         currency,
                       )}
                     </td>
                     {hasPensionFunds && (
-                      <td className="py-1.5 text-right">
+                      <td className="py-1.5 text-end">
                         <SnapshotAmount
                           value={snap.pensionAssets}
                           age={snap.age}
@@ -242,7 +237,7 @@ export function RetirementSnapshotTable({
                         />
                       </td>
                     )}
-                    <td className="py-1.5 text-right">
+                    <td className="py-1.5 text-end">
                       <SnapshotAmount
                         value={snap.annualContribution}
                         age={snap.age}
@@ -250,7 +245,7 @@ export function RetirementSnapshotTable({
                         scaleForModeAtAge={scaleForModeAtAge}
                       />
                     </td>
-                    <td className="py-1.5 text-right">
+                    <td className="py-1.5 text-end">
                       <SnapshotAmount
                         value={snap.annualIncome}
                         age={snap.age}
@@ -258,7 +253,7 @@ export function RetirementSnapshotTable({
                         scaleForModeAtAge={scaleForModeAtAge}
                       />
                     </td>
-                    <td className="py-1.5 text-right">
+                    <td className="py-1.5 text-end">
                       <SnapshotAmount
                         value={snap.plannedExpenses ?? snap.annualExpenses}
                         age={snap.age}
@@ -266,7 +261,7 @@ export function RetirementSnapshotTable({
                         scaleForModeAtAge={scaleForModeAtAge}
                       />
                     </td>
-                    <td className="py-1.5 text-right">
+                    <td className="py-1.5 text-end">
                       <SnapshotAmount
                         value={snap.netWithdrawalFromPortfolio}
                         age={snap.age}

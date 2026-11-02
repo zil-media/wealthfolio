@@ -1,4 +1,5 @@
 import type { BaselinePeriod } from "../../../hooks/use-baseline-pace";
+import { badgeVariants } from "@wealthfolio/ui";
 /**
  * Rich, focused panel that renders the currently-selected event:
  *   header  → stat block → takeaway → DAY BY DAY + WHAT DROVE IT →
@@ -16,6 +17,8 @@ import { useNavigate } from "react-router-dom";
 import { useBalancePrivacy } from "@/hooks/use-balance-privacy";
 import { useIsMobileViewport } from "@/hooks/use-platform";
 import type { Activity, TaxonomyCategory } from "@/lib/types";
+import { getCategoryLabel } from "@/lib/taxonomy-labels";
+import { getEventTypeLabel } from "@/features/spending/lib/labels";
 import { cn, parseLocalDate } from "@/lib/utils";
 import {
   Button,
@@ -40,6 +43,7 @@ import { useEventDialog } from "../../event-dialog-provider";
 import { getEventColors } from "./event-colors";
 import { formatMonthDay } from "./format";
 import { CARD_CLASS, LABEL_CLASS } from "./insights-shared";
+import { Card } from "@wealthfolio/ui/components/ui/card";
 
 export interface EventDetailPanelProps {
   event: EventSpendingSummary;
@@ -77,6 +81,7 @@ export const EventDetailPanel: FC<EventDetailPanelProps> = ({
     heatmapActivities,
     accountTypeById,
     taxonomyCategories,
+    t("spending:insightsPage.uncategorized"),
     dailySpendByDate,
     baselinePeriod,
   );
@@ -89,7 +94,7 @@ export const EventDetailPanel: FC<EventDetailPanelProps> = ({
     expected,
     lift,
     dailyDeltaPct,
-    categories,
+    categories: rawCategories,
     categoriesTotal,
     dailySeries,
     tagged,
@@ -101,6 +106,14 @@ export const EventDetailPanel: FC<EventDetailPanelProps> = ({
     hangoverPct,
     outOfRange,
   } = chart;
+  const categories = useMemo(
+    () =>
+      rawCategories.map((category) => ({
+        ...category,
+        name: getCategoryLabel(t, "spending_categories", category.id, category.name),
+      })),
+    [rawCategories, t],
+  );
 
   const tagColor = event.eventTypeColor ?? "var(--event-default)";
 
@@ -171,7 +184,7 @@ export const EventDetailPanel: FC<EventDetailPanelProps> = ({
   };
 
   return (
-    <div className={CARD_CLASS}>
+    <Card className={CARD_CLASS}>
       {/* HEADER */}
       <div className="mb-3">
         <div className="flex items-center justify-between gap-2">
@@ -186,79 +199,89 @@ export const EventDetailPanel: FC<EventDetailPanelProps> = ({
           </div>
           <div className="flex shrink-0 items-center gap-1">
             <Tooltip>
-              <TooltipTrigger asChild>
-                <Button
-                  variant="outline"
-                  size="icon"
-                  aria-label={t("spending:eventDetail.previousEvent")}
-                  className="h-7 w-7"
-                  onClick={() => prevEvent && onSelect(prevEvent.eventId)}
-                  disabled={!canNav}
-                >
-                  <Icons.ChevronLeft className="h-4 w-4" />
-                </Button>
+              <TooltipTrigger
+                render={
+                  <Button
+                    variant="outline"
+                    size="icon"
+                    aria-label={t("spending:eventDetail.previousEvent")}
+                    className="h-7 w-7"
+                    onClick={() => prevEvent && onSelect(prevEvent.eventId)}
+                    disabled={!canNav}
+                  />
+                }
+              >
+                <Icons.ChevronLeft className="h-4 w-4 rtl:rotate-180" />
               </TooltipTrigger>
               <TooltipContent>{t("spending:eventDetail.previousEvent")}</TooltipContent>
             </Tooltip>
             <Tooltip>
-              <TooltipTrigger asChild>
-                <Button
-                  variant="outline"
-                  size="icon"
-                  aria-label={t("spending:eventDetail.nextEvent")}
-                  className="h-7 w-7"
-                  onClick={() => nextEvent && onSelect(nextEvent.eventId)}
-                  disabled={!canNav}
-                >
-                  <Icons.ChevronRight className="h-4 w-4" />
-                </Button>
+              <TooltipTrigger
+                render={
+                  <Button
+                    variant="outline"
+                    size="icon"
+                    aria-label={t("spending:eventDetail.nextEvent")}
+                    className="h-7 w-7"
+                    onClick={() => nextEvent && onSelect(nextEvent.eventId)}
+                    disabled={!canNav}
+                  />
+                }
+              >
+                <Icons.ChevronRight className="h-4 w-4 rtl:rotate-180" />
               </TooltipTrigger>
               <TooltipContent>{t("spending:eventDetail.nextEvent")}</TooltipContent>
             </Tooltip>
             <Tooltip>
-              <TooltipTrigger asChild>
-                <Button
-                  variant="outline"
-                  size="icon"
-                  aria-label={t("spending:eventDetail.editEvent")}
-                  className="h-7 w-7"
-                  onClick={handleEdit}
-                  disabled={!fullEvent}
-                >
-                  <Icons.Pencil className="h-3.5 w-3.5" />
-                </Button>
+              <TooltipTrigger
+                render={
+                  <Button
+                    variant="outline"
+                    size="icon"
+                    aria-label={t("spending:eventDetail.editEvent")}
+                    className="h-7 w-7"
+                    onClick={handleEdit}
+                    disabled={!fullEvent}
+                  />
+                }
+              >
+                <Icons.Pencil className="h-3.5 w-3.5" />
               </TooltipTrigger>
               <TooltipContent>{t("spending:eventDetail.editEvent")}</TooltipContent>
             </Tooltip>
             <Tooltip>
-              <TooltipTrigger asChild>
-                <Button
-                  variant="outline"
-                  size="icon"
-                  aria-label={t("spending:eventDetail.tagTransactionsInPeriod")}
-                  className="h-7 w-7"
-                  onClick={handleViewTransactions}
-                >
-                  <Icons.Activity className="h-3.5 w-3.5" />
-                </Button>
+              <TooltipTrigger
+                render={
+                  <Button
+                    variant="outline"
+                    size="icon"
+                    aria-label={t("spending:eventDetail.tagTransactionsInPeriod")}
+                    className="h-7 w-7"
+                    onClick={handleViewTransactions}
+                  />
+                }
+              >
+                <Icons.Activity className="h-3.5 w-3.5" />
               </TooltipTrigger>
               <TooltipContent>{t("spending:eventDetail.tagTransactions")}</TooltipContent>
             </Tooltip>
           </div>
         </div>
-        <div className="text-muted-foreground/80 mt-1 text-[11px]">
+        <div className="text-muted-foreground/80 text-2xs mt-1">
           {formatRange(startDate, endDate, dateFormatting)} ·{" "}
           {t("spending:eventDetail.daysCount", { count: days })} ·{" "}
           {t("spending:eventDetail.transactionCount", { count: event.transactionCount })}
-          {event.eventTypeName ? ` · ${event.eventTypeName.toLowerCase()}` : ""}
+          {event.eventTypeName
+            ? ` · ${getEventTypeLabel(t, event.eventTypeId, event.eventTypeName)}`
+            : ""}
         </div>
       </div>
 
       {outOfRange.length > 0 && (
-        <div className="bg-warning/10 border-warning/40 mt-3 flex flex-wrap items-center justify-between gap-2 rounded-md border px-2.5 py-1.5 text-[11px]">
+        <div className="bg-warning/10 border-warning/40 text-2xs mt-3 flex flex-wrap items-center justify-between gap-2 rounded-md border px-2.5 py-1.5">
           <span className="text-foreground/90">
             {t("spending:eventDetail.taggedOutside", { count: outOfRange.length })}
-            <span className="text-muted-foreground/80 ml-1 tabular-nums">
+            <span className="text-muted-foreground/80 ms-1 tabular-nums">
               ({formatOutOfRangeDate(outOfRange[0], dateFormatting)}
               {outOfRange.length > 1
                 ? `–${formatOutOfRangeDate(outOfRange[outOfRange.length - 1], dateFormatting)}`
@@ -270,7 +293,7 @@ export const EventDetailPanel: FC<EventDetailPanelProps> = ({
             type="button"
             onClick={expandWindow}
             disabled={update.isPending}
-            className="text-foreground hover:bg-warning/15 rounded px-2 py-0.5 text-[11px] font-medium underline-offset-2 hover:underline disabled:opacity-50"
+            className="text-foreground hover:bg-warning-subtle text-2xs rounded px-2 py-0.5 font-medium underline-offset-2 hover:underline disabled:opacity-50"
           >
             {update.isPending
               ? t("spending:eventDetail.expanding")
@@ -282,10 +305,10 @@ export const EventDetailPanel: FC<EventDetailPanelProps> = ({
       {/* STAT BLOCK */}
       <div className="mt-2 grid grid-cols-2 gap-y-3 md:grid-cols-4 md:gap-x-0 md:gap-y-4">
         <StatCell label={t("spending:eventDetail.eventTotal")}>
-          <div className="text-foreground text-sm font-semibold tabular-nums tracking-tight md:text-base">
+          <div className="text-foreground text-sm font-semibold tracking-tight tabular-nums md:text-base">
             <PrivacyAmount value={event.totalSpending} currency={currency} />
           </div>
-          <div className="text-muted-foreground/80 mt-1 text-[10px]">
+          <div className="text-muted-foreground/80 text-2xs mt-1">
             {t("spending:eventDetail.acrossTransactions", { count: event.transactionCount })}
           </div>
         </StatCell>
@@ -304,7 +327,7 @@ export const EventDetailPanel: FC<EventDetailPanelProps> = ({
             {lift >= 0 ? "+" : "−"}
             <PrivacyAmount value={Math.abs(lift)} currency={currency} />
           </div>
-          <div className="text-muted-foreground/80 mt-1 text-[10px]">
+          <div className="text-muted-foreground/80 text-2xs mt-1">
             {t("spending:eventDetail.vsLabel")}{" "}
             <PrivacyAmount value={Math.max(0, expected)} currency={currency} />{" "}
             {t("spending:eventDetail.expected")}
@@ -316,10 +339,10 @@ export const EventDetailPanel: FC<EventDetailPanelProps> = ({
           }
           divided
         >
-          <div className="text-foreground text-sm font-semibold tabular-nums tracking-tight md:text-base">
+          <div className="text-foreground text-sm font-semibold tracking-tight tabular-nums md:text-base">
             <PrivacyAmount value={dailyDuring} currency={currency} />
           </div>
-          <div className="text-muted-foreground/80 mt-1 text-[10px]">
+          <div className="text-muted-foreground/80 text-2xs mt-1">
             {baseline > 0
               ? t("spending:eventDetail.dailyDeltaVs", {
                   sign: dailyDeltaPct >= 0 ? "+" : "−",
@@ -330,18 +353,18 @@ export const EventDetailPanel: FC<EventDetailPanelProps> = ({
           </div>
         </StatCell>
         <StatCell label={t("spending:eventDetail.peakDay")} divided>
-          <div className="text-foreground text-sm font-semibold tabular-nums tracking-tight md:text-base">
+          <div className="text-foreground text-sm font-semibold tracking-tight tabular-nums md:text-base">
             {peak ? <PrivacyAmount value={peak.amount} currency={currency} /> : "—"}
           </div>
-          <div className="text-muted-foreground/80 mt-1 text-[10px]">
+          <div className="text-muted-foreground/80 text-2xs mt-1">
             {peak ? formatPeakDay(peak.date, dateFormatting) : ""}
           </div>
         </StatCell>
       </div>
 
       {/* TAKEAWAY */}
-      <p className="text-foreground/90 mt-6 text-[13px] leading-relaxed">
-        <span className="text-primary mr-2 text-[10px] font-semibold uppercase tracking-[0.12em]">
+      <p className="text-foreground/90 mt-6 text-sm leading-relaxed">
+        <span className="text-primary text-2xs me-2 font-semibold tracking-[0.12em] uppercase">
           {t("spending:eventDetail.takeaway")}
         </span>
         {caption}
@@ -353,7 +376,7 @@ export const EventDetailPanel: FC<EventDetailPanelProps> = ({
         <div>
           <div className="flex items-center justify-between gap-3">
             <div className={LABEL_CLASS}>{t("spending:eventDetail.dayByDay")}</div>
-            <div className={cn(LABEL_CLASS, "text-right")}>
+            <div className={cn(LABEL_CLASS, "text-end")}>
               {isBalanceHidden
                 ? `${t("spending:eventDetail.baseline")} ••••${peak ? ` · ${t("spending:eventDetail.peak")} ••••` : ""}`
                 : isPhone
@@ -381,7 +404,7 @@ export const EventDetailPanel: FC<EventDetailPanelProps> = ({
         <div>
           <div className="flex items-center justify-between gap-3">
             <div className={LABEL_CLASS}>{t("spending:eventDetail.whatDroveIt")}</div>
-            <div className={cn(LABEL_CLASS, "text-right")}>
+            <div className={cn(LABEL_CLASS, "text-end")}>
               {t("spending:eventDetail.categoriesCount", { count: categories.length })}
             </div>
           </div>
@@ -412,13 +435,13 @@ export const EventDetailPanel: FC<EventDetailPanelProps> = ({
                         className="inline-block h-2 w-2 shrink-0 rounded-full"
                         style={{ background: c.color }}
                       />
-                      <span className="text-foreground/90 min-w-0 flex-1 truncate text-[12px]">
+                      <span className="text-foreground/90 min-w-0 flex-1 truncate text-xs">
                         {c.name}
                       </span>
-                      <span className="text-muted-foreground/80 text-[11px] tabular-nums">
+                      <span className="text-muted-foreground/80 text-2xs tabular-nums">
                         {numberFormatting.formatPercent(pct / 100, { digits: 1 })}
                       </span>
-                      <span className="text-foreground/90 text-right text-[12px] font-medium tabular-nums">
+                      <span className="text-foreground/90 text-end text-xs font-medium tabular-nums">
                         <PrivacyAmount value={c.amount} currency={currency} />
                       </span>
                     </div>
@@ -481,7 +504,7 @@ export const EventDetailPanel: FC<EventDetailPanelProps> = ({
               type="button"
               onClick={() => onSelect(ev.eventId)}
               className={cn(
-                "inline-flex items-center gap-2 rounded-full border px-3 py-1 text-[11px] transition-colors",
+                "text-2xs inline-flex items-center gap-2 rounded-full border px-3 py-1 transition-colors",
                 isSel
                   ? "text-foreground"
                   : "text-muted-foreground hover:bg-muted/30 hover:text-foreground",
@@ -496,14 +519,14 @@ export const EventDetailPanel: FC<EventDetailPanelProps> = ({
                 style={{ background: c.fill, border: `1.5px solid ${c.stroke}` }}
               />
               {ev.eventName}
-              <span className="text-muted-foreground/80 ml-1">
+              <span className="text-muted-foreground/80 ms-1">
                 · {formatChipDate(parseLocalDate(ev.startDate), dateFormatting)}
               </span>
             </button>
           );
         })}
       </div>
-    </div>
+    </Card>
   );
 };
 
@@ -519,7 +542,7 @@ function StatCell({
   children: React.ReactNode;
 }) {
   return (
-    <div className={cn(divided && "md:border-border/40 md:border-l md:pl-4")}>
+    <div className={cn(divided && "md:border-border/40 md:border-s md:ps-4")}>
       <div className={LABEL_CLASS}>{label}</div>
       <div className="mt-1.5">{children}</div>
     </div>
@@ -530,7 +553,7 @@ function SubLabel({ children, right }: { children: React.ReactNode; right?: stri
   return (
     <div className="mt-5 flex items-center justify-between gap-3">
       <div className={LABEL_CLASS}>{children}</div>
-      {right ? <div className={cn(LABEL_CLASS, "text-right")}>{right}</div> : null}
+      {right ? <div className={cn(LABEL_CLASS, "text-end")}>{right}</div> : null}
     </div>
   );
 }
@@ -572,7 +595,7 @@ function DailyBars({
       <div className={cn("relative flex items-end gap-[3px]", compact ? "h-20" : "h-28")}>
         {baseline > 0 && (
           <div
-            className="border-foreground/30 pointer-events-none absolute left-0 right-0 border-t border-dashed"
+            className="border-foreground/30 pointer-events-none absolute start-0 end-0 border-t border-dashed"
             style={{ bottom: `${(baseline / max) * 100}%` }}
           />
         )}
@@ -604,7 +627,7 @@ function DailyBars({
           ];
         })}
       </div>
-      <div className="text-muted-foreground/80 mt-2 flex items-center justify-between text-[10px] tracking-wide">
+      <div className="text-muted-foreground/80 text-2xs mt-2 flex items-center justify-between tracking-wide">
         <span className="tabular-nums">{formatPeakDay(chartStartDate, dateFormatting)}</span>
         <span className="text-muted-foreground/60">
           {t("spending:eventDetail.daysCount", { count: eventDays })}
@@ -668,8 +691,8 @@ function RhythmCard({
         {typeof hangoverPct === "number" && Math.abs(hangoverPct) > 5 && (
           <span
             className={cn(
-              "rounded-sm px-1 py-0.5 text-[9px] tracking-wider",
-              hangoverPct > 0 ? "bg-destructive/15 text-destructive" : "bg-success/15 text-success",
+              badgeVariants({ variant: hangoverPct > 0 ? "destructive-subtle" : "success-subtle" }),
+              "text-2xs rounded-sm px-1 font-normal tracking-wider",
             )}
           >
             {hangoverPct > 0
@@ -679,7 +702,7 @@ function RhythmCard({
         )}
       </div>
       <div className="mt-1 flex items-center justify-between gap-2">
-        <span className="text-foreground text-[13px] font-medium tabular-nums">
+        <span className="text-foreground text-sm font-medium tabular-nums">
           {series.length === 0 ? (
             "—"
           ) : (

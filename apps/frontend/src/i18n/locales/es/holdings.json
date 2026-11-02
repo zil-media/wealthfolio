@@ -144,7 +144,7 @@
   "cost_basis": "Valor de adquisición",
   "sale_proceeds": "Valor de transmisión",
   "realized_return": "Rentabilidad realizada",
-  "qty": "Cant.",
+  "qty": "Cantidad",
   "shares_label": "acciones",
   "contracts": "contratos",
   "bonds": "bonos",
@@ -241,5 +241,25 @@
   "live_updated": "Precios en vivo · actualizado {{time}} · cada {{seconds}} s",
   "live_loading": "Cargando precios en vivo…",
   "live_error": "Precios en vivo no disponibles ahora. Se muestran los últimos valores calculados.",
-  "intraday": "Hoy"
+  "intraday": "Hoy",
+  "liability_cards": {
+    "owed": "Adeudado",
+    "paid_down": "Amortizado",
+    "overall": "Total",
+    "monthly": "Mensual",
+    "paid_off": "Pagado",
+    "owed_of": "adeudado de {{amount}}",
+    "owed_now": "adeudado",
+    "manual": "Manual",
+    "manual_hint": "saldo actualizado a mano",
+    "debt_free": "Sin deuda en {{date}}",
+    "original_balance": "Saldo original {{date}}",
+    "updated": "Actualizado {{date}}",
+    "status_paid_off": "Pagado",
+    "status_renewal_due": "Renovación pendiente",
+    "status_renew_soon": "Renovar pronto",
+    "status_update_balance": "Actualizar saldo",
+    "update_balance": "Actualizar saldo",
+    "schedule": "Calendario"
+  }
 }

@@ -11,6 +11,7 @@ use crate::context::ServiceContext;
 use crate::profiles::{ConnectAccess, NativeProfiles, ProfileAccess};
 use log::{debug, error};
 use serde::Serialize;
+#[cfg(feature = "device-sync")]
 use std::future::Future;
 use std::sync::Arc;
 use tauri::{AppHandle, Manager};
@@ -114,6 +115,7 @@ pub async fn store_sync_session(
         })
         .await?;
 
+    state.backup_scheduler.wake();
     Ok(())
 }
 
@@ -266,8 +268,10 @@ pub struct SyncSessionStatus {
     pub is_configured: bool,
 }
 
+// Async so the keyring read runs off the UI thread: a slow or locked keyring
+// would otherwise freeze the window.
 #[tauri::command]
-pub fn get_sync_session_status(state: ConnectAccess) -> Result<SyncSessionStatus, String> {
+pub async fn get_sync_session_status(state: ConnectAccess) -> Result<SyncSessionStatus, String> {
     let context = state.context()?;
     Ok(SyncSessionStatus {
         is_configured: context.connect_service().is_session_configured()?,
@@ -276,6 +280,7 @@ pub fn get_sync_session_status(state: ConnectAccess) -> Result<SyncSessionStatus
 
 /// Clear explicit logout credentials and stop the worker in one transition.
 async fn disconnect_cloud_session(context: &ServiceContext) -> Result<(), String> {
+    context.backup_scheduler.wake();
     context
         .connect_service()
         .clear_session_with(|| async {
@@ -294,7 +299,9 @@ async fn disconnect_cloud_session(context: &ServiceContext) -> Result<(), String
                 .await;
         })
         .await
-        .map(|_| ())
+        .map(|_| {
+            context.backup_scheduler.wake();
+        })
 }
 
 #[derive(Serialize)]

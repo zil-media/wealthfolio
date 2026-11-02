@@ -14,7 +14,11 @@
     "noDevicesSyncing": "Aucun appareil synchronisé pour le moment",
     "noDevicesDescription": "Configurez la synchronisation des appareils dans les paramètres pour garder vos données synchronisées sur tous vos appareils.",
     "noActivity": "Aucune activité pour le moment",
-    "noActivityDescription": "Les mises à jour apparaîtront ici dès que vos données commenceront à se synchroniser."
+    "noActivityDescription": "Les mises à jour apparaîtront ici dès que vos données commenceront à se synchroniser.",
+    "showMore_one": "Afficher {{count}} de plus",
+    "showMore_many": "Afficher {{count}} de plus",
+    "showMore_other": "Afficher {{count}} de plus",
+    "showLess": "Afficher moins"
   },
   "emptyState": {
     "optional": "Facultatif",
@@ -24,16 +28,16 @@
     "learnMore": "En savoir plus sur Connect",
     "features": {
       "brokerageSync": {
-        "title": "Synchronisation des courtiers",
-        "description": "Synchronisez automatiquement vos comptes et transactions chaque jour."
+        "title": "Comptes connectés",
+        "description": "Synchronisez automatiquement les transactions de vos courtiers."
       },
       "deviceSync": {
-        "title": "Synchronisation des appareils",
-        "description": "Synchronisez entre appareils avec un chiffrement de bout en bout."
+        "title": "Synchronisation et sauvegarde",
+        "description": "Synchronisation chiffrée de bout en bout et sauvegardes cloud automatiques."
       },
       "householdView": {
-        "title": "Vue foyer",
-        "description": "Partagez des comptes avec les membres de votre famille."
+        "title": "Portefeuilles familiaux",
+        "description": "Une vue partagée des investissements de votre famille."
       }
     }
   },
@@ -71,7 +75,8 @@
     "noDataYet": "Aucune donnée pour le moment",
     "dataAsOf": "Données au {{date}}",
     "emptyTitle": "Aucun compte synchronisé pour le moment",
-    "emptyDescription": "Connectez un courtier pour commencer à synchroniser vos comptes."
+    "emptyDescription": "Connectez un courtier pour commencer à synchroniser vos comptes.",
+    "needsSetup": "À configurer"
   },
   "connections": {
     "title": "Connexions de courtiers",
@@ -90,7 +95,13 @@
     "accountsSyncing_many": "{{count}} comptes en cours de synchronisation",
     "partialSyncing_one": "{{syncing}} compte sur {{total}} en cours de synchronisation · {{excluded}} compte exclu",
     "partialSyncing_other": "{{syncing}} comptes sur {{total}} en cours de synchronisation · {{excluded}} comptes exclus",
-    "partialSyncing_many": "{{syncing}} comptes sur {{total}} en cours de synchronisation · {{excluded}} comptes exclus"
+    "partialSyncing_many": "{{syncing}} comptes sur {{total}} en cours de synchronisation · {{excluded}} comptes exclus",
+    "accountCount_one": "{{count}} compte",
+    "accountCount_many": "{{count}} comptes",
+    "accountCount_other": "{{count}} comptes",
+    "excludedCount_one": "{{count}} exclu",
+    "excludedCount_many": "{{count}} exclus",
+    "excludedCount_other": "{{count}} exclus"
   },
   "sync": {
     "syncNow": "Synchroniser maintenant",
@@ -198,21 +209,36 @@
     "title": "La synchronisation du courtier nécessite votre attention",
     "description_one": "{{count}} compte nécessite une nouvelle tentative ou une vérification du courtier.",
     "description_other": "{{count}} comptes nécessitent une nouvelle tentative ou une vérification du courtier.",
-    "description_many": "{{count}} comptes nécessitent une nouvelle tentative ou une vérification du courtier."
+    "description_many": "{{count}} comptes nécessitent une nouvelle tentative ou une vérification du courtier.",
+    "heading": "Nécessite votre attention",
+    "connectionLost": "Connexion perdue",
+    "accountsNotSyncing_one": "{{count}} compte non synchronisé",
+    "accountsNotSyncing_many": "{{count}} comptes non synchronisés",
+    "accountsNotSyncing_other": "{{count}} comptes non synchronisés",
+    "syncFailed": "La dernière synchronisation a échoué"
   },
   "setup": {
     "newAccountsTitle": "De nouveaux comptes doivent être configurés",
     "newAccountsDescription_one": "{{count}} compte nécessite une configuration rapide avant de pouvoir commencer la synchronisation.",
     "newAccountsDescription_other": "{{count}} comptes nécessitent une configuration rapide avant de pouvoir commencer la synchronisation.",
     "newAccountsDescription_many": "{{count}} comptes nécessitent une configuration rapide avant de pouvoir commencer la synchronisation.",
-    "reviewAccounts": "Vérifier les comptes"
+    "reviewAccounts": "Vérifier les comptes",
+    "setUp": "Configurer"
   },
   "devices": {
     "thisDevice": "Cet appareil",
     "activeNow": "Actif maintenant",
     "lastSeen": "Vu {{time}}",
     "online": "En ligne",
-    "never": "Jamais"
+    "never": "Jamais",
+    "showInactive_one": "Afficher {{count}} appareil inactif",
+    "showInactive_many": "Afficher {{count}} appareils inactifs",
+    "showInactive_other": "Afficher {{count}} appareils inactifs",
+    "hideInactive": "Masquer les appareils inactifs",
+    "platforms": {
+      "server": "Serveur",
+      "web": "Web"
+    }
   },
   "deviceStatus": {
     "syncError": "Erreur de synchronisation",
@@ -316,5 +342,13 @@
     "description": "Vous allez connecter un autre compte ou foyer. Les données locales de votre portefeuille seront conservées, mais les liens existants avec les courtiers et la configuration de synchronisation des appareils seront supprimés. Le nouveau compte pourra ajouter des données de courtage à ce profil. Configurez à nouveau la synchronisation des appareils lorsque vous le souhaitez. Utilisez un nouveau profil si vous préférez garder les données séparées.",
     "cancel": "Annuler",
     "confirm": "Changer de connexion"
+  },
+  "syncMessages": {
+    "runFailed": "Cette synchronisation n’a pas pu être terminée. Relancez-la ou gérez votre connexion au courtier.",
+    "runNeedsReview": "Certains éléments synchronisés doivent être vérifiés avant de poursuivre la synchronisation.",
+    "accountFailed": "Impossible de synchroniser ce compte de courtage. Relancez la synchronisation ou gérez votre connexion au courtier.",
+    "accountNeedsReview": "Certaines données du courtier doivent être vérifiées. Relancez la synchronisation ou gérez votre connexion au courtier.",
+    "holdingsSynced": "Les positions sont synchronisées, mais la synchronisation des activités nécessite votre attention. Relancez-la ou gérez votre connexion au courtier.",
+    "holdingsDeferred": "La synchronisation des positions nécessite votre attention. Relancez-la ou gérez votre connexion au courtier."
   }
 }

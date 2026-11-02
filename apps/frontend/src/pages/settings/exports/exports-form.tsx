@@ -7,6 +7,7 @@ import { ExportDataType, ExportedFileFormat } from "@/lib/types";
 import { useState } from "react";
 import { useTranslation } from "react-i18next";
 import { useExportData } from "./use-export-data";
+import { Spinner } from "@wealthfolio/ui";
 
 export const ExportForm = () => {
   const { t } = useTranslation();
@@ -29,7 +30,7 @@ export const ExportForm = () => {
   const csvJsonTypes = [
     {
       key: "accounts",
-      name: t("settings:accounts_title"),
+      name: t("common:accounts"),
       icon: Icons.Holdings,
       description: t("settings:export_type_accounts_description"),
     },
@@ -47,7 +48,7 @@ export const ExportForm = () => {
     },
     {
       key: "goals",
-      name: t("settings:goals_title"),
+      name: t("common:goals"),
       icon: Icons.Goals,
       description: t("settings:export_type_goals_description"),
     },
@@ -76,7 +77,7 @@ export const ExportForm = () => {
   return (
     <>
       <div className="mt-8 px-2">
-        <h3 className="pb-3 pt-5 font-semibold">{t("settings:export_format_title")}</h3>
+        <h3 className="pt-5 pb-3 font-semibold">{t("settings:export_format_title")}</h3>
         <RadioGroup
           onValueChange={setSelectedFormat}
           className="grid grid-cols-1 gap-4 md:grid-cols-2"
@@ -86,7 +87,7 @@ export const ExportForm = () => {
               <RadioGroupItem value={format.name} id={format.name} className="peer sr-only" />
               <Label
                 htmlFor={format.name}
-                className="bg-card hover:bg-accent hover:text-accent-foreground peer-data-[state=checked]:border-primary [&:has([data-state=checked])]:border-primary relative flex cursor-pointer flex-col items-center justify-between rounded-md border p-4 shadow-sm peer-data-[state=checked]:border-2"
+                className="bg-card hover:bg-accent hover:text-accent-foreground peer-data-checked:border-primary [&:has([data-checked])]:border-primary relative flex cursor-pointer flex-col items-center justify-between rounded-md border p-4 shadow-sm peer-data-checked:border-2"
               >
                 <format.icon className="mb-3 h-6 w-6" />
                 <div className="text-center">
@@ -101,12 +102,12 @@ export const ExportForm = () => {
 
       {selectedFormat && (
         <div className="px-2 pt-4">
-          <h3 className="pb-3 pt-5 font-semibold">{t("settings:export_customize_title")}</h3>
+          <h3 className="pt-5 pb-3 font-semibold">{t("settings:export_customize_title")}</h3>
           {dataTypes[selectedFormat as keyof typeof dataTypes].map((item) => (
             <Card key={item.key} className="mb-4">
               <CardContent className="flex items-center justify-between p-4">
                 <div className="flex items-center">
-                  <item.icon className="mr-2 h-5 w-5" />
+                  <item.icon className="me-2 h-5 w-5" />
                   <div>
                     <span className="font-medium">{item.name}</span>
                     <p className="text-muted-foreground text-sm">{item.description}</p>
@@ -122,7 +123,7 @@ export const ExportForm = () => {
                   exportingFormat === selectedFormat &&
                   exportingData === item.key ? (
                     <>
-                      <Icons.Spinner className="h-4 w-4 animate-spin" />
+                      <Spinner className="h-4 w-4" />
                       <span className="sr-only">
                         {t("settings:export_exporting_item", { name: item.name })}
                       </span>

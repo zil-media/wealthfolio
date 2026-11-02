@@ -1,7 +1,9 @@
-import { ReactNode, useEffect, useRef, useState } from "react";
+import { useTranslation } from "react-i18next";
+import { ComponentProps, ReactElement, ReactNode, useEffect, useRef, useState } from "react";
 import { Button, type ButtonProps } from "../ui/button";
 import { Icons } from "../ui/icons";
 import { Popover, PopoverContent, PopoverTrigger } from "../ui/popover";
+import { Spinner } from "../ui/spinner";
 
 interface ActionConfirmProps {
   confirmMessage: string | ReactNode;
@@ -9,12 +11,13 @@ interface ActionConfirmProps {
   handleCancel?: () => void;
   handleConfirm: () => void;
   isPending: boolean;
-  button?: ReactNode;
+  button?: ReactElement;
   confirmButtonText?: string;
   confirmButtonVariant?: ButtonProps["variant"];
   cancelButtonText?: string;
   pendingText?: string;
-  side?: "top" | "right" | "bottom" | "left";
+  /** `inline-start` / `inline-end` follow the reading direction. */
+  side?: ComponentProps<typeof PopoverContent>["side"];
 }
 
 export const ActionConfirm = ({
@@ -24,12 +27,13 @@ export const ActionConfirm = ({
   handleConfirm,
   button,
   isPending,
-  confirmButtonText = "Confirm",
+  confirmButtonText,
   confirmButtonVariant = "destructive",
-  cancelButtonText = "Cancel",
-  pendingText = "In progress...",
+  cancelButtonText,
+  pendingText,
   side,
 }: ActionConfirmProps) => {
+  const { t } = useTranslation();
   const [isOpen, setIsOpen] = useState(false);
   const wasConfirming = useRef(false);
 
@@ -43,24 +47,27 @@ export const ActionConfirm = ({
 
   return (
     <Popover open={isOpen} onOpenChange={(open) => setIsOpen(open)}>
-      <PopoverTrigger asChild>
-        {button || (
-          <Button
-            variant="ghost"
-            size="sm"
-            className="h-7 w-7 p-0"
-            onClick={(e) => {
-              e.stopPropagation();
-            }}
-          >
-            <Icons.AlertCircle className="h-3.5 w-3.5" />
-          </Button>
-        )}
-      </PopoverTrigger>
+      <PopoverTrigger
+        render={
+          button || (
+            <Button
+              variant="ghost"
+              size="sm"
+              className="h-7 w-7 p-0"
+              aria-label={confirmTitle}
+              onClick={(e) => {
+                e.stopPropagation();
+              }}
+            >
+              <Icons.AlertCircle className="h-3.5 w-3.5" />
+            </Button>
+          )
+        }
+      />
       <PopoverContent className="w-80" align="end" side={side}>
         <div className="space-y-4">
           <div className="space-y-2">
-            <h4 className="font-medium leading-none">{confirmTitle}</h4>
+            <h4 className="leading-none font-medium">{confirmTitle}</h4>
             <p className="text-muted-foreground text-sm">{confirmMessage}</p>
           </div>
           <div className="flex justify-end gap-2">
@@ -72,16 +79,16 @@ export const ActionConfirm = ({
                 handleCancel?.();
               }}
             >
-              {cancelButtonText}
+              {cancelButtonText ?? t("common:cancel", "Cancel")}
             </Button>
             <Button variant={confirmButtonVariant} size="sm" disabled={isPending} onClick={handleConfirm}>
               {isPending ? (
                 <>
-                  <Icons.Spinner className="mr-2 h-4 w-4 animate-spin" />
-                  {pendingText}
+                  <Spinner className="me-2 h-4 w-4" />
+                  {pendingText ?? t("ui:actionConfirm.pending", "In progress...")}
                 </>
               ) : (
-                confirmButtonText
+                (confirmButtonText ?? t("common:confirm", "Confirm"))
               )}
             </Button>
           </div>

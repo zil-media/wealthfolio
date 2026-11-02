@@ -17,6 +17,7 @@ export function estimateDraftAmount(
     fee?: number;
     tax?: number;
     amount?: number;
+    currency?: string;
   },
   instrumentType?: string,
 ): number | undefined {
@@ -31,11 +32,13 @@ export function estimateDraftAmount(
     unitPrice: draft.unitPrice,
     fee: draft.fee,
     tax: draft.tax,
+    currency: draft.currency,
   });
 }
 
+// Pale pills, matching the activity pages.
 export function getActivityTypeBadge(activityType: string): {
-  variant: "default" | "secondary" | "destructive" | "success";
+  variant: "secondary" | "destructive-subtle" | "success-subtle";
   className: string;
 } {
   const typeUpper = activityType.toUpperCase();
@@ -45,18 +48,15 @@ export function getActivityTypeBadge(activityType: string): {
     case "BUY":
     case "DEPOSIT":
     case "TRANSFER_IN":
-      return { variant: "success", className: "rounded-sm" };
+      return { variant: "success-subtle", className: "rounded-sm" };
     case "SELL":
     case "WITHDRAWAL":
     case "TRANSFER_OUT":
     case "FEE":
     case "TAX":
-      return { variant: "destructive", className: "rounded-sm" };
-    case "SPLIT":
-    case "ADJUSTMENT":
-      return { variant: "secondary", className: "rounded-sm" };
+      return { variant: "destructive-subtle", className: "rounded-sm" };
     default:
-      return { variant: "default", className: "rounded-sm" };
+      return { variant: "secondary", className: "rounded-sm" };
   }
 }
 
@@ -79,15 +79,24 @@ interface ValueFormatter {
   format(value: number): string;
 }
 
+interface AmountFormatter {
+  format(value: number, currency: string): string;
+}
+
 export function createActivityAmountFormatter(
-  formatting: Pick<FormattingApi, "formatDecimal">,
-): ValueFormatter {
+  formatting: Pick<FormattingApi, "formatAmount">,
+): AmountFormatter {
   return {
-    format: (value) =>
-      formatting.formatDecimal(value, {
-        minimumFractionDigits: 2,
-        maximumFractionDigits: 2,
-      }),
+    format: (value, currency) => formatting.formatAmount(value, currency, false),
+  };
+}
+
+/** Unit prices keep the precision the activities table shows. */
+export function createActivityPriceFormatter(
+  formatting: Pick<FormattingApi, "formatPrice">,
+): AmountFormatter {
+  return {
+    format: (value, currency) => formatting.formatPrice(value, currency, false),
   };
 }
 
@@ -105,14 +114,15 @@ export function createActivityQuantityFormatter(
 
 export function formatActivityAmount(
   value: number | null | undefined,
-  formatter: ValueFormatter,
+  formatter: AmountFormatter,
   isHidden: boolean,
-  currency?: string,
+  currency: string,
+  { showCurrency = true }: { showCurrency?: boolean } = {},
 ): string {
   if (value == null) return "-";
   if (isHidden) return "******";
-  const formatted = formatter.format(Math.abs(value));
-  return currency ? `${formatted} ${currency}` : formatted;
+  const formatted = formatter.format(Math.abs(value), currency);
+  return showCurrency && currency ? `${formatted} ${currency}` : formatted;
 }
 
 export function formatActivityQuantity(

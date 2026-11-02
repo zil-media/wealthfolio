@@ -1,0 +1,235 @@
+import { fireEvent, render, screen, within } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
+import { FormattingProvider } from "@wealthfolio/ui";
+import { Activity } from "react";
+import { describe, expect, it, vi } from "vitest";
+import type { TransactionRowVM } from "../lib/transactions-helpers";
+import { SplitTransactionSheet } from "./split-transaction-sheet";
+
+vi.mock("@/hooks/use-platform", () => ({ useIsMobileViewport: () => false }));
+vi.mock("./quick-categorize-popover", () => ({
+  QuickCategorizePopover: ({
+    trigger,
+    onSelect,
+  }: {
+    trigger: React.ReactNode;
+    onSelect: (taxonomy: string, category: string) => void;
+  }) => (
+    <div>
+      {trigger}
+      <button onClick={() => onSelect("spending_categories", "food")}>Choose groceries</button>
+    </div>
+  ),
+}));
+
+function splitRow(amount: string, currency: string, splitAmounts: string[]) {
+  return {
+    activity: {
+      id: "activity-1",
+      amount,
+      currency,
+      notes: "Groceries",
+      cashFlowBucket: "spending",
+      splits: splitAmounts.map((splitAmount, index) => ({
+        id: `split-${index}`,
+        taxonomyId: "spending_categories",
+        categoryId: "food",
+        amount: splitAmount,
+        note: null,
+        sortOrder: index,
+      })),
+    },
+    category: { id: "food", taxonomyId: "spending_categories" },
+    splitCount: splitAmounts.length,
+    needsReview: false,
+  } as unknown as TransactionRowVM;
+}
+
+function renderSheet(row: TransactionRowVM, locale = "DE", onReplace = vi.fn()) {
+  const onSave = vi.fn().mockResolvedValue(undefined);
+  render(
+    <FormattingProvider locale={locale}>
+      <SplitTransactionSheet
+        open
+        row={row}
+        categories={new Map()}
+        isSaving={false}
+        onOpenChange={vi.fn()}
+        onSave={onSave}
+        onClear={vi.fn()}
+        onReplace={onReplace}
+      />
+    </FormattingProvider>,
+  );
+  return onSave;
+}
+
+function savedAmounts(onSave: ReturnType<typeof vi.fn>) {
+  fireEvent.click(screen.getByRole("button", { name: "Save" }));
+  expect(onSave).toHaveBeenCalledOnce();
+  const [, splits] = onSave.mock.calls[0] as [string, { amount: string }[]];
+  return splits.map((split) => split.amount);
+}
+
+describe("SplitTransactionSheet", () => {
+  it("requires explicit confirmation and submits the exact reviewed split state", () => {
+    const row = splitRow("12.34", "USD", ["5", "7.34"]);
+    const onReplace = vi.fn().mockResolvedValue(undefined);
+    renderSheet(row, "en-US", onReplace);
+    const trigger = screen.getByRole("button", { name: "Replace splits with one category" });
+    fireEvent.click(
+      within(trigger.parentElement!).getByRole("button", { name: "Choose groceries" }),
+    );
+    expect(onReplace).not.toHaveBeenCalled();
+    const confirmation = screen.getByRole("alertdialog");
+    expect(confirmation).toHaveTextContent("Replace 2 split allocations with food?");
+    fireEvent.click(
+      within(confirmation).getByRole("button", { name: "Replace splits with one category" }),
+    );
+    expect(onReplace).toHaveBeenCalledExactlyOnceWith(
+      "activity-1",
+      "spending_categories",
+      "food",
+      row.activity.splits,
+    );
+    expect(onReplace.mock.calls[0][3]).not.toBe(row.activity.splits);
+  });
+
+  it("formats the total and remaining amounts for the formatting region", () => {
+    renderSheet(splitRow("1234.5", "EUR", ["1000"]));
+
+    expect(screen.getByText(/1\.234,50\s€/)).toBeInTheDocument();
+    expect(screen.getByText(/^234,50\sEUR$/)).toBeInTheDocument();
+  });
+
+  it("keeps cents for currencies without minor units", () => {
+    renderSheet(splitRow("1000.33", "JPY", ["333.34", "333.33", "333"]));
+
+    expect(screen.getByText(/1\.000,33\s¥/)).toBeInTheDocument();
+    expect(screen.getByText(/^0,66\sJPY$/)).toBeInTheDocument();
+  });
+
+  it("splits a total that isn't a whole number of cents in a three-decimal currency", () => {
+    const onSave = renderSheet(splitRow("-1.235", "KWD", []), "en-US");
+
+    expect(screen.getByText("Remaining of KWD 1.235")).toBeInTheDocument();
+    expect(savedAmounts(onSave)).toEqual(["1.235"]);
+  });
+
+  it.each([
+    ["KWD", "1.235", ["1.000", "0.235"], ["1.000", "0.235"]],
+    ["KWD", "1.000", ["0.333", "0.333", "0.334"], ["0.333", "0.333", "0.334"]],
+    ["KWD", "10.000", ["3.333", "6.667"], ["3.333", "6.667"]],
+    ["KWD", "10.000", ["3.33", "6.67"], ["3.330", "6.670"]],
+    ["USD", "12.34", ["12.34"], ["12.34"]],
+    ["JPY", "1000", ["333", "667"], ["333.00", "667.00"]],
+  ])("sends %s %s split as %j with the amounts entered", (currency, total, lines, sent) => {
+    const onSave = renderSheet(splitRow(total, currency, lines), "en-US");
+
+    expect(savedAmounts(onSave)).toEqual(sent);
+  });
+
+  it("distributes a three-decimal total in its minor units", () => {
+    const onSave = renderSheet(splitRow("1.235", "KWD", ["1.235", "0"]), "en-US");
+
+    fireEvent.click(screen.getByRole("button", { name: "Distribute evenly" }));
+
+    expect(savedAmounts(onSave)).toEqual(["0.618", "0.617"]);
+  });
+
+  it("limits split lines to the decimals they are summed in", async () => {
+    const user = userEvent.setup();
+    renderSheet(splitRow("10", "KWD", ["10"]), "en-US");
+    const [line] = screen.getAllByRole("textbox");
+
+    await user.clear(line);
+    await user.type(line, "3.3337");
+
+    expect(line).toHaveValue("3.333");
+    expect(screen.getByText(/^6\.667\sKWD$/)).toBeInTheDocument();
+  });
+
+  it("keeps edited split lines when its phone screen is shown again", async () => {
+    // A phone screen kept under another one is a hidden <Activity>, whose
+    // effects run again when it is shown.
+    const user = userEvent.setup();
+    const row = splitRow("10", "USD", ["10"]);
+    const view = (hidden: boolean) => (
+      <FormattingProvider locale="en-US">
+        <Activity mode={hidden ? "hidden" : "visible"}>
+          <SplitTransactionSheet
+            open
+            row={row}
+            categories={new Map()}
+            isSaving={false}
+            onOpenChange={vi.fn()}
+            onSave={vi.fn()}
+            onClear={vi.fn()}
+            onReplace={vi.fn()}
+          />
+        </Activity>
+      </FormattingProvider>
+    );
+    const { rerender } = render(view(false));
+    const [line] = screen.getAllByRole("textbox");
+    await user.clear(line);
+    await user.type(line, "4");
+
+    rerender(view(true));
+    rerender(view(false));
+
+    expect(screen.getAllByRole("textbox")[0]).toHaveValue("4");
+  });
+});
+
+it("shows protected splits from a previous taxonomy and exposes explicit clear/replacement", () => {
+  const row = splitRow("25", "USD", ["25"]);
+  row.activity.splits[0].taxonomyId = "income_sources";
+  row.activity.splits[0].categoryId = "old-interest";
+  // Even an older caller's effective split count must not hide stored rows.
+  row.splitCount = 0;
+  renderSheet(row, "en-US");
+  expect(screen.getByText(/These splits use a previous category type/)).toBeInTheDocument();
+  expect(screen.getByText(/old-interest/)).toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "Clear split" })).toBeEnabled();
+  expect(screen.getByRole("button", { name: "Replace splits with one category" })).toBeEnabled();
+});
+
+it("clears the previous row's editor when opening a neutral transaction", () => {
+  const previous = splitRow("25", "USD", ["17"]);
+  previous.activity.splits[0].note = "Previous transaction note";
+  const neutral = splitRow("30", "USD", ["30"]);
+  neutral.activity.id = "neutral-row";
+  neutral.activity.cashFlowBucket = "neutral";
+  neutral.activity.splits[0].categoryId = "old-neutral-category";
+  const onClear = vi.fn().mockResolvedValue(undefined);
+  const onSave = vi.fn();
+  const view = (row: TransactionRowVM) => (
+    <FormattingProvider locale="en-US">
+      <SplitTransactionSheet
+        open
+        row={row}
+        categories={new Map()}
+        isSaving={false}
+        onOpenChange={vi.fn()}
+        onSave={onSave}
+        onClear={onClear}
+        onReplace={vi.fn()}
+      />
+    </FormattingProvider>
+  );
+  const { rerender } = render(view(previous));
+  expect(screen.getByDisplayValue("Previous transaction note")).toBeInTheDocument();
+  rerender(view(neutral));
+  expect(screen.queryAllByRole("textbox")).toHaveLength(0);
+  expect(screen.queryByRole("button", { name: "Add line" })).not.toBeInTheDocument();
+  expect(screen.queryByRole("button", { name: "Distribute evenly" })).not.toBeInTheDocument();
+  expect(screen.queryByRole("button", { name: "Save" })).not.toBeInTheDocument();
+  expect(
+    screen.queryByRole("button", { name: "Replace splits with one category" }),
+  ).not.toBeInTheDocument();
+  expect(screen.getByText(/old-neutral-category/)).toBeInTheDocument();
+  fireEvent.click(screen.getByRole("button", { name: "Clear split" }));
+  expect(onClear).toHaveBeenCalledExactlyOnceWith("neutral-row");
+  expect(onSave).not.toHaveBeenCalled();
+});

@@ -9,7 +9,6 @@ import { useBalancePrivacy } from "@/hooks/use-balance-privacy";
 import type { Account, Activity } from "@/lib/types";
 import { cn, formatDateISO, resolveDisplayTimezone } from "@/lib/utils";
 import {
-  Button,
   Icons,
   PrivacyAmount,
   Sheet,
@@ -20,6 +19,7 @@ import {
   useLocalizationSettings,
   useNumberFormatting,
   type FormattingApi,
+  buttonVariants,
 } from "@wealthfolio/ui";
 
 import { createFormatter } from "@wealthfolio/ui/lib/formatting";
@@ -145,7 +145,7 @@ export function HeatmapCellSheet({
           }}
         >
           <div
-            className="text-[10px] font-semibold uppercase tracking-[0.14em]"
+            className="text-2xs font-semibold tracking-[0.14em] uppercase"
             style={{ color: "var(--heatmap-accent)" }}
           >
             {t("spending:heatmapSheet.eyebrow")}
@@ -220,10 +220,10 @@ export function HeatmapCellSheet({
               {grouped.map((group) => (
                 <section key={group.key}>
                   <header className="mb-2 flex items-baseline justify-between">
-                    <h3 className="text-foreground text-xs font-semibold uppercase tracking-wide">
+                    <h3 className="text-foreground text-xs font-semibold tracking-wide uppercase">
                       {group.label}
                     </h3>
-                    <span className="text-muted-foreground/80 text-[11px] tabular-nums">
+                    <span className="text-muted-foreground/80 text-2xs tabular-nums">
                       {group.items.length} ·{" "}
                       {isBalanceHidden
                         ? "••••"
@@ -248,7 +248,7 @@ export function HeatmapCellSheet({
                         >
                           <div className="min-w-0 flex-1">
                             <div className="flex items-center gap-1.5">
-                              <span className="text-foreground truncate text-[13px] font-medium leading-tight">
+                              <span className="text-foreground truncate text-sm leading-tight font-medium">
                                 {it.notes ?? (
                                   <span className="text-muted-foreground italic">
                                     {it.activityType.toLowerCase()}
@@ -256,12 +256,12 @@ export function HeatmapCellSheet({
                                 )}
                               </span>
                               {isOutlier && (
-                                <span className="rounded-full bg-amber-100/80 px-1.5 py-px text-[9px] font-semibold uppercase tracking-wide text-amber-800 dark:bg-amber-500/20 dark:text-amber-300">
+                                <span className="text-2xs bg-warning-subtle text-warning-subtle-foreground rounded-full px-1.5 py-px font-semibold tracking-wide uppercase">
                                   {t("spending:heatmapSheet.outlier")}
                                 </span>
                               )}
                             </div>
-                            <div className="text-muted-foreground/80 mt-0.5 flex items-center gap-1 text-[10px] leading-tight">
+                            <div className="text-muted-foreground/80 text-2xs mt-0.5 flex items-center gap-1 leading-tight">
                               <span className="tabular-nums">
                                 {formatZonedTime(it.activityDate, zonedFormatting)}
                               </span>
@@ -273,14 +273,14 @@ export function HeatmapCellSheet({
                           </div>
                           <div
                             className={cn(
-                              "shrink-0 text-right text-[13px] font-semibold tabular-nums leading-tight",
+                              "shrink-0 text-end text-sm font-semibold tabular-nums leading-tight",
                               isOutflow ? "text-foreground" : "text-success",
                             )}
                           >
                             {isOutflow ? "−" : "+"}
                             <PrivacyAmount value={safeAmt} currency={it.currency} />
                             {it.currency !== currency && (
-                              <span className="text-muted-foreground/70 ml-1 text-[9px] uppercase tracking-wide">
+                              <span className="text-muted-foreground/70 text-2xs ms-1 tracking-wide uppercase">
                                 {it.currency}
                               </span>
                             )}
@@ -297,12 +297,14 @@ export function HeatmapCellSheet({
 
         {/* ── Footer ─────────────────────────────────────────────────── */}
         <div className="border-border/60 bg-background/70 border-t px-6 py-3 backdrop-blur">
-          <Button asChild size="sm" className="w-full">
-            <Link to={transactionsLink} onClick={() => onOpenChange(false)}>
-              {t("spending:categorySheet.openInTransactions")}
-              <Icons.ArrowRight className="ml-1.5 h-3.5 w-3.5" aria-hidden />
-            </Link>
-          </Button>
+          <Link
+            to={transactionsLink}
+            onClick={() => onOpenChange(false)}
+            className={cn(buttonVariants({ size: "sm" }), "w-full")}
+          >
+            {t("spending:categorySheet.openInTransactions")}
+            <Icons.ArrowRight className="ms-1.5 h-3.5 w-3.5 rtl:rotate-180" aria-hidden />
+          </Link>
         </div>
       </SheetContent>
     </Sheet>
@@ -320,13 +322,13 @@ function Stat({
 }) {
   return (
     <div>
-      <div className="text-muted-foreground/70 text-[10px] font-semibold uppercase tracking-[0.12em]">
+      <div className="text-muted-foreground/70 text-2xs font-semibold tracking-[0.12em] uppercase">
         {label}
       </div>
-      <div className="text-foreground mt-1 text-base font-semibold tabular-nums tracking-tight">
+      <div className="text-foreground mt-1 text-base font-semibold tracking-tight tabular-nums">
         {value}
       </div>
-      {hint && <div className="text-muted-foreground/70 mt-0.5 truncate text-[10px]">{hint}</div>}
+      {hint && <div className="text-muted-foreground/70 text-2xs mt-0.5 truncate">{hint}</div>}
     </div>
   );
 }

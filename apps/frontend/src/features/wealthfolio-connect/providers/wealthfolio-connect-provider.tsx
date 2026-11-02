@@ -9,16 +9,10 @@ import {
   DialogTitle,
 } from "@wealthfolio/ui/components/ui/dialog";
 import { StartupScreen } from "@/components/startup-screen";
-import {
-  getCurrentDeepLinks,
-  isDesktop,
-  listenDeepLink,
-  logger,
-  openUrlInBrowser,
-} from "@/adapters";
+import { getCurrentDeepLinks, isTauri, listenDeepLink, logger, openUrlInBrowser } from "@/adapters";
 import { useAuth } from "@/context/auth-context";
 import { getPlatform } from "@/hooks/use-platform";
-import { CONNECT_ENABLED } from "@/lib/connect-config";
+import { CONNECT_ENABLED, CONNECT_OAUTH_CALLBACK_URL } from "@/lib/connect-config";
 import { QueryKeys } from "@/lib/query-keys";
 import { useQueryClient } from "@tanstack/react-query";
 import { createClient, Session, SupabaseClient, User } from "@supabase/supabase-js";
@@ -69,15 +63,14 @@ const getWebRedirectUrl = () => {
 // For OAuth on desktop, we use a hosted callback page that redirects to the deep link
 // This is necessary because browsers block direct navigation to custom URL schemes
 // Uses env variable in dev, falls back to production URL for bundled builds
-const HOSTED_OAUTH_CALLBACK_URL =
-  (import.meta.env.CONNECT_OAUTH_CALLBACK_URL as string) ||
-  "https://connect.wealthfolio.app/deeplink";
+const HOSTED_OAUTH_CALLBACK_URL = CONNECT_OAUTH_CALLBACK_URL;
 
 const parseConfiguredAuthCallbackUrl = (url: string) =>
   parseAuthCallbackUrl(url, { hostedCallbackUrl: HOSTED_OAUTH_CALLBACK_URL });
 
 const PROCESSED_AUTH_CODE_TTL_MS = 10 * 60 * 1000;
 const MAX_PROCESSED_AUTH_CODES = 20;
+const USER_INFO_RATE_LIMIT_BACKOFF_MS = 60_000;
 
 type PostLoginSyncSource =
   | "auth-callback"
@@ -101,6 +94,7 @@ interface WealthfolioConnectContextValue {
   retrySession: () => Promise<void>;
   isLoading: boolean;
   isLoadingUserInfo: boolean;
+  isUserInfoRateLimited: boolean;
   user: User | null;
   session: Session | null;
   teamId: string | null;
@@ -132,6 +126,7 @@ const disabledContextValue: WealthfolioConnectContextValue = {
   retrySession: async () => {},
   isLoading: false,
   isLoadingUserInfo: false,
+  isUserInfoRateLimited: false,
   user: null,
   session: null,
   teamId: null,
@@ -194,9 +189,19 @@ function EnabledWealthfolioConnectProvider({ children }: { children: ReactNode }
   const sessionGenerationRef = useRef(0);
   const syncAccessRef = useRef<string | null>(null);
   const userInfoRequestRef = useRef(0);
+  const userInfoRetryAtRef = useRef(0);
+  const userInfoRateLimitMessageRef = useRef<string | null>(null);
+  const [userInfoRetryAt, setUserInfoRetryAt] = useState(0);
   const authTransitionRef = useRef<Promise<unknown>>(Promise.resolve());
+  const [userInfo, setUserInfo] = useState<UserInfo | null>(null);
 
   const setSession = useCallback((next: Session | null) => {
+    if (sessionRef.current?.user.id !== next?.user.id) {
+      setUserInfo(null);
+      userInfoRetryAtRef.current = 0;
+      userInfoRateLimitMessageRef.current = null;
+      setUserInfoRetryAt(0);
+    }
     sessionRef.current = next;
     setIsSessionUnavailable(false);
     syncAccessRef.current = null;
@@ -214,7 +219,6 @@ function EnabledWealthfolioConnectProvider({ children }: { children: ReactNode }
     );
     return next;
   }, []);
-  const [userInfo, setUserInfo] = useState<UserInfo | null>(null);
   const [postLoginSyncRequest, setPostLoginSyncRequest] = useState<PostLoginSyncRequest | null>(
     null,
   );
@@ -484,7 +488,7 @@ function EnabledWealthfolioConnectProvider({ children }: { children: ReactNode }
 
   // Listen for deep link events on desktop
   useEffect(() => {
-    if (!isDesktop) return;
+    if (!isTauri) return;
 
     let unlistenFn: (() => Promise<void>) | undefined;
     let cancelled = false;
@@ -592,7 +596,7 @@ function EnabledWealthfolioConnectProvider({ children }: { children: ReactNode }
             password,
             options: {
               emailRedirectTo: beginProfileLogin(
-                isDesktop ? DESKTOP_DEEP_LINK_URL : getWebRedirectUrl(),
+                isTauri ? DESKTOP_DEEP_LINK_URL : getWebRedirectUrl(),
               ),
             },
           });
@@ -630,7 +634,6 @@ function EnabledWealthfolioConnectProvider({ children }: { children: ReactNode }
       setError(null);
 
       try {
-        const isTauri = isDesktop;
         const platform = isTauri ? await getPlatform() : null;
         const isMobile = platform?.is_mobile ?? false;
 
@@ -709,7 +712,6 @@ function EnabledWealthfolioConnectProvider({ children }: { children: ReactNode }
       setError(null);
 
       try {
-        const isTauri = isDesktop;
         const platform = isTauri ? await getPlatform() : null;
         const isMobile = platform?.is_mobile ?? false;
 
@@ -835,12 +837,23 @@ function EnabledWealthfolioConnectProvider({ children }: { children: ReactNode }
       generation === sessionGenerationRef.current && request === userInfoRequestRef.current;
     if (!sessionRef.current) return;
     setIsLoadingUserInfo(true);
-    setError(null);
+    let requestedUserInfo = false;
     try {
       await reconcileSession();
       if (!isCurrent()) return;
+      // Still reconcile local sign-out while suppressing cloud retries during a rate limit.
+      if (performance.now() < userInfoRetryAtRef.current) {
+        setError(userInfoRateLimitMessageRef.current);
+        return;
+      }
+      userInfoRetryAtRef.current = 0;
+      userInfoRateLimitMessageRef.current = null;
+      setUserInfoRetryAt(0);
+      setError(null);
+      requestedUserInfo = true;
       const info = await getUserInfo();
       if (!isCurrent()) return;
+      userInfoRetryAtRef.current = 0;
       const access = hasBrokerSync(info)
         ? "broker"
         : isSubscriptionStatusActive(info.team?.subscription_status)
@@ -854,12 +867,45 @@ function EnabledWealthfolioConnectProvider({ children }: { children: ReactNode }
     } catch (err) {
       if (!isCurrent()) return;
       logger.error("Failed to fetch user info from API.");
-      setUserInfo(null);
-      setError(err instanceof Error ? err.message : t("connect:authErrors.fetchUserInfoFailed"));
+      const message = err instanceof Error ? err.message : typeof err === "string" ? err : "";
+      const rateLimited = requestedUserInfo && /\bAPI error (\d{3})\b/.exec(message)?.[1] === "429";
+      if (rateLimited) {
+        const retryAt = performance.now() + USER_INFO_RATE_LIMIT_BACKOFF_MS;
+        userInfoRetryAtRef.current = retryAt;
+        userInfoRateLimitMessageRef.current = message;
+        setUserInfoRetryAt(retryAt);
+      } else if (requestedUserInfo || performance.now() >= userInfoRetryAtRef.current) {
+        userInfoRetryAtRef.current = 0;
+        userInfoRateLimitMessageRef.current = null;
+        setUserInfoRetryAt(0);
+        setUserInfo(null);
+      }
+      setError(
+        err instanceof Error || rateLimited ? message : t("connect:authErrors.fetchUserInfoFailed"),
+      );
     } finally {
       if (isCurrent()) setIsLoadingUserInfo(false);
     }
   }, [reconcileSession, requestPostLoginSync, t]);
+
+  // The regular poll can run just before the cooldown expires. Retry at its own deadline.
+  useEffect(() => {
+    if (!userInfoRetryAt) return;
+    let timeout: number;
+    const retryWhenReady = () => {
+      const remaining = userInfoRetryAtRef.current - performance.now();
+      if (remaining > 0) {
+        timeout = window.setTimeout(retryWhenReady, Math.ceil(remaining));
+      } else if (userInfoRetryAtRef.current) {
+        void refetchUserInfo();
+      }
+    };
+    timeout = window.setTimeout(
+      retryWhenReady,
+      Math.ceil(Math.max(0, userInfoRetryAt - performance.now())),
+    );
+    return () => window.clearTimeout(timeout);
+  }, [userInfoRetryAt, refetchUserInfo]);
 
   useEffect(() => {
     if (session) void refetchUserInfo();
@@ -899,6 +945,7 @@ function EnabledWealthfolioConnectProvider({ children }: { children: ReactNode }
       retrySession,
       isLoading,
       isLoadingUserInfo,
+      isUserInfoRateLimited: userInfoRetryAt > 0,
       user,
       session,
       teamId,
@@ -922,6 +969,7 @@ function EnabledWealthfolioConnectProvider({ children }: { children: ReactNode }
       retrySession,
       isLoading,
       isLoadingUserInfo,
+      userInfoRetryAt,
       user,
       teamId,
       userInfo,

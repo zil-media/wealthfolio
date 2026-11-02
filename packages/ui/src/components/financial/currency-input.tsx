@@ -1,7 +1,7 @@
-import { forwardRef, useCallback, useRef, useState } from "react";
+import { forwardRef, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { useIsMobile as defaultUseIsMobile } from "../../hooks/use-mobile";
-import { worldCurrencies } from "../../lib/currencies";
+import { getCurrencyDisplayLabel, worldCurrencies } from "../../lib/currencies";
 import { cn } from "../../lib/utils";
 import type { ButtonProps } from "../ui/button";
 import { Button } from "../ui/button";
@@ -40,7 +40,7 @@ export const CurrencyInput = forwardRef<HTMLButtonElement, CurrencyInputProps>(
       value,
       onChange,
       className,
-      placeholder = "Select account currency",
+      placeholder,
       displayMode = "auto",
       valueDisplay = "label",
       autoFocusSearch = false,
@@ -52,7 +52,10 @@ export const CurrencyInput = forwardRef<HTMLButtonElement, CurrencyInputProps>(
     },
     ref,
   ) => {
-    const { t } = useTranslation();
+    const { t, i18n } = useTranslation();
+    const currencyLabel = (currency: (typeof worldCurrencies)[number]) =>
+      getCurrencyDisplayLabel(currency, i18n.resolvedLanguage ?? i18n.language, t);
+    const placeholderText = placeholder ?? t("ui:currency.placeholder", "Select currency");
     const isControlled = openProp !== undefined;
     const [uncontrolledOpen, setUncontrolledOpen] = useState(false);
     const open = isControlled ? openProp : uncontrolledOpen;
@@ -77,9 +80,9 @@ export const CurrencyInput = forwardRef<HTMLButtonElement, CurrencyInputProps>(
       ? valueDisplay === "code"
         ? selectedCurrency.value
         : valueDisplay === "code-label"
-          ? `${selectedCurrency.value} - ${selectedCurrency.label}`
-          : selectedCurrency.label
-      : value || placeholder;
+          ? `${selectedCurrency.value} - ${currencyLabel(selectedCurrency)}`
+          : currencyLabel(selectedCurrency)
+      : value || placeholderText;
 
     const handleSelect = (currencyValue: string) => {
       onChange(currencyValue);
@@ -95,44 +98,32 @@ export const CurrencyInput = forwardRef<HTMLButtonElement, CurrencyInputProps>(
       return trimmed;
     };
 
-    const handleOpenAutoFocus = useCallback(
-      (e: Event) => {
-        if (!autoFocusSearch) return;
-        e.preventDefault();
-        if (isMobile) {
-          searchInputRef.current?.focus();
-        } else {
-          desktopCommandInputRef.current?.focus();
-        }
-      },
-      [autoFocusSearch, isMobile],
-    );
-
     if (isMobile) {
       const filteredCurrencies = worldCurrencies.filter(
         (curr) =>
           curr.value.toLowerCase().includes(searchQuery.toLowerCase()) ||
-          curr.label.toLowerCase().includes(searchQuery.toLowerCase()),
+          curr.label.toLowerCase().includes(searchQuery.toLowerCase()) ||
+          currencyLabel(curr).toLowerCase().includes(searchQuery.toLowerCase()),
       );
       const customCurrencyValue = getCustomCurrencyValue(searchQuery);
       const mobileDisplayText = selectedCurrency
         ? valueDisplay === "code"
           ? selectedCurrency.value
           : valueDisplay === "label"
-            ? selectedCurrency.label
-            : `${selectedCurrency.value} - ${selectedCurrency.label}`
-        : value || placeholder;
+            ? currencyLabel(selectedCurrency)
+            : `${selectedCurrency.value} - ${currencyLabel(selectedCurrency)}`
+        : value || placeholderText;
 
       return (
         <>
           <Button
             ref={ref}
             type="button"
-            variant="outline"
+            variant="field"
             role="combobox"
             aria-expanded={open}
             className={cn(
-              "h-input-height w-full justify-between truncate rounded-md font-normal",
+              "h-input-height w-full justify-between truncate",
               !value && "text-muted-foreground",
               className,
             )}
@@ -140,24 +131,22 @@ export const CurrencyInput = forwardRef<HTMLButtonElement, CurrencyInputProps>(
             {...props}
           >
             <span className="truncate">{mobileDisplayText}</span>
-            <Icons.ChevronsUpDown className="ml-2 h-4 w-4 shrink-0 opacity-50" />
+            <Icons.ChevronsUpDown className="ms-2 h-4 w-4 shrink-0 opacity-50" />
           </Button>
           <Sheet open={open} onOpenChange={setOpen}>
             <SheetContent
               side="bottom"
-              className="rounded-t-4xl mx-1 h-[85vh] p-0"
-              onOpenAutoFocus={handleOpenAutoFocus}
+              className="mx-1 h-[85vh] rounded-t-4xl p-0"
+              initialFocus={autoFocusSearch ? searchInputRef : undefined}
             >
-              <SheetHeader className="border-border border-b px-6 pb-4 pt-6">
+              <SheetHeader className="border-border border-b px-6 pt-6 pb-4">
                 <SheetTitle>{t("ui:currency.selectTitle", "Select Currency")}</SheetTitle>
-                <SheetDescription>
-                  {t("ui:currency.selectDescription", "Choose your activity currency")}
-                </SheetDescription>
+                <SheetDescription>{t("ui:currency.selectDescription", "Choose a currency")}</SheetDescription>
               </SheetHeader>
 
               <div className="flex h-[calc(85vh-7rem)] flex-col">
                 <div className="border-border border-b px-6 py-4">
-                  <h3 className="text-foreground mb-3 text-sm font-semibold">Popular</h3>
+                  <h3 className="text-foreground mb-3 text-sm font-semibold">{t("ui:currency.popular", "Popular")}</h3>
                   <div className="grid grid-cols-3 gap-2">
                     {popularCurrencies.map((curr) => (
                       <button
@@ -179,21 +168,21 @@ export const CurrencyInput = forwardRef<HTMLButtonElement, CurrencyInputProps>(
                       }}
                       className="card-mobile hover:bg-accent active:bg-accent/80 flex items-center justify-center border py-3 font-semibold transition-colors"
                     >
-                      <Icons.Search className="mr-1 h-4 w-4" />
+                      <Icons.Search className="me-1 h-4 w-4" />
                       {t("ui:currency.more", "More")}
                     </button>
                   </div>
                 </div>
                 <div className="border-border border-b px-6 py-4">
                   <div className="relative">
-                    <Icons.Search className="text-muted-foreground absolute left-4 top-1/2 h-5 w-5 -translate-y-1/2" />
+                    <Icons.Search className="text-muted-foreground absolute start-4 top-1/2 h-5 w-5 -translate-y-1/2" />
                     <Input
                       ref={searchInputRef}
                       type="text"
                       placeholder={t("ui:currency.searchAll", "Search all currencies...")}
                       value={searchQuery}
                       onChange={(e) => setSearchQuery(e.target.value)}
-                      className="pl-12"
+                      className="ps-12"
                     />
                   </div>
                 </div>
@@ -212,7 +201,7 @@ export const CurrencyInput = forwardRef<HTMLButtonElement, CurrencyInputProps>(
                           key={curr.value}
                           onClick={() => handleSelect(curr.value)}
                           className={cn(
-                            "card-mobile flex w-full items-center gap-3 border border-transparent text-left transition-colors",
+                            "card-mobile flex w-full items-center gap-3 border border-transparent text-start transition-colors",
                             value === curr.value
                               ? "border-primary bg-primary/10"
                               : "hover:bg-accent active:bg-accent/80 focus:border-primary focus:outline-none",
@@ -225,7 +214,7 @@ export const CurrencyInput = forwardRef<HTMLButtonElement, CurrencyInputProps>(
                             <div className="flex items-center gap-2">
                               <span className="text-foreground truncate font-semibold">{curr.value}</span>
                             </div>
-                            <div className="text-muted-foreground mt-0.5 truncate text-sm">{curr.label}</div>
+                            <div className="text-muted-foreground mt-0.5 truncate text-sm">{currencyLabel(curr)}</div>
                           </div>
                           {value === curr.value && <Icons.Check className="text-primary h-5 w-5 flex-shrink-0" />}
                         </button>
@@ -271,25 +260,23 @@ export const CurrencyInput = forwardRef<HTMLButtonElement, CurrencyInputProps>(
 
     return (
       <Popover open={open} onOpenChange={setOpen} modal={true}>
-        <PopoverTrigger asChild>
-          <Button
-            ref={ref}
-            type="button"
-            variant="outline"
-            role="combobox"
-            aria-expanded={open}
-            className={cn(
-              "h-input-height w-full justify-between rounded-md",
-              !value && "text-muted-foreground",
-              className,
-            )}
-            {...props}
-          >
-            <span className="truncate">{buttonLabel}</span>
-            <Icons.ChevronsUpDown className="ml-2 h-4 w-4 shrink-0 opacity-50" />
-          </Button>
+        <PopoverTrigger
+          render={
+            <Button
+              ref={ref}
+              type="button"
+              variant="field"
+              role="combobox"
+              aria-expanded={open}
+              className={cn("h-input-height w-full justify-between", !value && "text-muted-foreground", className)}
+              {...props}
+            />
+          }
+        >
+          <span className="truncate">{buttonLabel}</span>
+          <Icons.ChevronsUpDown className="ms-2 h-4 w-4 shrink-0 opacity-50" />
         </PopoverTrigger>
-        <PopoverContent className="w-full p-0" onOpenAutoFocus={handleOpenAutoFocus}>
+        <PopoverContent className="w-full p-0" initialFocus={autoFocusSearch ? desktopCommandInputRef : undefined}>
           <Command>
             <CommandInput
               ref={desktopCommandInputRef}
@@ -327,15 +314,16 @@ export const CurrencyInput = forwardRef<HTMLButtonElement, CurrencyInputProps>(
                   )}
                   {worldCurrencies.map((currency) => (
                     <CommandItem
-                      value={currency.label}
+                      value={currency.value}
+                      keywords={[currency.label, currencyLabel(currency)]}
                       key={currency.value}
                       onSelect={() => {
                         handleSelect(currency.value);
                       }}
                     >
-                      {currency.label}
+                      {currencyLabel(currency)}
                       <Icons.Check
-                        className={cn("ml-auto h-4 w-4", currency.value === value ? "opacity-100" : "opacity-0")}
+                        className={cn("ms-auto h-4 w-4", currency.value === value ? "opacity-100" : "opacity-0")}
                       />
                     </CommandItem>
                   ))}

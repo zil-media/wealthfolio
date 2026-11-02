@@ -2,6 +2,7 @@ import { Separator } from "@wealthfolio/ui/components/ui/separator";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@wealthfolio/ui/components/ui/tabs";
 import { useTranslation } from "react-i18next";
 import { SettingsHeader } from "../settings-header";
+import { CloudBackupCard } from "./cloud-backup-card";
 import { BackupRestoreForm } from "./backup-restore-form";
 import { ExportForm } from "./exports-form";
 
@@ -10,7 +11,7 @@ const ExportSettingsPage = () => {
   return (
     <div className="space-y-6">
       <SettingsHeader
-        heading={t("settings:export_full_title")}
+        heading={t("settings:nav.items.backup_export")}
         text={t("settings:export_description")}
       />
       <Separator />
@@ -21,7 +22,8 @@ const ExportSettingsPage = () => {
           <TabsTrigger value="export">{t("settings:export_title")}</TabsTrigger>
         </TabsList>
 
-        <TabsContent value="backup" className="mt-6">
+        <TabsContent value="backup" className="mt-6 space-y-6">
+          <CloudBackupCard />
           <BackupRestoreForm />
         </TabsContent>
 

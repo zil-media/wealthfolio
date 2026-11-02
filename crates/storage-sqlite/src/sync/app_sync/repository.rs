@@ -9,6 +9,7 @@ use std::collections::{HashMap, HashSet};
 use std::sync::{Arc, Mutex, OnceLock};
 use uuid::Uuid;
 
+use wealthfolio_core::activities::stored_type_override;
 use wealthfolio_core::constants::DECIMAL_PRECISION;
 use wealthfolio_core::errors::{DatabaseError, Error, Result};
 use wealthfolio_core::portfolio::snapshot::Position;
@@ -21,7 +22,7 @@ use crate::addons::addon_storage_id;
 use crate::db::{get_connection, WriteHandle};
 use crate::errors::StorageError;
 use crate::schema::{
-    addon_storage, spending_preset_rule_deletions, sync_applied_events, sync_cursor,
+    activities, addon_storage, spending_preset_rule_deletions, sync_applied_events, sync_cursor,
     sync_device_config, sync_engine_state, sync_entity_metadata, sync_outbox, sync_table_state,
 };
 use crate::spending::deterministic_ids::preset_rule_deletion_id;
@@ -35,7 +36,7 @@ use super::model::{
     SyncOutboxEventDB, SyncTableStateDB,
 };
 use super::outbox_models::{is_syncable_app_preference_key, is_syncable_spending_setting_key};
-use wealthfolio_core::settings::INSIGHTS_OVERVIEW_LAYOUT_KEY;
+use wealthfolio_core::settings::{GAIN_COLORS_KEY, INSIGHTS_OVERVIEW_LAYOUT_KEY};
 
 fn enum_to_db<T: serde::Serialize>(value: &T) -> Result<String> {
     Ok(serde_json::to_string(value)?.trim_matches('"').to_string())
@@ -190,7 +191,7 @@ impl SyncRowFilter {
                 )"
             }
             Self::SyncableSettings => {
-                static FILTER: std::sync::LazyLock<String> = std::sync::LazyLock::new(|| format!("setting_key IN ('spending.enabled', 'spending.account_ids', 'spending.excluded_category_ids', '{}')", INSIGHTS_OVERVIEW_LAYOUT_KEY));
+                static FILTER: std::sync::LazyLock<String> = std::sync::LazyLock::new(|| format!("setting_key IN ('spending.enabled', 'spending.account_ids', 'spending.excluded_category_ids', '{}', '{}')", INSIGHTS_OVERVIEW_LAYOUT_KEY, GAIN_COLORS_KEY));
                 FILTER.as_str()
             },
             Self::UserTaxonomies => "is_system = 0",
@@ -461,6 +462,12 @@ fn apply_value_migration(table: &str, column: &str, value: serde_json::Value) ->
             }
             value
         }
+        // Older builds stored a type override untrimmed; store it as every write does.
+        ("activities", "activity_type_override") => match value {
+            serde_json::Value::String(s) => stored_type_override(Some(&s))
+                .map_or(serde_json::Value::Null, serde_json::Value::String),
+            value => value,
+        },
         _ => value,
     }
 }
@@ -562,6 +569,193 @@ fn normalize_payload_fields(
     }
 
     Ok(normalized_fields)
+}
+
+/// A quote's timestamp is a UTC instant and its day that instant's UTC date
+/// (engine rules R3.2, R6.1): the portfolio engine reads the timestamp,
+/// repositories and change tracking the day, and local writes store both as
+/// below. A synced row is rewritten the same way, whatever day it carries.
+/// Returns false when the timestamp cannot be read; a row without one is left
+/// to the table's constraints.
+fn normalize_synced_quote_time(fields: &mut Vec<(String, serde_json::Value)>) -> bool {
+    let Some(timestamp) = fields
+        .iter_mut()
+        .find(|(column, _)| column == "timestamp")
+        .map(|(_, value)| value)
+    else {
+        return true;
+    };
+    let Some((instant, day)) = timestamp.as_str().and_then(canonical_quote_time) else {
+        return false;
+    };
+    *timestamp = serde_json::Value::String(instant);
+    let day = serde_json::Value::String(day);
+    match fields.iter_mut().find(|(column, _)| column == "day") {
+        Some((_, value)) => *value = day,
+        None => fields.push(("day".to_string(), day)),
+    }
+    true
+}
+
+/// A quote timestamp as a UTC instant, and its UTC date. An RFC 3339 instant
+/// at UTC is kept as written; one at another offset, or a naive one (read as
+/// UTC), is written as local writes write it.
+fn canonical_quote_time(timestamp: &str) -> Option<(String, String)> {
+    let (instant, text) = match DateTime::parse_from_rfc3339(timestamp) {
+        Ok(instant) if instant.offset().local_minus_utc() == 0 => {
+            (instant.with_timezone(&Utc), timestamp.to_string())
+        }
+        Ok(instant) => {
+            let instant = instant.with_timezone(&Utc);
+            (instant, instant.to_rfc3339())
+        }
+        Err(_) => {
+            let instant = chrono::NaiveDateTime::parse_from_str(timestamp, "%Y-%m-%dT%H:%M:%S%.f")
+                .or_else(|_| {
+                    chrono::NaiveDateTime::parse_from_str(timestamp, "%Y-%m-%d %H:%M:%S%.f")
+                })
+                .ok()?
+                .and_utc();
+            (instant, instant.to_rfc3339())
+        }
+    };
+    Some((text, instant.format("%Y-%m-%d").to_string()))
+}
+
+/// Applies `canonical_quote_time` to quotes a snapshot restore copied, and
+/// drops those whose timestamp cannot be read (R6.1). Rewritten rows are set
+/// aside and put back, so days that trade places never collide on the way;
+/// a row landing on a day another quote holds is dropped: the row already
+/// there is kept, else the lowest id.
+fn normalize_restored_quotes(conn: &mut SqliteConnection) -> Result<()> {
+    #[derive(QueryableByName)]
+    struct QuoteTime {
+        #[diesel(sql_type = diesel::sql_types::Text)]
+        id: String,
+        #[diesel(sql_type = diesel::sql_types::Text)]
+        day: String,
+        #[diesel(sql_type = diesel::sql_types::Text)]
+        timestamp: String,
+    }
+    let run = |conn: &mut SqliteConnection, sql: &str| {
+        diesel::sql_query(sql)
+            .execute(conn)
+            .map_err(|err| restore_sql_error("normalize", "quotes", err))
+    };
+    let rows = diesel::sql_query("SELECT id, day, timestamp FROM quotes")
+        .load::<QuoteTime>(conn)
+        .map_err(|err| restore_sql_error("normalize", "quotes", err))?;
+    run(
+        conn,
+        "CREATE TEMP TABLE _quote_times (id TEXT PRIMARY KEY, day TEXT, timestamp TEXT)",
+    )?;
+    let mut unreadable = 0usize;
+    let mut rewritten = 0usize;
+    for row in rows {
+        let (timestamp, day) = match canonical_quote_time(&row.timestamp) {
+            Some((timestamp, day)) if timestamp == row.timestamp && day == row.day => continue,
+            Some(canonical) => canonical,
+            None => {
+                unreadable += 1;
+                (String::new(), String::new())
+            }
+        };
+        rewritten += 1;
+        diesel::sql_query("INSERT INTO _quote_times (id, day, timestamp) VALUES (?, ?, ?)")
+            .bind::<diesel::sql_types::Text, _>(&row.id)
+            .bind::<diesel::sql_types::Text, _>(day)
+            .bind::<diesel::sql_types::Text, _>(timestamp)
+            .execute(conn)
+            .map_err(|err| restore_sql_error("normalize", "quotes", err))?;
+    }
+    run(
+        conn,
+        "CREATE TEMP TABLE _moved_quotes AS \
+         SELECT * FROM quotes WHERE id IN (SELECT id FROM _quote_times WHERE day <> '')",
+    )?;
+    run(
+        conn,
+        "DELETE FROM quotes WHERE id IN (SELECT id FROM _quote_times)",
+    )?;
+    run(
+        conn,
+        "UPDATE _moved_quotes SET \
+         day = (SELECT day FROM _quote_times t WHERE t.id = _moved_quotes.id), \
+         timestamp = (SELECT timestamp FROM _quote_times t WHERE t.id = _moved_quotes.id)",
+    )?;
+    let restored = run(
+        conn,
+        "INSERT OR IGNORE INTO quotes SELECT * FROM _moved_quotes ORDER BY id",
+    )?;
+    run(conn, "DROP TABLE _moved_quotes")?;
+    run(conn, "DROP TABLE _quote_times")?;
+    if unreadable > 0 {
+        log::warn!("Snapshot restore skipped {unreadable} quotes with an unreadable timestamp");
+    }
+    let colliding = rewritten - unreadable - restored;
+    if colliding > 0 {
+        log::warn!(
+            "Snapshot restore skipped {colliding} quotes whose day another quote of the same asset and source holds"
+        );
+    }
+    Ok(())
+}
+
+/// Stores the type overrides a snapshot restore copied as every write stores
+/// them (`stored_type_override`): a snapshot exported by an older client may
+/// hold blank or untrimmed ones.
+fn normalize_restored_type_overrides(conn: &mut SqliteConnection) -> Result<()> {
+    let overrides = activities::table
+        .filter(activities::activity_type_override.is_not_null())
+        .select((activities::id, activities::activity_type_override))
+        .load::<(String, Option<String>)>(conn)
+        .map_err(|err| restore_sql_error("normalize", "activities", err))?;
+    for (id, value) in overrides {
+        let stored = stored_type_override(value.as_deref());
+        if stored != value {
+            diesel::update(activities::table.find(id))
+                .set(activities::activity_type_override.eq(stored))
+                .execute(conn)
+                .map_err(|err| restore_sql_error("normalize", "activities", err))?;
+        }
+    }
+    Ok(())
+}
+
+/// Whether another quote holds the asset, day and source of a synced quote
+/// (rules R6.1): the row already there is kept.
+fn synced_quote_day_is_taken(
+    conn: &mut SqliteConnection,
+    fields: &[(String, serde_json::Value)],
+    id: &str,
+) -> Result<bool> {
+    #[derive(QueryableByName)]
+    struct Count {
+        #[diesel(sql_type = diesel::sql_types::BigInt)]
+        count: i64,
+    }
+    let field = |name: &str| {
+        fields
+            .iter()
+            .find(|(column, _)| column == name)
+            .and_then(|(_, value)| value.as_str())
+    };
+    let (Some(asset_id), Some(day), Some(source)) =
+        (field("asset_id"), field("day"), field("source"))
+    else {
+        return Ok(false);
+    };
+    let taken = diesel::sql_query(
+        "SELECT count(*) AS count FROM quotes \
+         WHERE asset_id = ? AND day = ? AND source = ? AND id <> ?",
+    )
+    .bind::<diesel::sql_types::Text, _>(asset_id)
+    .bind::<diesel::sql_types::Text, _>(day)
+    .bind::<diesel::sql_types::Text, _>(source)
+    .bind::<diesel::sql_types::Text, _>(id)
+    .get_result::<Count>(conn)
+    .map_err(StorageError::from)?;
+    Ok(taken.count > 0)
 }
 
 fn synced_snapshot_payload_is_safe(fields: &[(String, serde_json::Value)]) -> bool {
@@ -769,11 +963,19 @@ fn reset_restore_dependent_read_models(
         || table_set.contains("assets")
         || table_set.contains("activities")
     {
+        // Derived rows go, so everything is stale: the next run rebuilds it.
         for table in ["lot_disposals", "lots", "daily_account_valuation"] {
             diesel::sql_query(format!("DELETE FROM {}", quote_identifier(table)))
                 .execute(conn)
                 .map_err(StorageError::from)?;
         }
+        diesel::sql_query(
+            "INSERT INTO projection_state (scope, dirty_from, version) VALUES ('@all', '0001-01-01', 1) \
+             ON CONFLICT (scope) DO UPDATE SET dirty_from = '0001-01-01', \
+             version = projection_state.version + 1",
+        )
+        .execute(conn)
+        .map_err(StorageError::from)?;
     }
 
     Ok(())
@@ -1035,12 +1237,158 @@ where
         return Ok(());
     }
 
-    Err(Error::Database(DatabaseError::ForeignKeyViolation(
-        format!(
-            "Replay batch foreign key check failed: {}",
-            foreign_key_violation_details(&rows)
-        ),
+    Err(foreign_key_violation_error(&rows))
+}
+
+fn foreign_key_violation_error(rows: &[ForeignKeyCheckRow]) -> Error {
+    Error::Database(DatabaseError::ForeignKeyViolation(format!(
+        "Replay batch foreign key check failed: {}",
+        foreign_key_violation_details(rows)
     )))
+}
+
+type RemoteReplayEvent = (
+    SyncEntity,
+    String,
+    SyncOperation,
+    String,
+    String,
+    i64,
+    serde_json::Value,
+);
+
+/// Why one replay attempt of a batch stopped.
+enum ReplayAttemptError {
+    /// Events that broke the attempt, by index, with the error to log. The
+    /// batch drops them and replays the rest of the page from the start.
+    Culprits(Vec<(usize, String)>),
+    /// A failure no event in the page explains. The whole batch fails.
+    Failed(Error),
+}
+
+impl From<diesel::result::Error> for ReplayAttemptError {
+    fn from(err: diesel::result::Error) -> Self {
+        Self::Failed(StorageError::from(err).into())
+    }
+}
+
+/// The table a replayed event of this entity writes, and the column that holds
+/// the event's entity ID. Taxonomy bundles write their categories outside the
+/// generic mapping; each category row names its bundle by `taxonomy_id`.
+fn replay_checked_table(entity: &SyncEntity) -> Option<(&'static str, &'static str)> {
+    match entity {
+        SyncEntity::CustomTaxonomy => Some(("taxonomy_categories", "taxonomy_id")),
+        _ => entity_storage_mapping(entity),
+    }
+}
+
+/// Applies the page's events in order, except the skipped ones, then checks
+/// foreign keys. Runs inside a savepoint, so an error rolls back this attempt.
+fn apply_replay_attempt_tx(
+    conn: &mut SqliteConnection,
+    pending: &BrokerActivityPatchQueue,
+    events: &[RemoteReplayEvent],
+    skipped: &[bool],
+    fk_check_tables: &[&str],
+) -> std::result::Result<usize, ReplayAttemptError> {
+    // Events whose write this attempt applied; only they can own a bad row.
+    let mut wrote = vec![false; events.len()];
+    for (index, (entity, entity_id, op, event_id, client_timestamp, seq, payload)) in
+        events.iter().enumerate()
+    {
+        if skipped[index] {
+            continue;
+        }
+        match apply_remote_event_lww_tx(
+            conn,
+            pending,
+            *entity,
+            entity_id.clone(),
+            *op,
+            event_id.clone(),
+            client_timestamp.clone(),
+            *seq,
+            payload.clone(),
+        ) {
+            Ok(applied) => wrote[index] = applied,
+            Err(err) => {
+                let err = replay_apply_error(*entity, entity_id, *op, event_id, *seq, err);
+                return Err(ReplayAttemptError::Culprits(vec![(index, err.to_string())]));
+            }
+        }
+    }
+
+    let violations = collect_foreign_key_violations_tx(conn, fk_check_tables.iter().copied())
+        .map_err(ReplayAttemptError::Failed)?;
+    if violations.is_empty() {
+        return Ok(wrote.iter().filter(|wrote| **wrote).count());
+    }
+    match foreign_key_culprits_tx(conn, &violations, events, &wrote)
+        .map_err(ReplayAttemptError::Failed)?
+    {
+        Some(culprits) => Err(ReplayAttemptError::Culprits(culprits)),
+        None => Err(ReplayAttemptError::Failed(foreign_key_violation_error(
+            &violations,
+        ))),
+    }
+}
+
+/// Maps each violating row to the last event in the page that wrote it in this
+/// attempt. An event that last-writer-wins skipped did not write the row, so it
+/// is never blamed. Returns `None` when a violation has no such event, for
+/// example a row that was already orphaned before the batch.
+fn foreign_key_culprits_tx(
+    conn: &mut SqliteConnection,
+    violations: &[ForeignKeyCheckRow],
+    events: &[RemoteReplayEvent],
+    wrote: &[bool],
+) -> Result<Option<Vec<(usize, String)>>> {
+    let mut culprits: Vec<(usize, String)> = Vec::new();
+    for violation in violations {
+        let Some(rowid) = violation.rowid else {
+            return Ok(None);
+        };
+        let Some((_, id_column)) = events
+            .iter()
+            .filter_map(|(entity, ..)| replay_checked_table(entity))
+            .find(|(table, _)| *table == violation.table)
+        else {
+            return Ok(None);
+        };
+        let sql = format!(
+            "SELECT CAST({} AS TEXT) AS id FROM {} WHERE rowid = {}",
+            quote_identifier(id_column),
+            quote_identifier(&violation.table),
+            rowid
+        );
+        let Some(row) = diesel::sql_query(sql)
+            .get_result::<TextIdRow>(conn)
+            .optional()
+            .map_err(StorageError::from)?
+        else {
+            return Ok(None);
+        };
+        let culprit = events
+            .iter()
+            .enumerate()
+            .rev()
+            .find(|(index, (entity, entity_id, op, ..))| {
+                wrote[*index]
+                    && matches!(op, SyncOperation::Create | SyncOperation::Update)
+                    && *entity_id == row.id
+                    && replay_checked_table(entity)
+                        .is_some_and(|(table, _)| table == violation.table)
+            })
+            .map(|(index, _)| index);
+        let Some(index) = culprit else {
+            return Ok(None);
+        };
+        if !culprits.iter().any(|(existing, _)| *existing == index) {
+            let err = foreign_key_violation_error(std::slice::from_ref(violation));
+            culprits.push((index, err.to_string()));
+        }
+    }
+    Ok(Some(culprits))
 }
 
 fn portfolio_account_foreign_key_message_tx(
@@ -1417,15 +1765,12 @@ fn should_apply_against_metadata(
     event_id: &str,
 ) -> Result<bool> {
     let previous_op = enum_from_db::<SyncOperation>(&meta.last_op)?;
-    // Pure last-writer-wins entities: a delete is just another write to a key
-    // that can be legitimately re-used, NOT a permanent tombstone. Every op
-    // (create/update/delete) competes on timestamp+event_id. The delete-wins /
+    // Entities whose IDs come from natural keys: a delete is just another write
+    // to a key that can be legitimately re-used, NOT a permanent tombstone. Every
+    // op (create/update/delete) competes on timestamp+event_id. The delete-wins /
     // tombstone branches below would otherwise let a stale delete clobber a newer
     // value and permanently swallow any later re-create of a deleted key.
-    if matches!(
-        entity,
-        SyncEntity::SpendingPresetRuleDeletion | SyncEntity::AddonStorage | SyncEntity::AssetLogo
-    ) {
+    if entity.reuses_entity_ids() {
         Ok(should_apply_lww(
             &meta.last_client_timestamp,
             &meta.last_event_id,
@@ -1529,6 +1874,20 @@ fn tombstone_spending_children_for_removed_categories(
             .load::<TextIdRow>(conn)
             .map_err(StorageError::from)?;
         for row in rows {
+            // Never lower a newer watermark: under last-writer-wins a removal
+            // stamped earlier (another device's clock) would let a delayed write
+            // through here that the device which removed the category rejects.
+            let entity_db = enum_to_db(&entity)?;
+            if let Some(meta) = load_entity_metadata_tx(conn, &entity_db, &row.id)? {
+                if !should_apply_lww(
+                    &meta.last_client_timestamp,
+                    &meta.last_event_id,
+                    client_timestamp,
+                    event_id,
+                ) {
+                    continue;
+                }
+            }
             upsert_entity_metadata_tx(
                 conn,
                 entity,
@@ -2073,6 +2432,21 @@ fn apply_remote_event_lww_tx(
                         .map(|(k, v)| (k.clone(), v.clone()))
                         .collect();
                     let mut fields = normalize_payload_fields(conn, table_name, fields)?;
+                    if entity == SyncEntity::Quote && !normalize_synced_quote_time(&mut fields) {
+                        log::warn!(
+                            "Skipping synced quote '{}' with an unreadable timestamp",
+                            entity_id_value
+                        );
+                        applied_entity_change = false;
+                    } else if entity == SyncEntity::Quote
+                        && synced_quote_day_is_taken(conn, &fields, &entity_id_value)?
+                    {
+                        log::warn!(
+                            "Skipping synced quote '{}': another quote of its asset and source holds its day",
+                            entity_id_value
+                        );
+                        applied_entity_change = false;
+                    }
                     if entity == SyncEntity::Snapshot && !synced_snapshot_payload_is_safe(&fields) {
                         log::warn!(
                             "Skipping synced snapshot '{}' with an unsupported source or malformed date",
@@ -2584,6 +2958,21 @@ impl AppSyncRepository {
         rows.into_iter().map(to_outbox_event).collect()
     }
 
+    pub fn next_outbox_retry_at(&self) -> Result<Option<String>> {
+        let mut conn = get_connection(&self.pool)?;
+        let pending_status = enum_to_db(&SyncOutboxStatus::Pending)?;
+        let retry_at = sync_outbox::table
+            .filter(
+                sync_outbox::status
+                    .eq(pending_status)
+                    .and(sync_outbox::sent.eq(0)),
+            )
+            .select(diesel::dsl::min(sync_outbox::next_retry_at))
+            .first::<Option<String>>(&mut conn)
+            .map_err(StorageError::from)?;
+        Ok(retry_at)
+    }
+
     pub async fn mark_outbox_sent(&self, event_ids: Vec<String>) -> Result<()> {
         if event_ids.is_empty() {
             return Ok(());
@@ -2762,35 +3151,57 @@ impl AppSyncRepository {
                 let result = (|| -> Result<usize> {
                     let mut fk_check_tables = Vec::new();
                     for (entity, ..) in &events {
-                        if let Some((table, _)) = entity_storage_mapping(entity) {
+                        if let Some((table, _)) = replay_checked_table(entity) {
                             if !fk_check_tables.contains(&table) {
                                 fk_check_tables.push(table);
                             }
                         }
                     }
 
-                    let mut applied = 0usize;
-                    for (entity, entity_id, op, event_id, client_timestamp, seq, payload) in events
-                    {
-                        if apply_remote_event_lww_tx(
-                            conn,
-                            &sync_state.broker_activity_patches,
-                            entity,
-                            entity_id.clone(),
-                            op,
-                            event_id.clone(),
-                            client_timestamp.clone(),
-                            seq,
-                            payload,
-                        )
-                        .map_err(|err| {
-                            replay_apply_error(entity, &entity_id, op, &event_id, seq, err)
-                        })? {
-                            applied += 1;
+                    // An event that fails, or that wrote a row failing the FK check,
+                    // is dead-lettered and the rest of the page is replayed from the
+                    // start, still in order: replaying it out of order could let a
+                    // cascade miss rows it would otherwise remove. Each retry skips
+                    // at least one more event, so the loop ends.
+                    let pending = &sync_state.broker_activity_patches;
+                    let mut skipped = vec![false; events.len()];
+                    loop {
+                        // A rolled-back attempt must not leave patches it queued.
+                        let pending_before = pending.snapshot();
+                        let attempt = conn.transaction(|conn| {
+                            apply_replay_attempt_tx(
+                                conn,
+                                pending,
+                                &events,
+                                &skipped,
+                                &fk_check_tables,
+                            )
+                        });
+                        match attempt {
+                            Ok(applied) => return Ok(applied),
+                            Err(ReplayAttemptError::Culprits(culprits)) => {
+                                pending.restore(pending_before);
+                                for (index, error) in culprits {
+                                    let (entity, entity_id, op, event_id, _, seq, _) =
+                                        &events[index];
+                                    log::error!(
+                                        "[DeviceSync] Dead-lettering replay event due to apply error: entity={:?} entity_id={} op={:?} event_id={} seq={} error={}",
+                                        entity,
+                                        entity_id,
+                                        op,
+                                        event_id,
+                                        seq,
+                                        error
+                                    );
+                                    skipped[index] = true;
+                                }
+                            }
+                            Err(ReplayAttemptError::Failed(err)) => {
+                                pending.restore(pending_before);
+                                return Err(err);
+                            }
                         }
                     }
-                    ensure_no_foreign_key_violations_tx(conn, fk_check_tables.iter().copied())?;
-                    Ok(applied)
                 })();
 
                 let _ = diesel::sql_query("PRAGMA defer_foreign_keys = OFF").execute(conn);
@@ -3371,6 +3782,12 @@ impl AppSyncRepository {
                         diesel::sql_query(&plan.copy_sql)
                             .execute(conn)
                             .map_err(|err| restore_sql_error("copy", &plan.table, err))?;
+                        if plan.table == "quotes" {
+                            normalize_restored_quotes(conn)?;
+                        }
+                        if plan.table == "activities" {
+                            normalize_restored_type_overrides(conn)?;
+                        }
 
                         let state_row = SyncTableStateDB {
                             table_name: plan.table.clone(),
@@ -3483,7 +3900,9 @@ mod tests {
     use tempfile::tempdir;
 
     use crate::activities::ActivityRepository;
-    use crate::db::{create_pool, get_connection, init, run_migrations, write_actor::spawn_writer};
+    use crate::db::{
+        create_pool, get_connection, init, run_migrations, write_actor::spawn_writer, TestDir,
+    };
     use crate::goals::GoalRepository;
     use crate::schema::{
         accounts, activities, app_settings, asset_logos, assets, goals, goals_allocation,
@@ -3532,20 +3951,18 @@ mod tests {
     fn setup_db() -> (
         Arc<Pool<r2d2::ConnectionManager<SqliteConnection>>>,
         WriteHandle,
+        TestDir,
     ) {
         // Ensure connect is "configured" so outbox writes work in tests
         std::env::set_var("CONNECT_API_URL", "http://test.local");
 
-        let app_data = tempdir()
-            .expect("tempdir")
-            .keep()
-            .to_string_lossy()
-            .to_string();
+        let dir = TestDir::new();
+        let app_data = dir.path().to_string_lossy().to_string();
         let db_path = init(&app_data).expect("init db");
         run_migrations(&db_path).expect("migrate db");
         let pool = create_pool(&db_path).expect("create pool");
         let writer = spawn_writer(pool.as_ref().clone()).expect("spawn writer");
-        (pool, writer)
+        (pool, writer, dir)
     }
 
     #[test]
@@ -3562,7 +3979,7 @@ mod tests {
 
     #[tokio::test]
     async fn local_sync_summary_counts_spending_preset_rule_deletions() {
-        let (pool, writer) = setup_db();
+        let (pool, writer, _dir) = setup_db();
         let mut conn = get_connection(&pool).expect("conn");
 
         diesel::insert_into(spending_preset_rule_deletions::table)
@@ -3706,7 +4123,7 @@ mod tests {
 
     #[tokio::test]
     async fn broker_activity_user_patch_updates_only_overlay_fields() {
-        let (pool, writer) = setup_db();
+        let (pool, writer, _dir) = setup_db();
         let mut conn = get_connection(&pool).expect("conn");
 
         diesel::sql_query(
@@ -3824,7 +4241,7 @@ mod tests {
 
     #[tokio::test]
     async fn broker_activity_user_patch_missing_target_defers_until_broker_import() {
-        let (pool, writer) = setup_db();
+        let (pool, writer, _dir) = setup_db();
         let mut conn = get_connection(&pool).expect("conn");
 
         diesel::sql_query(
@@ -3975,26 +4392,20 @@ mod tests {
         Ok(())
     }
 
-    fn create_snapshot_db_with_account(account_id: &str) -> String {
-        let app_data = tempdir()
-            .expect("tempdir")
-            .keep()
-            .to_string_lossy()
-            .to_string();
+    fn create_snapshot_db_with_account(account_id: &str) -> (String, TestDir) {
+        let dir = TestDir::new();
+        let app_data = dir.path().to_string_lossy().to_string();
         let db_path = init(&app_data).expect("init db");
         run_migrations(&db_path).expect("migrate db");
         let pool = create_pool(&db_path).expect("create pool");
         let mut conn = get_connection(&pool).expect("conn");
         insert_account_for_test(&mut conn, account_id).expect("insert account");
-        db_path
+        (db_path, dir)
     }
 
-    fn create_snapshot_db_with_holding_snapshot(account_id: &str) -> String {
-        let app_data = tempdir()
-            .expect("tempdir")
-            .keep()
-            .to_string_lossy()
-            .to_string();
+    fn create_snapshot_db_with_holding_snapshot(account_id: &str) -> (String, TestDir) {
+        let dir = TestDir::new();
+        let app_data = dir.path().to_string_lossy().to_string();
         let db_path = init(&app_data).expect("init db");
         run_migrations(&db_path).expect("migrate db");
         let pool = create_pool(&db_path).expect("create pool");
@@ -4008,15 +4419,12 @@ mod tests {
         diesel::sql_query(sql)
             .execute(&mut conn)
             .expect("insert snapshot");
-        db_path
+        (db_path, dir)
     }
 
-    fn create_snapshot_db_with_account_and_holding_snapshot(account_id: &str) -> String {
-        let app_data = tempdir()
-            .expect("tempdir")
-            .keep()
-            .to_string_lossy()
-            .to_string();
+    fn create_snapshot_db_with_account_and_holding_snapshot(account_id: &str) -> (String, TestDir) {
+        let dir = TestDir::new();
+        let app_data = dir.path().to_string_lossy().to_string();
         let db_path = init(&app_data).expect("init db");
         run_migrations(&db_path).expect("migrate db");
         let pool = create_pool(&db_path).expect("create pool");
@@ -4031,18 +4439,15 @@ mod tests {
         diesel::sql_query(sql)
             .execute(&mut conn)
             .expect("insert snapshot");
-        db_path
+        (db_path, dir)
     }
 
     fn create_snapshot_db_with_account_asset_snapshot_position(
         account_id: &str,
         asset_id: &str,
-    ) -> String {
-        let app_data = tempdir()
-            .expect("tempdir")
-            .keep()
-            .to_string_lossy()
-            .to_string();
+    ) -> (String, TestDir) {
+        let dir = TestDir::new();
+        let app_data = dir.path().to_string_lossy().to_string();
         let db_path = init(&app_data).expect("init db");
         run_migrations(&db_path).expect("migrate db");
         let pool = create_pool(&db_path).expect("create pool");
@@ -4061,7 +4466,7 @@ mod tests {
             escape_sqlite_str(asset_id)
         );
         conn.batch_execute(&sql).expect("insert snapshot position");
-        db_path
+        (db_path, dir)
     }
 
     fn insert_portfolio_for_test(
@@ -4241,12 +4646,9 @@ mod tests {
         .expect("insert missing-portfolio account membership");
     }
 
-    fn create_snapshot_db_with_portfolio_accounts() -> String {
-        let app_data = tempdir()
-            .expect("tempdir")
-            .keep()
-            .to_string_lossy()
-            .to_string();
+    fn create_snapshot_db_with_portfolio_accounts() -> (String, TestDir) {
+        let dir = TestDir::new();
+        let app_data = dir.path().to_string_lossy().to_string();
         let db_path = init(&app_data).expect("init db");
         run_migrations(&db_path).expect("migrate db");
         let pool = create_pool(&db_path).expect("create pool");
@@ -4268,15 +4670,12 @@ mod tests {
             "portfolio-snapshot",
             "acc-snapshot-missing",
         );
-        db_path
+        (db_path, dir)
     }
 
-    fn create_snapshot_db_with_orphan_activity_sidecars() -> String {
-        let app_data = tempdir()
-            .expect("tempdir")
-            .keep()
-            .to_string_lossy()
-            .to_string();
+    fn create_snapshot_db_with_orphan_activity_sidecars() -> (String, TestDir) {
+        let dir = TestDir::new();
+        let app_data = dir.path().to_string_lossy().to_string();
         let db_path = init(&app_data).expect("init db");
         run_migrations(&db_path).expect("migrate db");
         let pool = create_pool(&db_path).expect("create pool");
@@ -4295,15 +4694,12 @@ mod tests {
              PRAGMA foreign_keys = ON;",
         )
         .expect("insert orphan activity sidecars");
-        db_path
+        (db_path, dir)
     }
 
-    fn create_snapshot_db_with_invalid_spending_activity_event() -> String {
-        let app_data = tempdir()
-            .expect("tempdir")
-            .keep()
-            .to_string_lossy()
-            .to_string();
+    fn create_snapshot_db_with_invalid_spending_activity_event() -> (String, TestDir) {
+        let dir = TestDir::new();
+        let app_data = dir.path().to_string_lossy().to_string();
         let db_path = init(&app_data).expect("init db");
         run_migrations(&db_path).expect("migrate db");
         let pool = create_pool(&db_path).expect("create pool");
@@ -4315,15 +4711,12 @@ mod tests {
              PRAGMA foreign_keys = ON;",
         )
         .expect("insert invalid spending activity event");
-        db_path
+        (db_path, dir)
     }
 
-    fn create_snapshot_db_with_assets_extra_column(asset_id: &str) -> String {
-        let app_data = tempdir()
-            .expect("tempdir")
-            .keep()
-            .to_string_lossy()
-            .to_string();
+    fn create_snapshot_db_with_assets_extra_column(asset_id: &str) -> (String, TestDir) {
+        let dir = TestDir::new();
+        let app_data = dir.path().to_string_lossy().to_string();
         let db_path = init(&app_data).expect("init db");
         run_migrations(&db_path).expect("migrate db");
         let pool = create_pool(&db_path).expect("create pool");
@@ -4338,7 +4731,7 @@ mod tests {
         diesel::sql_query(insert_sql)
             .execute(&mut conn)
             .expect("insert asset");
-        db_path
+        (db_path, dir)
     }
 
     fn count_account_rows(
@@ -4395,7 +4788,7 @@ mod tests {
 
     #[tokio::test]
     async fn creates_sync_foundation_tables() {
-        let (pool, _writer) = setup_db();
+        let (pool, _writer, _dir) = setup_db();
         let mut conn = get_connection(&pool).expect("conn");
         for table in [
             "sync_applied_events",
@@ -4424,7 +4817,7 @@ mod tests {
 
     #[tokio::test]
     async fn outbox_write_rollback_keeps_mutation_atomic() {
-        let (pool, writer) = setup_db();
+        let (pool, writer, _dir) = setup_db();
 
         let tx_result = writer
             .exec(|conn| {
@@ -4459,7 +4852,7 @@ mod tests {
 
     #[tokio::test]
     async fn projected_outbox_rollback_keeps_mutation_atomic() {
-        let (pool, writer) = setup_db();
+        let (pool, writer, _dir) = setup_db();
 
         let tx_result = writer
             .exec_projected(|conn, projection| {
@@ -4494,7 +4887,7 @@ mod tests {
 
     #[tokio::test]
     async fn local_outbox_insert_updates_entity_metadata() {
-        let (pool, writer) = setup_db();
+        let (pool, writer, _dir) = setup_db();
         let repo = AppSyncRepository::new(pool, writer.clone());
 
         writer
@@ -4525,7 +4918,7 @@ mod tests {
 
     #[tokio::test]
     async fn remote_goal_update_does_not_resurrect_after_local_delete() {
-        let (pool, writer) = setup_db();
+        let (pool, writer, _dir) = setup_db();
         let repo = AppSyncRepository::new(pool.clone(), writer.clone());
 
         writer
@@ -4600,7 +4993,7 @@ mod tests {
             c: i64,
         }
 
-        let (pool, writer) = setup_db();
+        let (pool, writer, _dir) = setup_db();
         let repo = AppSyncRepository::new(pool.clone(), writer);
         let orphan_account_id = "orphan-snapshot-account";
 
@@ -4651,7 +5044,7 @@ mod tests {
 
     #[tokio::test]
     async fn replay_single_event_foreign_key_error_includes_entity_table_context() {
-        let (pool, writer) = setup_db();
+        let (pool, writer, _dir) = setup_db();
         let repo = AppSyncRepository::new(pool, writer);
 
         let err = repo
@@ -4688,11 +5081,11 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn replay_batch_foreign_key_error_includes_fk_check_table() {
-        let (pool, writer) = setup_db();
-        let repo = AppSyncRepository::new(pool, writer);
+    async fn replay_batch_dead_letters_event_with_missing_foreign_key() {
+        let (pool, writer, _dir) = setup_db();
+        let repo = AppSyncRepository::new(pool.clone(), writer);
 
-        let err = repo
+        let applied = repo
             .apply_remote_events_lww_batch(vec![(
                 SyncEntity::SpendingActivityEvent,
                 "missing-activity-in-batch".to_string(),
@@ -4708,7 +5101,53 @@ mod tests {
                 }),
             )])
             .await
-            .expect_err("missing FK should fail");
+            .expect("the violating event is dead-lettered inside the batch");
+
+        assert_eq!(applied, 0);
+        assert!(!repo
+            .has_applied_event("evt-missing-spending-activity-event-batch")
+            .expect("applied"));
+        let mut conn = get_connection(&pool).expect("conn");
+        let row_count: i64 = crate::schema::spending_activity_events::table
+            .filter(
+                crate::schema::spending_activity_events::activity_id
+                    .eq("missing-activity-in-batch"),
+            )
+            .select(count_star())
+            .first(&mut conn)
+            .expect("count rows");
+        assert_eq!(row_count, 0);
+    }
+
+    #[tokio::test]
+    async fn replay_batch_foreign_key_error_includes_fk_check_table() {
+        // A violation no event in the page wrote (here a pre-existing orphan)
+        // cannot be isolated, so the batch still fails with the table details.
+        let (pool, writer, _dir) = setup_db();
+        let repo = AppSyncRepository::new(pool.clone(), writer);
+        {
+            let mut conn = get_connection(&pool).expect("conn");
+            conn.batch_execute(
+                "PRAGMA foreign_keys = OFF;
+                 INSERT INTO spending_activity_events (activity_id, event_id, created_at, updated_at)
+                 VALUES ('orphan-activity', 'orphan-event', '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z');
+                 PRAGMA foreign_keys = ON;",
+            )
+            .expect("insert pre-existing orphan");
+        }
+
+        let err = repo
+            .apply_remote_events_lww_batch(vec![(
+                SyncEntity::SpendingActivityEvent,
+                "other-activity".to_string(),
+                SyncOperation::Delete,
+                "evt-delete-other-spending-activity-event".to_string(),
+                "2026-02-01T00:00:00Z".to_string(),
+                1,
+                serde_json::json!({ "activity_id": "other-activity" }),
+            )])
+            .await
+            .expect_err("an unattributable FK violation should fail the batch");
 
         let message = err.to_string();
         assert!(
@@ -4730,7 +5169,7 @@ mod tests {
             c: i64,
         }
 
-        let (pool, writer) = setup_db();
+        let (pool, writer, _dir) = setup_db();
         let repo = AppSyncRepository::new(pool.clone(), writer);
         let orphan_account_id = "orphan-single-snapshot-account";
 
@@ -4822,7 +5261,7 @@ mod tests {
 
     #[tokio::test]
     async fn remote_goal_create_does_not_reuse_deleted_id() {
-        let (pool, writer) = setup_db();
+        let (pool, writer, _dir) = setup_db();
         let repo = AppSyncRepository::new(pool.clone(), writer.clone());
 
         writer
@@ -4891,7 +5330,7 @@ mod tests {
 
     #[tokio::test]
     async fn remote_goal_delete_wins_over_local_update_marker() {
-        let (pool, writer) = setup_db();
+        let (pool, writer, _dir) = setup_db();
         let repo = AppSyncRepository::new(pool.clone(), writer.clone());
 
         writer
@@ -4943,7 +5382,7 @@ mod tests {
 
     #[tokio::test]
     async fn goal_summary_refresh_stays_local_and_does_not_write_sync_outbox() {
-        let (pool, writer) = setup_db();
+        let (pool, writer, _dir) = setup_db();
         let goal_repo = GoalRepository::new(pool.clone(), writer.clone());
 
         writer
@@ -5015,13 +5454,16 @@ mod tests {
 
     #[tokio::test]
     async fn snapshot_restore_sets_cursor_and_is_idempotent() {
-        let (pool, writer) = setup_db();
+        let (pool, writer, _dir) = setup_db();
         let repo = AppSyncRepository::new(pool.clone(), writer);
-        let snapshot_path = create_snapshot_db_with_account("acc-from-snapshot");
+        let (snapshot_path, _snapshot_dir) = create_snapshot_db_with_account("acc-from-snapshot");
 
         repo.restore_snapshot_tables_from_file(
             snapshot_path.clone(),
-            vec!["accounts".to_string()],
+            APP_SYNC_TABLES
+                .iter()
+                .map(|table| table.to_string())
+                .collect(),
             88,
             "device-1".to_string(),
             Some(1),
@@ -5034,7 +5476,10 @@ mod tests {
 
         repo.restore_snapshot_tables_from_file(
             snapshot_path,
-            vec!["accounts".to_string()],
+            APP_SYNC_TABLES
+                .iter()
+                .map(|table| table.to_string())
+                .collect(),
             88,
             "device-1".to_string(),
             Some(1),
@@ -5054,18 +5499,15 @@ mod tests {
             c: i64,
         }
 
-        let (pool, writer) = setup_db();
+        let (pool, writer, _dir) = setup_db();
         let repo = AppSyncRepository::new(pool.clone(), writer);
         let kept_asset_id = "asset-logo-kept";
         let dropped_asset_id = "asset-logo-dropped";
 
         // v1 snapshot: has the kept asset but no asset_logos table at all.
+        let snapshot_dir = TestDir::new();
         let snapshot_path = {
-            let app_data = tempdir()
-                .expect("tempdir")
-                .keep()
-                .to_string_lossy()
-                .to_string();
+            let app_data = snapshot_dir.path().to_string_lossy().to_string();
             let db_path = init(&app_data).expect("init db");
             run_migrations(&db_path).expect("migrate db");
             let pool = create_pool(&db_path).expect("create pool");
@@ -5121,14 +5563,12 @@ mod tests {
 
     #[tokio::test]
     async fn snapshot_restore_error_keeps_existing_cursor() {
-        let (pool, writer) = setup_db();
+        let (pool, writer, _dir) = setup_db();
         let repo = AppSyncRepository::new(pool, writer);
         repo.set_cursor(15).await.expect("set cursor");
 
-        let broken_snapshot_path = tempdir()
-            .expect("tempdir")
-            .keep()
-            .join("broken_snapshot.db");
+        let broken_snapshot_dir = tempdir().expect("tempdir");
+        let broken_snapshot_path = broken_snapshot_dir.path().join("broken_snapshot.db");
         std::fs::write(&broken_snapshot_path, b"not-a-sqlite-db").expect("write broken file");
 
         let result = repo
@@ -5146,7 +5586,7 @@ mod tests {
 
     #[tokio::test]
     async fn snapshot_restore_foreign_key_error_includes_table_context() {
-        let (pool, writer) = setup_db();
+        let (pool, writer, _dir) = setup_db();
         {
             let mut conn = get_connection(&pool).expect("conn");
             insert_account_for_test(&mut conn, "acc-invalid-event").expect("insert account");
@@ -5162,7 +5602,8 @@ mod tests {
             .expect("insert local activity");
         }
         let repo = AppSyncRepository::new(pool, writer);
-        let snapshot_path = create_snapshot_db_with_invalid_spending_activity_event();
+        let (snapshot_path, _snapshot_dir) =
+            create_snapshot_db_with_invalid_spending_activity_event();
 
         let err = repo
             .restore_snapshot_tables_from_file(
@@ -5195,10 +5636,11 @@ mod tests {
             c: i64,
         }
 
-        let (pool, writer) = setup_db();
+        let (pool, writer, _dir) = setup_db();
         let repo = AppSyncRepository::new(pool.clone(), writer);
         let orphan_account_id = "orphan-restore-account";
-        let snapshot_path = create_snapshot_db_with_holding_snapshot(orphan_account_id);
+        let (snapshot_path, _snapshot_dir) =
+            create_snapshot_db_with_holding_snapshot(orphan_account_id);
         {
             let mut conn = get_connection(&pool).expect("conn");
             diesel::sql_query(format!(
@@ -5236,10 +5678,11 @@ mod tests {
             c: i64,
         }
 
-        let (pool, writer) = setup_db();
+        let (pool, writer, _dir) = setup_db();
         let repo = AppSyncRepository::new(pool.clone(), writer);
         let account_id = "acc-reordered-restore";
-        let snapshot_path = create_snapshot_db_with_account_and_holding_snapshot(account_id);
+        let (snapshot_path, _snapshot_dir) =
+            create_snapshot_db_with_account_and_holding_snapshot(account_id);
 
         repo.restore_snapshot_tables_from_file(
             snapshot_path,
@@ -5270,11 +5713,11 @@ mod tests {
             c: i64,
         }
 
-        let (pool, writer) = setup_db();
+        let (pool, writer, _dir) = setup_db();
         let repo = AppSyncRepository::new(pool.clone(), writer);
         let account_id = "acc-position-restore";
         let asset_id = "asset-position-restore";
-        let snapshot_path =
+        let (snapshot_path, _snapshot_dir) =
             create_snapshot_db_with_account_asset_snapshot_position(account_id, asset_id);
 
         repo.restore_snapshot_tables_from_file(
@@ -5312,9 +5755,9 @@ mod tests {
             c: i64,
         }
 
-        let (pool, writer) = setup_db();
+        let (pool, writer, _dir) = setup_db();
         let repo = AppSyncRepository::new(pool.clone(), writer);
-        let snapshot_path = create_snapshot_db_with_portfolio_accounts();
+        let (snapshot_path, _snapshot_dir) = create_snapshot_db_with_portfolio_accounts();
 
         {
             let mut conn = get_connection(&pool).expect("conn");
@@ -5375,9 +5818,9 @@ mod tests {
             c: i64,
         }
 
-        let (pool, writer) = setup_db();
+        let (pool, writer, _dir) = setup_db();
         let repo = AppSyncRepository::new(pool.clone(), writer);
-        let snapshot_path = create_snapshot_db_with_portfolio_accounts();
+        let (snapshot_path, _snapshot_dir) = create_snapshot_db_with_portfolio_accounts();
 
         {
             let mut conn = get_connection(&pool).expect("conn");
@@ -5433,9 +5876,9 @@ mod tests {
             c: i64,
         }
 
-        let (pool, writer) = setup_db();
+        let (pool, writer, _dir) = setup_db();
         let repo = AppSyncRepository::new(pool.clone(), writer);
-        let snapshot_path = create_snapshot_db_with_orphan_activity_sidecars();
+        let (snapshot_path, _snapshot_dir) = create_snapshot_db_with_orphan_activity_sidecars();
 
         repo.restore_snapshot_tables_from_file(
             snapshot_path,
@@ -5468,7 +5911,7 @@ mod tests {
 
     #[tokio::test]
     async fn needs_bootstrap_when_last_cycle_is_stale_cursor() {
-        let (pool, writer) = setup_db();
+        let (pool, writer, _dir) = setup_db();
         let repo = AppSyncRepository::new(pool, writer);
 
         repo.reset_and_mark_bootstrap_complete("device-1".to_string(), Some(1))
@@ -5490,7 +5933,7 @@ mod tests {
 
     #[tokio::test]
     async fn local_sync_data_summary_reports_non_empty_tables() {
-        let (pool, writer) = setup_db();
+        let (pool, writer, _dir) = setup_db();
         let repo = AppSyncRepository::new(pool.clone(), writer);
         let baseline = repo
             .get_local_sync_data_summary()
@@ -5523,7 +5966,7 @@ mod tests {
 
     #[tokio::test]
     async fn overwrite_risk_summary_ignores_seeded_system_rows() {
-        let (pool, writer) = setup_db();
+        let (pool, writer, _dir) = setup_db();
         let repo = AppSyncRepository::new(pool, writer);
 
         let raw_summary = repo
@@ -5543,7 +5986,7 @@ mod tests {
 
     #[tokio::test]
     async fn overwrite_risk_summary_counts_accounts_goals_and_budgets() {
-        let (pool, writer) = setup_db();
+        let (pool, writer, _dir) = setup_db();
         let repo = AppSyncRepository::new(pool.clone(), writer);
 
         {
@@ -5591,7 +6034,7 @@ mod tests {
 
     #[tokio::test]
     async fn overwrite_risk_summary_ignores_broker_rehydratable_accounts() {
-        let (pool, writer) = setup_db();
+        let (pool, writer, _dir) = setup_db();
         let repo = AppSyncRepository::new(pool.clone(), writer);
 
         {
@@ -5657,7 +6100,7 @@ mod tests {
 
     #[tokio::test]
     async fn overwrite_risk_summary_ignores_broker_activity_sidecars() {
-        let (pool, writer) = setup_db();
+        let (pool, writer, _dir) = setup_db();
         let repo = AppSyncRepository::new(pool.clone(), writer);
 
         {
@@ -5721,7 +6164,7 @@ mod tests {
 
     #[tokio::test]
     async fn overwrite_risk_summary_ignores_standalone_asset_kinds() {
-        let (pool, writer) = setup_db();
+        let (pool, writer, _dir) = setup_db();
         let repo = AppSyncRepository::new(pool.clone(), writer);
         let counted_kinds = [
             "PROPERTY",
@@ -5758,7 +6201,7 @@ mod tests {
 
     #[tokio::test]
     async fn overwrite_risk_summary_ignores_non_account_goal_budget_tables() {
-        let (pool, writer) = setup_db();
+        let (pool, writer, _dir) = setup_db();
         let repo = AppSyncRepository::new(pool.clone(), writer);
 
         {
@@ -5918,7 +6361,7 @@ mod tests {
 
     #[tokio::test]
     async fn ok_cycle_outcome_clears_previous_engine_error() {
-        let (pool, writer) = setup_db();
+        let (pool, writer, _dir) = setup_db();
         let repo = AppSyncRepository::new(pool, writer);
 
         repo.mark_engine_error("pull failed".to_string())
@@ -5957,9 +6400,10 @@ mod tests {
 
     #[tokio::test]
     async fn snapshot_restore_handles_source_with_extra_columns() {
-        let (pool, writer) = setup_db();
+        let (pool, writer, _dir) = setup_db();
         let repo = AppSyncRepository::new(pool.clone(), writer);
-        let snapshot_path = create_snapshot_db_with_assets_extra_column("asset-extra-column");
+        let (snapshot_path, _snapshot_dir) =
+            create_snapshot_db_with_assets_extra_column("asset-extra-column");
 
         repo.restore_snapshot_tables_from_file(
             snapshot_path,
@@ -5977,9 +6421,9 @@ mod tests {
 
     #[tokio::test]
     async fn snapshot_restore_resets_sync_control_state() {
-        let (pool, writer) = setup_db();
+        let (pool, writer, _dir) = setup_db();
         let repo = AppSyncRepository::new(pool.clone(), writer);
-        let snapshot_path = create_snapshot_db_with_account("acc-reset-state");
+        let (snapshot_path, _snapshot_dir) = create_snapshot_db_with_account("acc-reset-state");
 
         {
             let mut conn = get_connection(&pool).expect("conn");
@@ -6044,7 +6488,7 @@ mod tests {
 
     #[tokio::test]
     async fn connect_rebind_detaches_brokers_and_preserves_financial_accounts() {
-        let (pool, writer) = setup_db();
+        let (pool, writer, _dir) = setup_db();
         let repo = AppSyncRepository::new(pool.clone(), writer);
         {
             let mut conn = get_connection(&pool).unwrap();
@@ -6094,7 +6538,7 @@ mod tests {
 
     #[tokio::test]
     async fn reset_local_sync_session_clears_control_plane_and_zeroes_cursors() {
-        let (pool, writer) = setup_db();
+        let (pool, writer, _dir) = setup_db();
         let repo = AppSyncRepository::new(pool.clone(), writer);
 
         {
@@ -6178,7 +6622,7 @@ mod tests {
 
     #[tokio::test]
     async fn reset_and_mark_bootstrap_complete_recreates_current_device_config() {
-        let (pool, writer) = setup_db();
+        let (pool, writer, _dir) = setup_db();
         let repo = AppSyncRepository::new(pool.clone(), writer);
 
         repo.set_cursor(21).await.expect("set cursor");
@@ -6208,8 +6652,81 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn next_outbox_retry_at_only_considers_unsent_pending_rows() {
+        let (pool, writer, _dir) = setup_db();
+        let repo = AppSyncRepository::new(pool, writer.clone());
+        assert_eq!(repo.next_outbox_retry_at().expect("empty outbox"), None);
+
+        let now = Utc::now();
+        let earliest = (now + Duration::seconds(40)).to_rfc3339();
+        let later = (now + Duration::seconds(80)).to_rfc3339();
+        let rows = [
+            ("later", SyncOutboxStatus::Pending, 0, Some(later.clone())),
+            (
+                "earliest",
+                SyncOutboxStatus::Pending,
+                0,
+                Some(earliest.clone()),
+            ),
+            ("ready", SyncOutboxStatus::Pending, 0, None),
+            ("dead", SyncOutboxStatus::Dead, 0, Some(now.to_rfc3339())),
+            ("sent", SyncOutboxStatus::Sent, 1, Some(now.to_rfc3339())),
+            (
+                "marked-sent",
+                SyncOutboxStatus::Pending,
+                1,
+                Some(now.to_rfc3339()),
+            ),
+        ];
+        writer
+            .exec(move |conn| {
+                for (event_id, status, sent, retry_at) in rows {
+                    let mut request = OutboxWriteRequest::new(
+                        SyncEntity::Account,
+                        event_id,
+                        SyncOperation::Update,
+                        serde_json::json!({ "id": event_id }),
+                    );
+                    request.event_id = Some(event_id.to_string());
+                    insert_outbox_event(conn, request)?;
+                    diesel::update(sync_outbox::table.find(event_id))
+                        .set((
+                            sync_outbox::status.eq(enum_to_db(&status)?),
+                            sync_outbox::sent.eq(sent),
+                            sync_outbox::next_retry_at.eq(retry_at),
+                        ))
+                        .execute(conn)
+                        .map_err(StorageError::from)?;
+                }
+                Ok(())
+            })
+            .await
+            .expect("insert outbox rows");
+
+        assert_eq!(repo.list_pending_outbox(10).expect("ready rows").len(), 1);
+        assert_eq!(
+            repo.next_outbox_retry_at().expect("earliest retry"),
+            Some(earliest)
+        );
+        repo.mark_outbox_sent(vec!["earliest".to_string()])
+            .await
+            .expect("sent row");
+        assert_eq!(
+            repo.next_outbox_retry_at().expect("remaining retry"),
+            Some(later)
+        );
+        repo.mark_outbox_dead(vec!["later".to_string()], None, None)
+            .await
+            .expect("dead row");
+        assert_eq!(
+            repo.next_outbox_retry_at().expect("no remaining retry"),
+            None
+        );
+    }
+
+    #[tokio::test]
     async fn outbox_uses_trusted_device_key_version_by_default() {
-        let (pool, writer) = setup_db();
+        let (pool, writer, _dir) = setup_db();
         let repo = AppSyncRepository::new(pool, writer.clone());
 
         repo.upsert_device_config("device-1".to_string(), Some(3), "trusted".to_string())
@@ -6239,7 +6756,7 @@ mod tests {
 
     #[tokio::test]
     async fn local_outbox_metadata_preserves_remote_last_seq() {
-        let (pool, writer) = setup_db();
+        let (pool, writer, _dir) = setup_db();
         let repo = AppSyncRepository::new(pool, writer.clone());
 
         repo.upsert_entity_metadata(SyncEntityMetadata {
@@ -6320,7 +6837,7 @@ mod tests {
 
     #[tokio::test]
     async fn prune_sync_outbox_deletes_only_old_sent_and_dead_rows() {
-        let (_pool, writer) = setup_db();
+        let (_pool, writer, _dir) = setup_db();
         let repo = AppSyncRepository::new(_pool, writer.clone());
         let now = Utc::now();
 
@@ -6420,7 +6937,7 @@ mod tests {
 
     #[tokio::test]
     async fn payload_normalization_supports_camel_case_for_all_sync_tables() {
-        let (pool, _writer) = setup_db();
+        let (pool, _writer, _dir) = setup_db();
         let mut conn = get_connection(&pool).expect("conn");
 
         for table_name in APP_SYNC_TABLES {
@@ -6457,7 +6974,7 @@ mod tests {
 
     #[tokio::test]
     async fn entity_mapping_targets_valid_tables_and_primary_keys() {
-        let (pool, _writer) = setup_db();
+        let (pool, _writer, _dir) = setup_db();
         let mut conn = get_connection(&pool).expect("conn");
 
         let entities = [
@@ -6501,9 +7018,442 @@ mod tests {
         }
     }
 
+    fn stored_type_overrides(conn: &mut SqliteConnection) -> Vec<(String, Option<String>)> {
+        activities::table
+            .select((activities::id, activities::activity_type_override))
+            .order(activities::id)
+            .load(conn)
+            .expect("load overrides")
+    }
+
+    #[tokio::test]
+    async fn a_synced_activity_stores_its_type_override_as_it_reads() {
+        let (pool, writer, _dir) = setup_db();
+        let mut conn = get_connection(&pool).expect("conn");
+        insert_account_for_test(&mut conn, "acc-synced-override").expect("insert account");
+        let repo = AppSyncRepository::new(pool.clone(), writer);
+        for (seq, (id, override_)) in [("synced-blank", "\u{3000}"), ("synced-padded", " SELL\t")]
+            .into_iter()
+            .enumerate()
+        {
+            repo.apply_remote_event_lww(
+                SyncEntity::Activity,
+                id.to_string(),
+                SyncOperation::Create,
+                format!("evt-{id}"),
+                "2026-02-12T00:00:00Z".to_string(),
+                seq as i64 + 1,
+                serde_json::json!({
+                    "id": id,
+                    "account_id": "acc-synced-override",
+                    "activity_type": "DIVIDEND",
+                    "activity_type_override": override_,
+                    "status": "POSTED",
+                    "activity_date": "2026-01-15T00:00:00Z",
+                    "amount": "10",
+                    "currency": "USD",
+                    "is_user_modified": 0,
+                    "needs_review": 0,
+                    "created_at": "2026-01-15T00:00:00Z",
+                    "updated_at": "2026-01-15T00:00:00Z"
+                }),
+            )
+            .await
+            .expect("apply activity");
+        }
+
+        assert_eq!(
+            stored_type_overrides(&mut conn),
+            vec![
+                ("synced-blank".to_string(), None),
+                ("synced-padded".to_string(), Some("SELL".to_string())),
+            ]
+        );
+    }
+
+    #[tokio::test]
+    async fn a_synced_broker_patch_stores_a_blank_type_override_as_none() {
+        let (pool, writer, _dir) = setup_db();
+        let mut conn = get_connection(&pool).expect("conn");
+        diesel::sql_query(
+            "INSERT INTO accounts \
+             (id, name, account_type, `group`, currency, is_default, is_active, created_at, updated_at, \
+              platform_id, account_number, meta, provider, provider_account_id, is_archived, tracking_mode) \
+             VALUES ('broker-account-blank', 'Broker Account', 'cash', NULL, 'USD', 0, 1, \
+                     CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, NULL, NULL, NULL, 'SNAPTRADE', \
+                     'provider-account-blank', 0, 'portfolio')",
+        )
+        .execute(&mut conn)
+        .expect("insert broker account");
+        insert_broker_import_run_for_test(&mut conn, "broker-run-blank", "broker-account-blank")
+            .expect("insert broker import run");
+        insert_activity_for_snapshot_filter_test(
+            &mut conn,
+            "broker-activity-blank",
+            "broker-account-blank",
+            "SNAPTRADE",
+            Some("broker-run-blank"),
+            Some("broker-row-blank"),
+            0,
+        )
+        .expect("insert broker activity");
+        diesel::update(activities::table.find("broker-activity-blank"))
+            .set(activities::activity_type_override.eq(Some("SELL".to_string())))
+            .execute(&mut conn)
+            .expect("set override");
+        let identity = broker_activity_identity(
+            Some("SNAPTRADE"),
+            Some("provider-account-blank"),
+            Some("broker-row-blank"),
+        )
+        .expect("broker identity");
+
+        apply_remote_event_lww_tx(
+            &mut conn,
+            &writer.sync_state().broker_activity_patches,
+            SyncEntity::BrokerActivityUserPatch,
+            broker_activity_user_patch_entity_id(&identity),
+            SyncOperation::Update,
+            "broker-patch-blank".to_string(),
+            "2026-02-01T00:00:00Z".to_string(),
+            1,
+            serde_json::json!({
+                "sourceSystem": "SNAPTRADE",
+                "providerAccountId": "provider-account-blank",
+                "sourceRecordId": "broker-row-blank",
+                "overlay": { "notes": null, "activityTypeOverride": "\u{2003}" }
+            }),
+        )
+        .expect("apply broker patch");
+
+        assert_eq!(
+            stored_type_overrides(&mut conn),
+            vec![("broker-activity-blank".to_string(), None)]
+        );
+    }
+
+    #[tokio::test]
+    async fn snapshot_restore_stores_type_overrides_as_they_read() {
+        let (snapshot_path, _snapshot_dir) =
+            create_snapshot_db_with_account("acc-restored-override");
+        {
+            let pool = create_pool(&snapshot_path).expect("snapshot pool");
+            let mut conn = get_connection(&pool).expect("snapshot conn");
+            for (id, override_) in [("restored-blank", "\t"), ("restored-padded", "SELL\u{a0}")] {
+                insert_activity_for_snapshot_filter_test(
+                    &mut conn,
+                    id,
+                    "acc-restored-override",
+                    "MANUAL",
+                    None,
+                    None,
+                    0,
+                )
+                .expect("insert activity");
+                diesel::update(activities::table.find(id))
+                    .set(activities::activity_type_override.eq(Some(override_.to_string())))
+                    .execute(&mut conn)
+                    .expect("set override");
+            }
+        }
+        let (pool, writer, _dir) = setup_db();
+        let repo = AppSyncRepository::new(pool.clone(), writer);
+
+        repo.restore_snapshot_tables_from_file(
+            snapshot_path,
+            vec!["accounts".to_string(), "activities".to_string()],
+            97,
+            "device-restored-override".to_string(),
+            Some(1),
+        )
+        .await
+        .expect("restore snapshot");
+
+        let mut conn = get_connection(&pool).expect("conn");
+        assert_eq!(
+            stored_type_overrides(&mut conn),
+            vec![
+                ("restored-blank".to_string(), None),
+                ("restored-padded".to_string(), Some("SELL".to_string())),
+            ]
+        );
+    }
+
+    #[tokio::test]
+    async fn a_synced_quote_takes_its_day_from_its_timestamp() {
+        #[derive(QueryableByName)]
+        struct DayRow {
+            #[diesel(sql_type = diesel::sql_types::Text)]
+            day: String,
+        }
+        let (pool, writer, _dir) = setup_db();
+        let mut conn = get_connection(&pool).expect("conn");
+        diesel::sql_query(
+            "INSERT INTO assets (id, kind, is_active, quote_mode, quote_ccy, created_at, updated_at) \
+             VALUES ('asset-day', 'INVESTMENT', 1, 'MARKET', 'USD', datetime('now'), datetime('now'))",
+        )
+        .execute(&mut conn)
+        .expect("insert asset");
+        let repo = AppSyncRepository::new(pool.clone(), writer);
+        repo.apply_remote_event_lww(
+            SyncEntity::Quote,
+            "quote-day".to_string(),
+            SyncOperation::Create,
+            "evt-quote-day".to_string(),
+            "2026-02-12T00:00:00Z".to_string(),
+            1,
+            serde_json::json!({
+                "id": "quote-day",
+                "asset_id": "asset-day",
+                "day": "2025-01-03",
+                "source": "MANUAL",
+                "close": "100",
+                "currency": "USD",
+                "created_at": "2025-01-03T00:00:00Z",
+                "timestamp": "2024-12-01T22:00:00-05:00"
+            }),
+        )
+        .await
+        .expect("apply quote");
+        let row: DayRow = diesel::sql_query("SELECT day FROM quotes WHERE id = 'quote-day'")
+            .get_result(&mut conn)
+            .expect("read quote");
+        // 22:00 at UTC-5 is 03:00 UTC the next day.
+        assert_eq!(row.day, "2024-12-02");
+    }
+
+    fn synced_quote(id: &str, asset_id: &str, timestamp: &str) -> serde_json::Value {
+        serde_json::json!({
+            "id": id,
+            "asset_id": asset_id,
+            "day": "2025-01-04",
+            "source": "MANUAL",
+            "close": "100",
+            "currency": "USD",
+            "created_at": "2025-01-03T00:00:00Z",
+            "timestamp": timestamp
+        })
+    }
+
+    #[tokio::test]
+    async fn a_synced_quote_stores_its_timestamp_as_a_utc_instant() {
+        let (pool, writer, _dir) = setup_db();
+        let mut conn = get_connection(&pool).expect("conn");
+        diesel::sql_query(
+            "INSERT INTO assets (id, kind, is_active, quote_mode, quote_ccy, created_at, updated_at) \
+             VALUES ('asset-naive', 'INVESTMENT', 1, 'MARKET', 'USD', datetime('now'), datetime('now'))",
+        )
+        .execute(&mut conn)
+        .expect("insert asset");
+        let repo = AppSyncRepository::new(pool.clone(), writer);
+        for (id, timestamp) in [
+            ("quote-naive", "2025-01-03T12:00:00"),
+            ("quote-unreadable", "not-a-timestamp"),
+        ] {
+            repo.apply_remote_event_lww(
+                SyncEntity::Quote,
+                id.to_string(),
+                SyncOperation::Create,
+                format!("evt-{id}"),
+                "2026-02-12T00:00:00Z".to_string(),
+                1,
+                synced_quote(id, "asset-naive", timestamp),
+            )
+            .await
+            .expect("apply quote");
+        }
+
+        let stored = crate::schema::quotes::table
+            .find("quote-naive")
+            .first::<crate::market_data::QuoteDB>(&mut conn)
+            .expect("read quote");
+        // A naive timestamp is UTC (R3.2), stored as local writes store it.
+        assert_eq!(
+            (stored.day.as_str(), stored.timestamp.as_str()),
+            ("2025-01-03", "2025-01-03T12:00:00+00:00")
+        );
+        let quote: wealthfolio_core::quotes::Quote = stored.into();
+        assert_eq!(
+            quote.timestamp.to_rfc3339(),
+            "2025-01-03T12:00:00+00:00",
+            "reads back as the same instant"
+        );
+        let unreadable = crate::schema::quotes::table
+            .find("quote-unreadable")
+            .first::<crate::market_data::QuoteDB>(&mut conn)
+            .optional()
+            .expect("read quote");
+        assert!(
+            unreadable.is_none(),
+            "a quote without a readable timestamp is skipped"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_restored_snapshot_normalizes_its_quotes() {
+        #[derive(QueryableByName)]
+        struct QuoteTimeRow {
+            #[diesel(sql_type = diesel::sql_types::Text)]
+            id: String,
+            #[diesel(sql_type = diesel::sql_types::Text)]
+            day: String,
+            #[diesel(sql_type = diesel::sql_types::Text)]
+            timestamp: String,
+        }
+        let (pool, writer, _dir) = setup_db();
+        let mut conn = get_connection(&pool).expect("conn");
+        diesel::sql_query(
+            "INSERT INTO assets (id, kind, is_active, quote_mode, quote_ccy, created_at, updated_at) \
+             VALUES ('asset-restore', 'INVESTMENT', 1, 'MARKET', 'USD', datetime('now'), datetime('now'))",
+        )
+        .execute(&mut conn)
+        .expect("insert asset");
+        let dir = tempdir().expect("tempdir");
+        let path = dir.path().join("snapshot.db");
+        let mut source = SqliteConnection::establish(path.to_str().expect("path")).expect("open");
+        source
+            .batch_execute(
+                "CREATE TABLE quotes (id TEXT, asset_id TEXT, day TEXT, source TEXT, close TEXT, \
+                 currency TEXT, created_at TEXT, timestamp TEXT); \
+                 INSERT INTO quotes VALUES \
+                 ('q-offset', 'asset-restore', '2025-01-03', 'MANUAL', '100', 'USD', '2025-01-03T00:00:00Z', '2024-12-01T22:00:00-05:00'), \
+                 ('q-naive', 'asset-restore', '2025-01-04', 'MANUAL', '100', 'USD', '2025-01-03T00:00:00Z', '2025-01-03 12:00:00'), \
+                 ('q-unreadable', 'asset-restore', '2025-01-05', 'MANUAL', '100', 'USD', '2025-01-03T00:00:00Z', 'not-a-timestamp');",
+            )
+            .expect("seed snapshot");
+        let repo = AppSyncRepository::new(pool.clone(), writer);
+        repo.restore_snapshot_tables_from_file(
+            path.to_string_lossy().into_owned(),
+            vec!["quotes".to_string()],
+            1,
+            "device-restore".to_string(),
+            Some(1),
+        )
+        .await
+        .expect("restore");
+
+        let rows: Vec<QuoteTimeRow> =
+            diesel::sql_query("SELECT id, day, timestamp FROM quotes ORDER BY id")
+                .load(&mut conn)
+                .expect("read quotes");
+        let rows = rows
+            .iter()
+            .map(|row| (row.id.as_str(), row.day.as_str(), row.timestamp.as_str()))
+            .collect::<Vec<_>>();
+        assert_eq!(
+            rows,
+            vec![
+                ("q-naive", "2025-01-03", "2025-01-03T12:00:00+00:00"),
+                ("q-offset", "2024-12-02", "2024-12-02T03:00:00+00:00"),
+            ]
+        );
+    }
+
+    #[derive(QueryableByName)]
+    struct QuoteDayRow {
+        #[diesel(sql_type = diesel::sql_types::Text)]
+        id: String,
+        #[diesel(sql_type = diesel::sql_types::Text)]
+        day: String,
+    }
+
+    fn quote_days(conn: &mut SqliteConnection) -> Vec<(String, String)> {
+        diesel::sql_query("SELECT id, day FROM quotes ORDER BY id")
+            .load::<QuoteDayRow>(conn)
+            .expect("read quotes")
+            .into_iter()
+            .map(|row| (row.id, row.day))
+            .collect()
+    }
+
+    #[tokio::test]
+    async fn a_restored_snapshot_keeps_one_quote_per_day() {
+        let (pool, writer, _dir) = setup_db();
+        let mut conn = get_connection(&pool).expect("conn");
+        diesel::sql_query(
+            "INSERT INTO assets (id, kind, is_active, quote_mode, quote_ccy, created_at, updated_at) \
+             VALUES ('asset-days', 'INVESTMENT', 1, 'MARKET', 'USD', datetime('now'), datetime('now'))",
+        )
+        .execute(&mut conn)
+        .expect("insert asset");
+        let dir = tempdir().expect("tempdir");
+        let path = dir.path().join("snapshot.db");
+        let mut source = SqliteConnection::establish(path.to_str().expect("path")).expect("open");
+        // q-a and q-b swap days; q-onto lands on q-kept's day; q-m1 and q-m2
+        // both land on 01-21 (rules R6.1).
+        source
+            .batch_execute(
+                "CREATE TABLE quotes (id TEXT, asset_id TEXT, day TEXT, source TEXT, close TEXT, \
+                 currency TEXT, created_at TEXT, timestamp TEXT); \
+                 INSERT INTO quotes VALUES \
+                 ('q-a', 'asset-days', '2025-01-03', 'MANUAL', '1', 'USD', '2025-01-01', '2025-01-04T12:00:00'), \
+                 ('q-b', 'asset-days', '2025-01-04', 'MANUAL', '1', 'USD', '2025-01-01', '2025-01-03T12:00:00'), \
+                 ('q-kept', 'asset-days', '2025-01-10', 'MANUAL', '1', 'USD', '2025-01-01', '2025-01-10T12:00:00Z'), \
+                 ('q-onto', 'asset-days', '2025-01-11', 'MANUAL', '1', 'USD', '2025-01-01', '2025-01-10T13:00:00'), \
+                 ('q-m1', 'asset-days', '2025-01-20', 'MANUAL', '1', 'USD', '2025-01-01', '2025-01-21T12:00:00'), \
+                 ('q-m2', 'asset-days', '2025-01-22', 'MANUAL', '1', 'USD', '2025-01-01', '2025-01-21T13:00:00');",
+            )
+            .expect("seed snapshot");
+        let repo = AppSyncRepository::new(pool.clone(), writer);
+        repo.restore_snapshot_tables_from_file(
+            path.to_string_lossy().into_owned(),
+            vec!["quotes".to_string()],
+            1,
+            "device-restore".to_string(),
+            Some(1),
+        )
+        .await
+        .expect("restore");
+
+        let expected = [
+            ("q-a", "2025-01-04"),
+            ("q-b", "2025-01-03"),
+            ("q-kept", "2025-01-10"),
+            ("q-m1", "2025-01-21"),
+        ]
+        .map(|(id, day)| (id.to_string(), day.to_string()));
+        assert_eq!(quote_days(&mut conn), expected);
+    }
+
+    #[tokio::test]
+    async fn a_synced_quote_landing_on_another_quotes_day_is_skipped() {
+        let (pool, writer, _dir) = setup_db();
+        let mut conn = get_connection(&pool).expect("conn");
+        diesel::sql_query(
+            "INSERT INTO assets (id, kind, is_active, quote_mode, quote_ccy, created_at, updated_at) \
+             VALUES ('asset-taken', 'INVESTMENT', 1, 'MARKET', 'USD', datetime('now'), datetime('now'))",
+        )
+        .execute(&mut conn)
+        .expect("insert asset");
+        let repo = AppSyncRepository::new(pool.clone(), writer);
+        for (id, timestamp, applied) in [
+            ("q-there", "2025-01-03T12:00:00Z", true),
+            // Its day says 01-04, its timestamp 01-03, where q-there is.
+            ("q-late", "2025-01-03T15:00:00Z", false),
+        ] {
+            let applied_now = repo
+                .apply_remote_event_lww(
+                    SyncEntity::Quote,
+                    id.to_string(),
+                    SyncOperation::Create,
+                    format!("evt-{id}"),
+                    "2026-02-12T00:00:00Z".to_string(),
+                    1,
+                    synced_quote(id, "asset-taken", timestamp),
+                )
+                .await
+                .expect("apply quote");
+            assert_eq!(applied_now, applied, "{id}");
+        }
+        assert_eq!(
+            quote_days(&mut conn),
+            vec![("q-there".to_string(), "2025-01-03".to_string())]
+        );
+    }
+
     #[tokio::test]
     async fn replay_rejects_payload_with_mismatched_pk() {
-        let (pool, writer) = setup_db();
+        let (pool, writer, _dir) = setup_db();
         let repo = AppSyncRepository::new(pool, writer);
 
         let result = repo
@@ -6525,7 +7475,7 @@ mod tests {
 
     #[tokio::test]
     async fn replay_applies_platform_create_then_update() {
-        let (pool, writer) = setup_db();
+        let (pool, writer, _dir) = setup_db();
         let repo = AppSyncRepository::new(pool.clone(), writer);
         let platform_id = "platform-sync-1".to_string();
 
@@ -6586,7 +7536,7 @@ mod tests {
 
     #[tokio::test]
     async fn replay_accepts_camel_case_goal_payload() {
-        let (pool, writer) = setup_db();
+        let (pool, writer, _dir) = setup_db();
         let repo = AppSyncRepository::new(pool.clone(), writer);
 
         let applied = repo
@@ -6621,7 +7571,7 @@ mod tests {
 
     #[tokio::test]
     async fn replay_maps_legacy_account_type_to_securities() {
-        let (pool, writer) = setup_db();
+        let (pool, writer, _dir) = setup_db();
         let repo = AppSyncRepository::new(pool.clone(), writer);
 
         let applied = repo
@@ -6664,7 +7614,7 @@ mod tests {
 
     #[tokio::test]
     async fn replay_accepts_legacy_goal_is_achieved_payload() {
-        let (pool, writer) = setup_db();
+        let (pool, writer, _dir) = setup_db();
         let repo = AppSyncRepository::new(pool.clone(), writer);
 
         let applied = repo
@@ -6699,7 +7649,7 @@ mod tests {
 
     #[tokio::test]
     async fn replay_accepts_equivalent_legacy_and_current_goal_lifecycle_aliases() {
-        let (pool, writer) = setup_db();
+        let (pool, writer, _dir) = setup_db();
         let repo = AppSyncRepository::new(pool.clone(), writer);
 
         let applied = repo
@@ -6733,7 +7683,7 @@ mod tests {
 
     #[tokio::test]
     async fn replay_rejects_conflicting_legacy_goal_lifecycle_aliases() {
-        let (pool, writer) = setup_db();
+        let (pool, writer, _dir) = setup_db();
         let repo = AppSyncRepository::new(pool, writer);
 
         let result = repo
@@ -6768,7 +7718,7 @@ mod tests {
 
     #[tokio::test]
     async fn replay_maps_legacy_null_goal_lifecycle_to_active() {
-        let (pool, writer) = setup_db();
+        let (pool, writer, _dir) = setup_db();
         let repo = AppSyncRepository::new(pool.clone(), writer);
 
         let applied = repo
@@ -6801,7 +7751,7 @@ mod tests {
 
     #[tokio::test]
     async fn replay_accepts_legacy_goals_allocation_percent_payload() {
-        let (pool, writer) = setup_db();
+        let (pool, writer, _dir) = setup_db();
         let repo = AppSyncRepository::new(pool.clone(), writer);
         let mut conn = get_connection(&pool).expect("conn");
         insert_account_for_test(&mut conn, "acc-legacy-allocation").expect("insert account");
@@ -6856,7 +7806,7 @@ mod tests {
 
     #[tokio::test]
     async fn replay_accepts_import_profile_payload() {
-        let (pool, writer) = setup_db();
+        let (pool, writer, _dir) = setup_db();
         let repo = AppSyncRepository::new(pool.clone(), writer);
         let mut conn = get_connection(&pool).expect("conn");
         insert_account_for_test(&mut conn, "acc-import-profile").expect("insert account");
@@ -6951,7 +7901,7 @@ mod tests {
 
     #[tokio::test]
     async fn replay_updates_import_profile_with_stable_id() {
-        let (pool, writer) = setup_db();
+        let (pool, writer, _dir) = setup_db();
         let repo = AppSyncRepository::new(pool.clone(), writer);
         let mut conn = get_connection(&pool).expect("conn");
         insert_account_for_test(&mut conn, "acc-import-update").expect("insert account");
@@ -7059,7 +8009,7 @@ mod tests {
 
     #[tokio::test]
     async fn replay_batch_applies_out_of_order_account_and_platform_events() {
-        let (pool, writer) = setup_db();
+        let (pool, writer, _dir) = setup_db();
         let repo = AppSyncRepository::new(pool.clone(), writer);
 
         let applied = repo
@@ -7124,7 +8074,7 @@ mod tests {
 
     #[tokio::test]
     async fn snapshot_export_returns_sqlite_image() {
-        let (pool, writer) = setup_db();
+        let (pool, writer, _dir) = setup_db();
         let repo = AppSyncRepository::new(pool.clone(), writer);
         let mut conn = get_connection(&pool).expect("conn");
         insert_account_for_test(&mut conn, "acc-export").expect("insert account");
@@ -7147,7 +8097,7 @@ mod tests {
             c: i64,
         }
 
-        let (pool, writer) = setup_db();
+        let (pool, writer, _dir) = setup_db();
         let repo = AppSyncRepository::new(pool.clone(), writer);
         let mut conn = get_connection(&pool).expect("conn");
 
@@ -7250,7 +8200,7 @@ mod tests {
             .order(quotes::id)
             .load::<QuoteDB>(&mut conn)
             .expect("source quotes");
-        let (target_pool, target_writer) = setup_db();
+        let (target_pool, target_writer, _target_dir) = setup_db();
         let target_repo = AppSyncRepository::new(target_pool.clone(), target_writer);
         target_repo
             .restore_snapshot_tables_from_file(
@@ -7332,7 +8282,7 @@ mod tests {
             c: i64,
         }
 
-        let (pool, writer) = setup_db();
+        let (pool, writer, _dir) = setup_db();
         let repo = AppSyncRepository::new(pool.clone(), writer);
         let mut conn = get_connection(&pool).expect("conn");
 
@@ -7389,7 +8339,7 @@ mod tests {
             c: i64,
         }
 
-        let (pool, writer) = setup_db();
+        let (pool, writer, _dir) = setup_db();
         let repo = AppSyncRepository::new(pool.clone(), writer);
         let mut conn = get_connection(&pool).expect("conn");
 
@@ -7497,7 +8447,7 @@ mod tests {
 
     #[tokio::test]
     async fn snapshot_upload_validation_fails_with_portfolio_repair_message() {
-        let (pool, writer) = setup_db();
+        let (pool, writer, _dir) = setup_db();
         let repo = AppSyncRepository::new(pool.clone(), writer);
         let mut conn = get_connection(&pool).expect("conn");
 
@@ -7527,7 +8477,7 @@ mod tests {
 
     #[tokio::test]
     async fn snapshot_upload_validation_ignores_missing_portfolio_memberships() {
-        let (pool, writer) = setup_db();
+        let (pool, writer, _dir) = setup_db();
         let repo = AppSyncRepository::new(pool.clone(), writer);
         let mut conn = get_connection(&pool).expect("conn");
 
@@ -7558,7 +8508,7 @@ mod tests {
             import_run_id: Option<String>,
         }
 
-        let (pool, writer) = setup_db();
+        let (pool, writer, _dir) = setup_db();
         let repo = AppSyncRepository::new(pool.clone(), writer);
         let mut conn = get_connection(&pool).expect("conn");
 
@@ -7643,7 +8593,7 @@ mod tests {
         assert_eq!(exported_broker_count.c, 2);
         drop(exported_conn);
 
-        let (restore_pool, restore_writer) = setup_db();
+        let (restore_pool, restore_writer, _restore_dir) = setup_db();
         let restore_repo = AppSyncRepository::new(restore_pool.clone(), restore_writer);
         restore_repo
             .restore_snapshot_tables_from_file(
@@ -7698,7 +8648,7 @@ mod tests {
             c: i64,
         }
 
-        let (pool, writer) = setup_db();
+        let (pool, writer, _dir) = setup_db();
         let repo = AppSyncRepository::new(pool.clone(), writer);
         let mut conn = get_connection(&pool).expect("conn");
 
@@ -7753,7 +8703,7 @@ mod tests {
         assert_eq!(exported_category_count.c, 1);
         drop(exported_conn);
 
-        let (restore_pool, restore_writer) = setup_db();
+        let (restore_pool, restore_writer, _restore_dir) = setup_db();
         let restore_repo = AppSyncRepository::new(restore_pool.clone(), restore_writer);
         restore_repo
             .restore_snapshot_tables_from_file(
@@ -7790,7 +8740,7 @@ mod tests {
             c: i64,
         }
 
-        let (pool, writer) = setup_db();
+        let (pool, writer, _dir) = setup_db();
         let repo = AppSyncRepository::new(pool.clone(), writer);
         let mut conn = get_connection(&pool).expect("conn");
 
@@ -7846,7 +8796,7 @@ mod tests {
         let exported_path = exported_dir.path().join("budget-snapshot.db");
         std::fs::write(&exported_path, payload).expect("write snapshot db");
 
-        let (restore_pool, restore_writer) = setup_db();
+        let (restore_pool, restore_writer, _restore_dir) = setup_db();
         let restore_repo = AppSyncRepository::new(restore_pool.clone(), restore_writer);
         restore_repo
             .restore_snapshot_tables_from_file(
@@ -7900,7 +8850,7 @@ mod tests {
             c: i64,
         }
 
-        let (pool, writer) = setup_db();
+        let (pool, writer, _dir) = setup_db();
         let repo = AppSyncRepository::new(pool.clone(), writer);
         let mut conn = get_connection(&pool).expect("conn");
 
@@ -7921,6 +8871,10 @@ mod tests {
                 (
                     app_settings::setting_key.eq("spending.excluded_category_ids"),
                     app_settings::setting_value.eq("[\"cat-1\"]"),
+                ),
+                (
+                    app_settings::setting_key.eq(GAIN_COLORS_KEY),
+                    app_settings::setting_value.eq("red-up"),
                 ),
                 (
                     app_settings::setting_key.eq("theme"),
@@ -7945,7 +8899,7 @@ mod tests {
         let settings_count: CountRow = diesel::sql_query("SELECT COUNT(*) AS c FROM app_settings")
             .get_result(&mut exported_conn)
             .expect("count settings");
-        assert_eq!(settings_count.c, 4);
+        assert_eq!(settings_count.c, 5);
 
         let theme_count: CountRow =
             diesel::sql_query("SELECT COUNT(*) AS c FROM app_settings WHERE setting_key = 'theme'")
@@ -7966,6 +8920,10 @@ mod tests {
         .set(app_settings::setting_value.eq(r#"{"version":6,"hiddenWidgets":[]}"#))
         .execute(&mut conn)
         .unwrap();
+        diesel::update(app_settings::table.filter(app_settings::setting_key.eq(GAIN_COLORS_KEY)))
+            .set(app_settings::setting_value.eq("green-up"))
+            .execute(&mut conn)
+            .unwrap();
         repo.restore_snapshot_tables_from_file(
             exported_path.to_string_lossy().to_string(),
             vec!["app_settings".to_string()],
@@ -7981,6 +8939,12 @@ mod tests {
             .first(&mut conn)
             .unwrap();
         assert_eq!(restored, r#"{"version":6,"hiddenWidgets":["regions"]}"#);
+        let gain_colors: String = app_settings::table
+            .filter(app_settings::setting_key.eq(GAIN_COLORS_KEY))
+            .select(app_settings::setting_value)
+            .first(&mut conn)
+            .unwrap();
+        assert_eq!(gain_colors, "red-up");
         let excluded_categories: String = app_settings::table
             .filter(app_settings::setting_key.eq("spending.excluded_category_ids"))
             .select(app_settings::setting_value)
@@ -8017,7 +8981,7 @@ mod tests {
 
     #[tokio::test]
     async fn replay_rejects_unknown_columns() {
-        let (pool, writer) = setup_db();
+        let (pool, writer, _dir) = setup_db();
         let repo = AppSyncRepository::new(pool, writer);
 
         let result = repo
@@ -8046,14 +9010,26 @@ mod tests {
 
     #[tokio::test]
     async fn replay_app_preference_is_allowlisted_and_uses_lww_without_echo() {
-        let (pool, writer) = setup_db();
+        let (pool, writer, _dir) = setup_db();
         let repo = AppSyncRepository::new(pool.clone(), writer);
         let layout = r#"{"version":6,"hiddenWidgets":["regions"]}"#;
         let applied = repo.apply_remote_event_lww(SyncEntity::AppPreference, INSIGHTS_OVERVIEW_LAYOUT_KEY.to_string(), SyncOperation::Update, "pref-1".to_string(), "2026-09-17T00:00:02Z".to_string(), 2, serde_json::json!({"settingKey": INSIGHTS_OVERVIEW_LAYOUT_KEY, "settingValue": layout})).await.unwrap();
         assert!(applied);
         let stale = repo.apply_remote_event_lww(SyncEntity::AppPreference, INSIGHTS_OVERVIEW_LAYOUT_KEY.to_string(), SyncOperation::Update, "pref-stale".to_string(), "2026-09-17T00:00:01Z".to_string(), 3, serde_json::json!({"settingKey": INSIGHTS_OVERVIEW_LAYOUT_KEY, "settingValue": "{}"})).await.unwrap();
         assert!(!stale);
-        for key in ["theme", "sync_enabled", "spending.enabled"] {
+        assert!(repo
+            .apply_remote_event_lww(
+                SyncEntity::AppPreference,
+                GAIN_COLORS_KEY.to_string(),
+                SyncOperation::Update,
+                "pref-gain-colors".to_string(),
+                "2026-09-17T00:00:03Z".to_string(),
+                3,
+                serde_json::json!({"settingKey": GAIN_COLORS_KEY, "settingValue": "red-up"})
+            )
+            .await
+            .unwrap());
+        for key in ["theme", "theme_id", "sync_enabled", "spending.enabled"] {
             assert!(!repo
                 .apply_remote_event_lww(
                     SyncEntity::AppPreference,
@@ -8114,7 +9090,7 @@ mod tests {
 
     #[tokio::test]
     async fn replay_spending_setting_skips_non_spending_keys() {
-        let (pool, writer) = setup_db();
+        let (pool, writer, _dir) = setup_db();
         let repo = AppSyncRepository::new(pool.clone(), writer);
 
         let applied = repo
@@ -8179,7 +9155,7 @@ mod tests {
 
     #[tokio::test]
     async fn replay_spending_preset_rule_deletion_applies_and_deletes() {
-        let (pool, writer) = setup_db();
+        let (pool, writer, _dir) = setup_db();
         let repo = AppSyncRepository::new(pool.clone(), writer);
         let entity_id = preset_rule_deletion_id("ca", "groceries");
 
@@ -8241,7 +9217,7 @@ mod tests {
 
     #[tokio::test]
     async fn replay_spending_preset_rule_deletion_recreates_after_delete() {
-        let (pool, writer) = setup_db();
+        let (pool, writer, _dir) = setup_db();
         let repo = AppSyncRepository::new(pool.clone(), writer);
         let entity_id = preset_rule_deletion_id("ca", "groceries");
 
@@ -8312,7 +9288,7 @@ mod tests {
 
     #[tokio::test]
     async fn replay_spending_preset_rule_deletion_rejects_mismatched_entity_id() {
-        let (pool, writer) = setup_db();
+        let (pool, writer, _dir) = setup_db();
         let repo = AppSyncRepository::new(pool.clone(), writer);
 
         let err = repo
@@ -8345,7 +9321,7 @@ mod tests {
 
     #[tokio::test]
     async fn replay_addon_storage_applies_and_deletes() {
-        let (pool, writer) = setup_db();
+        let (pool, writer, _dir) = setup_db();
         let repo = AppSyncRepository::new(pool.clone(), writer);
         let entity_id = addon_storage_id("addon-a", "prefs");
 
@@ -8410,7 +9386,7 @@ mod tests {
         // A delete is just another write for a reusable key: an older delete must
         // NOT wipe a newer value. (Under the old tombstone logic a delete always
         // won over a prior non-delete regardless of timestamp.)
-        let (pool, writer) = setup_db();
+        let (pool, writer, _dir) = setup_db();
         let repo = AppSyncRepository::new(pool.clone(), writer);
         let entity_id = addon_storage_id("addon-a", "prefs");
 
@@ -8462,7 +9438,7 @@ mod tests {
         // A deleted key can be legitimately re-created: a newer update after an
         // older delete must apply. (Under the old tombstone logic, once last_op
         // was Delete, every later create/update was permanently swallowed.)
-        let (pool, writer) = setup_db();
+        let (pool, writer, _dir) = setup_db();
         let repo = AppSyncRepository::new(pool.clone(), writer);
         let entity_id = addon_storage_id("addon-a", "prefs");
 
@@ -8539,7 +9515,7 @@ mod tests {
 
     #[tokio::test]
     async fn replay_asset_logo_upserts_and_deletes() {
-        let (pool, writer) = setup_db();
+        let (pool, writer, _dir) = setup_db();
         {
             let mut conn = get_connection(&pool).expect("conn");
             insert_asset_kind_for_test(&mut conn, "asset-logo-a", "INVESTMENT").expect("asset");
@@ -8601,7 +9577,7 @@ mod tests {
     #[tokio::test]
     async fn replay_asset_logo_reupload_after_delete_applies() {
         // asset_id is a reusable key: delete = reset, a later re-upload must win.
-        let (pool, writer) = setup_db();
+        let (pool, writer, _dir) = setup_db();
         {
             let mut conn = get_connection(&pool).expect("conn");
             insert_asset_kind_for_test(&mut conn, "asset-logo-a", "INVESTMENT").expect("asset");
@@ -8658,7 +9634,7 @@ mod tests {
 
     #[tokio::test]
     async fn replay_asset_logo_stale_delete_does_not_clobber_newer_upload() {
-        let (pool, writer) = setup_db();
+        let (pool, writer, _dir) = setup_db();
         {
             let mut conn = get_connection(&pool).expect("conn");
             insert_asset_kind_for_test(&mut conn, "asset-logo-a", "INVESTMENT").expect("asset");
@@ -8699,7 +9675,7 @@ mod tests {
 
     #[tokio::test]
     async fn replay_asset_logo_rejects_pk_mismatch() {
-        let (pool, writer) = setup_db();
+        let (pool, writer, _dir) = setup_db();
         {
             let mut conn = get_connection(&pool).expect("conn");
             insert_asset_kind_for_test(&mut conn, "asset-logo-a", "INVESTMENT").expect("asset");
@@ -8729,7 +9705,7 @@ mod tests {
 
     #[tokio::test]
     async fn replay_asset_logo_for_missing_asset_is_foreign_key_violation() {
-        let (pool, writer) = setup_db();
+        let (pool, writer, _dir) = setup_db();
         let repo = AppSyncRepository::new(pool.clone(), writer);
 
         let err = repo
@@ -8756,7 +9732,7 @@ mod tests {
 
     #[tokio::test]
     async fn replay_addon_storage_rejects_mismatched_entity_id() {
-        let (pool, writer) = setup_db();
+        let (pool, writer, _dir) = setup_db();
         let repo = AppSyncRepository::new(pool.clone(), writer);
 
         let err = repo
@@ -8788,7 +9764,7 @@ mod tests {
 
     #[tokio::test]
     async fn replay_batch_skips_unsupported_spending_setting_without_aborting() {
-        let (pool, writer) = setup_db();
+        let (pool, writer, _dir) = setup_db();
         let repo = AppSyncRepository::new(pool.clone(), writer);
 
         let applied = repo
@@ -8844,7 +9820,7 @@ mod tests {
 
     #[tokio::test]
     async fn replay_budget_target_rejects_invalid_decimal_amount() {
-        let (pool, writer) = setup_db();
+        let (pool, writer, _dir) = setup_db();
         let repo = AppSyncRepository::new(pool, writer);
 
         let err = repo
@@ -8875,7 +9851,7 @@ mod tests {
 
     #[tokio::test]
     async fn replay_rejects_conflicting_alias_columns() {
-        let (pool, writer) = setup_db();
+        let (pool, writer, _dir) = setup_db();
         let repo = AppSyncRepository::new(pool, writer);
 
         let result = repo
@@ -8911,7 +9887,7 @@ mod tests {
 
     #[tokio::test]
     async fn replay_custom_taxonomy_create_upserts_taxonomy_and_categories() {
-        let (pool, writer) = setup_db();
+        let (pool, writer, _dir) = setup_db();
         let repo = AppSyncRepository::new(pool.clone(), writer);
 
         let applied = repo
@@ -8984,7 +9960,7 @@ mod tests {
 
     #[tokio::test]
     async fn replay_custom_taxonomy_update_adds_and_removes_categories() {
-        let (pool, writer) = setup_db();
+        let (pool, writer, _dir) = setup_db();
         let repo = AppSyncRepository::new(pool.clone(), writer);
 
         // First: create with two categories
@@ -9086,7 +10062,7 @@ mod tests {
 
     #[tokio::test]
     async fn replay_custom_taxonomy_delete_cascades() {
-        let (pool, writer) = setup_db();
+        let (pool, writer, _dir) = setup_db();
         let repo = AppSyncRepository::new(pool.clone(), writer);
 
         // Create a taxonomy with categories
@@ -9153,7 +10129,7 @@ mod tests {
 
     #[tokio::test]
     async fn replay_custom_taxonomy_rejects_system_payload() {
-        let (pool, writer) = setup_db();
+        let (pool, writer, _dir) = setup_db();
         let repo = AppSyncRepository::new(pool.clone(), writer);
 
         let result = repo
@@ -9186,7 +10162,7 @@ mod tests {
 
     #[tokio::test]
     async fn replay_import_run_upserts_user_initiated_run() {
-        let (pool, writer) = setup_db();
+        let (pool, writer, _dir) = setup_db();
         let repo = AppSyncRepository::new(pool.clone(), writer);
         let mut conn = get_connection(&pool).expect("conn");
         insert_account_for_test(&mut conn, "acc-import-run").expect("insert account");
@@ -9248,7 +10224,7 @@ mod tests {
             asset_id: String,
         }
 
-        let (pool, writer) = setup_db();
+        let (pool, writer, _dir) = setup_db();
         let repo = AppSyncRepository::new(pool.clone(), writer);
         let mut conn = get_connection(&pool).expect("conn");
 
@@ -9351,7 +10327,7 @@ mod tests {
             c: i64,
         }
 
-        let (pool, writer) = setup_db();
+        let (pool, writer, _dir) = setup_db();
         let repo = AppSyncRepository::new(pool.clone(), writer);
         let mut conn = get_connection(&pool).expect("conn");
         insert_account_for_test(&mut conn, "acc-sync-invalid").expect("insert account");
@@ -9409,5 +10385,690 @@ mod tests {
         .get_result(&mut conn)
         .expect("count snapshots");
         assert_eq!(row.c, 0);
+    }
+
+    type ReplayBatchEvent = (
+        SyncEntity,
+        String,
+        SyncOperation,
+        String,
+        String,
+        i64,
+        serde_json::Value,
+    );
+
+    fn insert_cash_activity_for_test(
+        conn: &mut SqliteConnection,
+        activity_id: &str,
+        account_id: &str,
+    ) -> Result<()> {
+        let sql = format!(
+            "INSERT INTO activities \
+             (id, account_id, asset_id, activity_type, activity_type_override, source_type, subtype, \
+              status, activity_date, settlement_date, quantity, unit_price, amount, fee, currency, \
+              fx_rate, notes, metadata, source_system, source_record_id, source_group_id, \
+              idempotency_key, import_run_id, is_user_modified, needs_review, created_at, updated_at) \
+             VALUES ('{}', '{}', NULL, 'WITHDRAWAL', NULL, NULL, NULL, 'POSTED', \
+                     '2026-01-01T00:00:00Z', NULL, NULL, NULL, '25', '0', 'USD', NULL, NULL, \
+                     NULL, NULL, NULL, NULL, NULL, NULL, 0, 0, \
+                     '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z')",
+            escape_sqlite_str(activity_id),
+            escape_sqlite_str(account_id)
+        );
+        diesel::sql_query(sql)
+            .execute(conn)
+            .map_err(StorageError::from)?;
+        Ok(())
+    }
+
+    fn custom_taxonomy_bundle(
+        taxonomy_id: &str,
+        categories: &[(&str, Option<&str>)],
+        updated_at: &str,
+    ) -> serde_json::Value {
+        let categories = categories
+            .iter()
+            .enumerate()
+            .map(|(index, (category_id, parent_id))| {
+                serde_json::json!({
+                    "id": category_id,
+                    "taxonomyId": taxonomy_id,
+                    "parentId": parent_id,
+                    "name": category_id,
+                    "key": category_id,
+                    "color": "#123456",
+                    "description": null,
+                    "sortOrder": index,
+                    "createdAt": "2026-03-01T00:00:00+00:00",
+                    "updatedAt": updated_at
+                })
+            })
+            .collect::<Vec<_>>();
+        serde_json::json!({
+            "taxonomy": {
+                "id": taxonomy_id,
+                "name": taxonomy_id,
+                "color": "#654321",
+                "description": null,
+                "isSystem": 0,
+                "isSingleSelect": 1,
+                "sortOrder": 50,
+                "createdAt": "2026-03-01T00:00:00+00:00",
+                "updatedAt": updated_at
+            },
+            "categories": categories
+        })
+    }
+
+    fn assignment_payload(
+        assignment_id: &str,
+        activity_id: &str,
+        taxonomy_id: &str,
+        category_id: &str,
+        updated_at: &str,
+    ) -> serde_json::Value {
+        serde_json::json!({
+            "id": assignment_id,
+            "activityId": activity_id,
+            "taxonomyId": taxonomy_id,
+            "categoryId": category_id,
+            "weight": 10000,
+            "source": "manual",
+            "createdAt": "2026-03-01T00:00:00Z",
+            "updatedAt": updated_at
+        })
+    }
+
+    fn account_payload(
+        account_id: &str,
+        platform_id: &str,
+        provider_account_id: Option<&str>,
+    ) -> serde_json::Value {
+        serde_json::json!({
+            "id": account_id,
+            "name": "Isolation Account",
+            "account_type": "cash",
+            "group": serde_json::Value::Null,
+            "currency": "USD",
+            "is_default": false,
+            "is_active": true,
+            "platform_id": platform_id,
+            "account_number": serde_json::Value::Null,
+            "meta": serde_json::Value::Null,
+            "provider": provider_account_id.map(|_| "SNAPTRADE"),
+            "provider_account_id": provider_account_id,
+            "is_archived": false,
+            "tracking_mode": "portfolio"
+        })
+    }
+
+    fn account_create_event(account_id: &str, platform_id: &str, seq: i64) -> ReplayBatchEvent {
+        (
+            SyncEntity::Account,
+            account_id.to_string(),
+            SyncOperation::Create,
+            format!("evt-account-{account_id}"),
+            "2026-02-17T00:00:00Z".to_string(),
+            seq,
+            account_payload(account_id, platform_id, None),
+        )
+    }
+
+    fn platform_create_event(platform_id: &str, seq: i64) -> ReplayBatchEvent {
+        (
+            SyncEntity::Platform,
+            platform_id.to_string(),
+            SyncOperation::Create,
+            format!("evt-platform-{platform_id}"),
+            "2026-02-17T00:00:01Z".to_string(),
+            seq,
+            serde_json::json!({
+                "id": platform_id,
+                "name": "Isolation Platform",
+                "url": "https://isolation.example",
+                "external_id": serde_json::Value::Null,
+                "kind": "BROKERAGE",
+                "website_url": serde_json::Value::Null,
+                "logo_url": serde_json::Value::Null
+            }),
+        )
+    }
+
+    /// An event whose apply fails on its own: the payload id does not match the
+    /// entity id.
+    fn poison_event(seq: i64) -> ReplayBatchEvent {
+        (
+            SyncEntity::Account,
+            "acc-poison".to_string(),
+            SyncOperation::Create,
+            format!("evt-poison-{seq}"),
+            "2026-02-17T00:00:02Z".to_string(),
+            seq,
+            account_payload("acc-not-poison", "platform-unused", None),
+        )
+    }
+
+    #[tokio::test]
+    async fn category_removal_keeps_newer_child_metadata() {
+        let (pool, writer, _dir) = setup_db();
+        let repo = AppSyncRepository::new(pool.clone(), writer);
+        {
+            let mut conn = get_connection(&pool).expect("conn");
+            insert_account_for_test(&mut conn, "acc-cascade").expect("insert account");
+            insert_cash_activity_for_test(&mut conn, "act-cascade", "acc-cascade")
+                .expect("insert activity");
+        }
+
+        assert!(repo
+            .apply_remote_event_lww(
+                SyncEntity::CustomTaxonomy,
+                "tax-cascade".to_string(),
+                SyncOperation::Create,
+                "evt-tax-cascade-10".to_string(),
+                "2026-03-01T00:00:10Z".to_string(),
+                1,
+                custom_taxonomy_bundle(
+                    "tax-cascade",
+                    &[("cat-keep", None), ("cat-drop", None)],
+                    "2026-03-01T00:00:10Z",
+                ),
+            )
+            .await
+            .expect("create taxonomy"));
+        assert!(repo
+            .apply_remote_event_lww(
+                SyncEntity::ActivityTaxonomyAssignment,
+                "ata-cascade".to_string(),
+                SyncOperation::Create,
+                "evt-ata-cascade-30".to_string(),
+                "2026-03-01T00:00:30Z".to_string(),
+                2,
+                assignment_payload(
+                    "ata-cascade",
+                    "act-cascade",
+                    "tax-cascade",
+                    "cat-drop",
+                    "2026-03-01T00:00:30Z",
+                ),
+            )
+            .await
+            .expect("assign category"));
+
+        // A device whose clock is behind removes the category: its event is
+        // older than the assignment's last write.
+        assert!(repo
+            .apply_remote_event_lww(
+                SyncEntity::CustomTaxonomy,
+                "tax-cascade".to_string(),
+                SyncOperation::Update,
+                "evt-tax-cascade-20".to_string(),
+                "2026-03-01T00:00:20Z".to_string(),
+                3,
+                custom_taxonomy_bundle(
+                    "tax-cascade",
+                    &[("cat-keep", None)],
+                    "2026-03-01T00:00:20Z"
+                ),
+            )
+            .await
+            .expect("remove category"));
+
+        let metadata = repo
+            .get_entity_metadata(SyncEntity::ActivityTaxonomyAssignment, "ata-cascade")
+            .expect("load metadata")
+            .expect("assignment metadata");
+        assert_eq!(
+            metadata.last_client_timestamp, "2026-03-01T00:00:30Z",
+            "an older category removal must not lower the assignment's watermark"
+        );
+        assert_eq!(metadata.last_op, SyncOperation::Create);
+
+        // The device that removed the category locally keeps the t=30 watermark,
+        // so a delayed write from t=25 must be rejected here as well.
+        let delayed_applied = repo
+            .apply_remote_event_lww(
+                SyncEntity::ActivityTaxonomyAssignment,
+                "ata-cascade".to_string(),
+                SyncOperation::Update,
+                "evt-ata-cascade-25".to_string(),
+                "2026-03-01T00:00:25Z".to_string(),
+                4,
+                assignment_payload(
+                    "ata-cascade",
+                    "act-cascade",
+                    "tax-cascade",
+                    "cat-keep",
+                    "2026-03-01T00:00:25Z",
+                ),
+            )
+            .await
+            .expect("apply delayed write");
+        assert!(!delayed_applied);
+    }
+
+    #[tokio::test]
+    async fn replay_batch_skips_failing_event_and_keeps_out_of_order_events() {
+        let (pool, writer, _dir) = setup_db();
+        let repo = AppSyncRepository::new(pool.clone(), writer);
+
+        let applied = repo
+            .apply_remote_events_lww_batch(vec![
+                account_create_event("acc-iso-error", "platform-iso-error", 10),
+                poison_event(11),
+                platform_create_event("platform-iso-error", 12),
+            ])
+            .await
+            .expect("the batch isolates the failing event");
+
+        assert_eq!(applied, 2);
+        assert_eq!(count_account_rows(&pool, "acc-iso-error"), 1);
+        assert_eq!(count_platform_rows(&pool, "platform-iso-error"), 1);
+        assert!(!repo.has_applied_event("evt-poison-11").expect("applied"));
+        assert!(repo
+            .get_entity_metadata(SyncEntity::Account, "acc-poison")
+            .expect("metadata")
+            .is_none());
+    }
+
+    #[tokio::test]
+    async fn replay_batch_skips_foreign_key_violation_and_keeps_out_of_order_events() {
+        let (pool, writer, _dir) = setup_db();
+        let repo = AppSyncRepository::new(pool.clone(), writer);
+        {
+            let mut conn = get_connection(&pool).expect("conn");
+            insert_portfolio_for_test(&mut conn, "pf-iso", "Isolation").expect("portfolio");
+        }
+
+        let applied = repo
+            .apply_remote_events_lww_batch(vec![
+                account_create_event("acc-iso-fk", "platform-iso-fk", 20),
+                (
+                    SyncEntity::PortfolioAccount,
+                    "pfm_pf-iso_acc-missing".to_string(),
+                    SyncOperation::Create,
+                    "evt-pfm-missing".to_string(),
+                    "2026-02-17T00:00:00Z".to_string(),
+                    21,
+                    serde_json::json!({
+                        "id": "pfm_pf-iso_acc-missing",
+                        "portfolio_id": "pf-iso",
+                        "account_id": "acc-missing",
+                        "sort_order": 0,
+                        "created_at": "2026-02-17T00:00:00Z"
+                    }),
+                ),
+                platform_create_event("platform-iso-fk", 22),
+            ])
+            .await
+            .expect("the batch isolates the foreign key violation");
+
+        assert_eq!(applied, 2);
+        assert_eq!(count_account_rows(&pool, "acc-iso-fk"), 1);
+        assert_eq!(count_platform_rows(&pool, "platform-iso-fk"), 1);
+        let mut conn = get_connection(&pool).expect("conn");
+        let membership_count: i64 = crate::schema::portfolio_accounts::table
+            .filter(crate::schema::portfolio_accounts::id.eq("pfm_pf-iso_acc-missing"))
+            .select(count_star())
+            .first(&mut conn)
+            .expect("count memberships");
+        assert_eq!(membership_count, 0);
+        assert!(!repo.has_applied_event("evt-pfm-missing").expect("applied"));
+        assert!(repo
+            .get_entity_metadata(SyncEntity::PortfolioAccount, "pfm_pf-iso_acc-missing")
+            .expect("metadata")
+            .is_none());
+    }
+
+    #[tokio::test]
+    async fn replay_batch_isolation_keeps_event_order() {
+        // Codex round 2: a retried child must not outlive a later category removal.
+        async fn replay(with_poison: bool) -> (i64, Option<SyncEntityMetadata>, Vec<String>) {
+            let (pool, writer, _dir) = setup_db();
+            let repo = AppSyncRepository::new(pool.clone(), writer);
+            {
+                let mut conn = get_connection(&pool).expect("conn");
+                insert_account_for_test(&mut conn, "acc-order").expect("insert account");
+                insert_cash_activity_for_test(&mut conn, "act-order", "acc-order")
+                    .expect("insert activity");
+            }
+
+            let mut events = Vec::new();
+            if with_poison {
+                events.push(poison_event(1));
+            }
+            events.push((
+                SyncEntity::ActivityTaxonomyAssignment,
+                "ata-order".to_string(),
+                SyncOperation::Create,
+                "evt-ata-order-10".to_string(),
+                "2026-03-01T00:00:10Z".to_string(),
+                2,
+                assignment_payload(
+                    "ata-order",
+                    "act-order",
+                    "tax-order",
+                    "cat-c",
+                    "2026-03-01T00:00:10Z",
+                ),
+            ));
+            for (seq, timestamp, categories) in [
+                (3, "2026-03-01T00:00:05Z", vec![("cat-c", None)]),
+                (4, "2026-03-01T00:00:20Z", vec![("cat-other", None)]),
+                (
+                    5,
+                    "2026-03-01T00:00:40Z",
+                    vec![("cat-other", None), ("cat-c", None)],
+                ),
+            ] {
+                events.push((
+                    SyncEntity::CustomTaxonomy,
+                    "tax-order".to_string(),
+                    if seq == 3 {
+                        SyncOperation::Create
+                    } else {
+                        SyncOperation::Update
+                    },
+                    format!("evt-tax-order-{seq}"),
+                    timestamp.to_string(),
+                    seq,
+                    custom_taxonomy_bundle("tax-order", &categories, timestamp),
+                ));
+            }
+
+            repo.apply_remote_events_lww_batch(events)
+                .await
+                .expect("apply ordered batch");
+
+            let mut conn = get_connection(&pool).expect("conn");
+            let assignment_count: i64 = crate::schema::activity_taxonomy_assignments::table
+                .filter(crate::schema::activity_taxonomy_assignments::activity_id.eq("act-order"))
+                .select(count_star())
+                .first(&mut conn)
+                .expect("count assignments");
+            let metadata = repo
+                .get_entity_metadata(SyncEntity::ActivityTaxonomyAssignment, "ata-order")
+                .expect("metadata");
+            let categories: Vec<String> = taxonomy_categories::table
+                .filter(taxonomy_categories::taxonomy_id.eq("tax-order"))
+                .select(taxonomy_categories::id)
+                .order(taxonomy_categories::id.asc())
+                .load(&mut conn)
+                .expect("categories");
+            (assignment_count, metadata, categories)
+        }
+
+        let clean = replay(false).await;
+        let poisoned = replay(true).await;
+        assert_eq!(clean.0, 0, "the category removal cascades the assignment");
+        assert_eq!(poisoned.0, clean.0);
+        assert_eq!(
+            poisoned.1.map(|m| (m.last_op, m.last_client_timestamp)),
+            clean.1.map(|m| (m.last_op, m.last_client_timestamp))
+        );
+        assert_eq!(poisoned.2, clean.2);
+    }
+
+    #[tokio::test]
+    async fn replay_batch_rollback_discards_patches_queued_by_failed_attempt() {
+        let (pool, writer, _dir) = setup_db();
+        let repo = AppSyncRepository::new(pool.clone(), writer.clone());
+        {
+            let mut conn = get_connection(&pool).expect("conn");
+            diesel::sql_query(
+                "INSERT INTO accounts \
+                 (id, name, account_type, `group`, currency, is_default, is_active, created_at, updated_at, \
+                  platform_id, account_number, meta, provider, provider_account_id, is_archived, tracking_mode) \
+                 VALUES ('acc-broker-iso', 'Broker Account', 'cash', NULL, 'USD', 0, 1, \
+                         CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, NULL, NULL, NULL, 'SNAPTRADE', \
+                         'provider-iso-1', 0, 'portfolio')",
+            )
+            .execute(&mut conn)
+            .expect("insert broker account");
+            diesel::sql_query(
+                "INSERT INTO activities \
+                 (id, account_id, asset_id, activity_type, activity_type_override, source_type, subtype, \
+                  status, activity_date, settlement_date, quantity, unit_price, amount, fee, currency, \
+                  fx_rate, notes, metadata, source_system, source_record_id, source_group_id, \
+                  idempotency_key, import_run_id, is_user_modified, needs_review, created_at, updated_at) \
+                 VALUES ('act-broker-iso', 'acc-broker-iso', NULL, 'BUY', NULL, NULL, NULL, \
+                         'POSTED', '2026-01-01T00:00:00Z', NULL, '10', '5', '50', '1', 'USD', \
+                         NULL, 'Broker note', NULL, 'SNAPTRADE', 'record-iso-1', NULL, NULL, \
+                         NULL, 0, 1, '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z')",
+            )
+            .execute(&mut conn)
+            .expect("insert broker activity");
+        }
+        let identity = broker_activity_identity(
+            Some("SNAPTRADE"),
+            Some("provider-iso-1"),
+            Some("record-iso-1"),
+        )
+        .expect("broker identity");
+        let patch_entity_id = broker_activity_user_patch_entity_id(&identity);
+
+        // The account update moves the account to another provider id and points
+        // at a missing platform, so it is the attempt's FK culprit. While it is
+        // applied, the patch finds no target and is queued.
+        let applied = repo
+            .apply_remote_events_lww_batch(vec![
+                (
+                    SyncEntity::Account,
+                    "acc-broker-iso".to_string(),
+                    SyncOperation::Update,
+                    "evt-broker-iso-account".to_string(),
+                    "2026-02-01T00:00:00Z".to_string(),
+                    1,
+                    account_payload(
+                        "acc-broker-iso",
+                        "platform-missing-iso",
+                        Some("provider-iso-2"),
+                    ),
+                ),
+                (
+                    SyncEntity::BrokerActivityUserPatch,
+                    patch_entity_id,
+                    SyncOperation::Update,
+                    "evt-broker-iso-patch".to_string(),
+                    "2026-02-01T00:00:01Z".to_string(),
+                    2,
+                    serde_json::json!({
+                        "sourceSystem": "SNAPTRADE",
+                        "providerAccountId": "provider-iso-1",
+                        "sourceRecordId": "record-iso-1",
+                        "overlay": {
+                            "notes": "Synced note",
+                            "activityTypeOverride": null,
+                            "subtype": null,
+                            "needsReview": false
+                        }
+                    }),
+                ),
+            ])
+            .await
+            .expect("the batch isolates the account update");
+        assert_eq!(applied, 1, "the patch applies once the culprit is skipped");
+
+        let mut conn = get_connection(&pool).expect("conn");
+        let notes: Option<String> = activities::table
+            .find("act-broker-iso")
+            .select(activities::notes)
+            .first(&mut conn)
+            .expect("activity");
+        assert_eq!(notes.as_deref(), Some("Synced note"));
+        drop(conn);
+
+        let sync_state = writer.sync_state();
+        let reapplied = writer
+            .exec(move |conn| {
+                crate::sync::broker_activity_patch::apply_pending_broker_activity_user_patches_tx(
+                    conn,
+                    &sync_state.broker_activity_patches,
+                )
+            })
+            .await
+            .expect("flush pending patches");
+        assert_eq!(
+            reapplied, 0,
+            "a patch queued by a rolled-back attempt must not stay pending"
+        );
+    }
+
+    #[tokio::test]
+    async fn replay_batch_dead_letters_orphan_taxonomy_categories() {
+        let (pool, writer, _dir) = setup_db();
+        let repo = AppSyncRepository::new(pool.clone(), writer);
+        let orphan_bundle = || {
+            custom_taxonomy_bundle(
+                "tax-orphan",
+                &[("cat-child", Some("cat-missing"))],
+                "2026-03-01T00:00:00Z",
+            )
+        };
+        let assert_nothing_persisted = |event_id: &str| {
+            let mut conn = get_connection(&pool).expect("conn");
+            let taxonomy_count: i64 = taxonomies::table
+                .filter(taxonomies::id.eq("tax-orphan"))
+                .select(count_star())
+                .first(&mut conn)
+                .expect("count taxonomies");
+            assert_eq!(taxonomy_count, 0);
+            let category_count: i64 = taxonomy_categories::table
+                .filter(taxonomy_categories::taxonomy_id.eq("tax-orphan"))
+                .select(count_star())
+                .first(&mut conn)
+                .expect("count categories");
+            assert_eq!(category_count, 0);
+            assert!(repo
+                .get_entity_metadata(SyncEntity::CustomTaxonomy, "tax-orphan")
+                .expect("metadata")
+                .is_none());
+            assert!(!repo.has_applied_event(event_id).expect("applied"));
+        };
+
+        let applied = repo
+            .apply_remote_events_lww_batch(vec![(
+                SyncEntity::CustomTaxonomy,
+                "tax-orphan".to_string(),
+                SyncOperation::Create,
+                "evt-orphan-1".to_string(),
+                "2026-03-01T00:00:00Z".to_string(),
+                1,
+                orphan_bundle(),
+            )])
+            .await
+            .expect("the orphan bundle is dead-lettered");
+        assert_eq!(applied, 0);
+        assert_nothing_persisted("evt-orphan-1");
+
+        let applied = repo
+            .apply_remote_events_lww_batch(vec![
+                poison_event(2),
+                (
+                    SyncEntity::CustomTaxonomy,
+                    "tax-orphan".to_string(),
+                    SyncOperation::Create,
+                    "evt-orphan-3".to_string(),
+                    "2026-03-01T00:00:00Z".to_string(),
+                    3,
+                    orphan_bundle(),
+                ),
+            ])
+            .await
+            .expect("the orphan bundle is dead-lettered after an isolated event");
+        assert_eq!(applied, 0);
+        assert_nothing_persisted("evt-orphan-3");
+    }
+
+    #[tokio::test]
+    async fn replay_batch_blames_only_the_event_that_wrote_the_row() {
+        let (pool, writer, _dir) = setup_db();
+        let repo = AppSyncRepository::new(pool.clone(), writer);
+        {
+            let mut conn = get_connection(&pool).expect("conn");
+            insert_account_for_test(&mut conn, "acc-blame").expect("insert account");
+        }
+        let account_update =
+            |event_id: &str, timestamp: &str, seq: i64, name: &str, platform: &str| {
+                let mut payload = account_payload("acc-blame", platform, None);
+                payload["name"] = serde_json::json!(name);
+                if platform.is_empty() {
+                    payload["platform_id"] = serde_json::Value::Null;
+                }
+                (
+                    SyncEntity::Account,
+                    "acc-blame".to_string(),
+                    SyncOperation::Update,
+                    event_id.to_string(),
+                    timestamp.to_string(),
+                    seq,
+                    payload,
+                )
+            };
+
+        // The newer update points at a missing platform; the older one, which
+        // last-writer-wins skips while the newer one is applied, is valid.
+        let applied = repo
+            .apply_remote_events_lww_batch(vec![
+                account_update(
+                    "evt-blame-newer",
+                    "2026-02-17T00:00:20Z",
+                    1,
+                    "Newer",
+                    "platform-missing-blame",
+                ),
+                account_update("evt-blame-older", "2026-02-17T00:00:10Z", 2, "Older", ""),
+            ])
+            .await
+            .expect("the batch isolates the invalid update");
+
+        assert_eq!(applied, 1, "only the valid update applies");
+        let mut conn = get_connection(&pool).expect("conn");
+        let name: String = accounts::table
+            .find("acc-blame")
+            .select(accounts::name)
+            .first(&mut conn)
+            .expect("account");
+        assert_eq!(name, "Older");
+        assert!(repo.has_applied_event("evt-blame-older").expect("applied"));
+        assert!(!repo.has_applied_event("evt-blame-newer").expect("applied"));
+    }
+
+    #[tokio::test]
+    async fn replay_batch_isolates_orphan_taxonomy_bundle() {
+        let (pool, writer, _dir) = setup_db();
+        let repo = AppSyncRepository::new(pool.clone(), writer);
+
+        let applied = repo
+            .apply_remote_events_lww_batch(vec![
+                account_create_event("acc-bundle-iso", "platform-bundle-iso", 1),
+                (
+                    SyncEntity::CustomTaxonomy,
+                    "tax-orphan-iso".to_string(),
+                    SyncOperation::Create,
+                    "evt-orphan-iso".to_string(),
+                    "2026-03-01T00:00:00Z".to_string(),
+                    2,
+                    custom_taxonomy_bundle(
+                        "tax-orphan-iso",
+                        &[("cat-child", Some("cat-missing"))],
+                        "2026-03-01T00:00:00Z",
+                    ),
+                ),
+                platform_create_event("platform-bundle-iso", 3),
+            ])
+            .await
+            .expect("the batch isolates the orphan bundle");
+
+        assert_eq!(applied, 2);
+        assert_eq!(count_account_rows(&pool, "acc-bundle-iso"), 1);
+        assert_eq!(count_platform_rows(&pool, "platform-bundle-iso"), 1);
+        let mut conn = get_connection(&pool).expect("conn");
+        let category_count: i64 = taxonomy_categories::table
+            .filter(taxonomy_categories::taxonomy_id.eq("tax-orphan-iso"))
+            .select(count_star())
+            .first(&mut conn)
+            .expect("count categories");
+        assert_eq!(category_count, 0);
+        assert!(!repo.has_applied_event("evt-orphan-iso").expect("applied"));
     }
 }

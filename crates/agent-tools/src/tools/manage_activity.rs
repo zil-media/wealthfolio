@@ -170,6 +170,8 @@ fn build_activity_update(
         notes,
         fx_rate: None,
         metadata: None,
+        unlink_transfer_pair_id: None,
+        split_review: None,
     })
 }
 

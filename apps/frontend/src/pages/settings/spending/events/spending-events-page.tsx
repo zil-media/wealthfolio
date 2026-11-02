@@ -1,3 +1,4 @@
+import { getEventTypeLabel } from "@/features/spending/lib/labels";
 import { useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { Navigate } from "react-router-dom";
@@ -12,9 +13,14 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
   Button,
-  EmptyPlaceholder,
   Icons,
   Skeleton,
+  Empty,
+  EmptyHeader,
+  EmptyMedia,
+  EmptyTitle,
+  EmptyDescription,
+  EmptyContent,
 } from "@wealthfolio/ui";
 
 import { ActionPalette, type ActionPaletteGroup } from "@/components/action-palette";
@@ -106,7 +112,7 @@ export default function SpendingEventsPage() {
           <Icons.Plus className="h-3.5 w-3.5" />
         </Button>
         <Button size="sm" className="hidden sm:inline-flex" onClick={handleAddEventType}>
-          <Icons.Plus className="mr-2 h-3.5 w-3.5" />
+          <Icons.Plus className="me-2 h-3.5 w-3.5" />
           {t("settings:spending.events.add_type")}
         </Button>
       </SettingsHeader>
@@ -118,15 +124,15 @@ export default function SpendingEventsPage() {
           <Skeleton className="h-12" />
         </div>
       ) : eventsErrored || typesErrored ? (
-        <EmptyPlaceholder>
-          <EmptyPlaceholder.Icon name="AlertTriangle" />
-          <EmptyPlaceholder.Title>
-            {t("settings:spending.events.error_title")}
-          </EmptyPlaceholder.Title>
-          <EmptyPlaceholder.Description>
-            {t("settings:spending.events.error_description")}
-          </EmptyPlaceholder.Description>
-        </EmptyPlaceholder>
+        <Empty>
+          <EmptyHeader>
+            <EmptyMedia variant="icon">
+              <Icons.AlertTriangle />
+            </EmptyMedia>
+            <EmptyTitle>{t("settings:spending.events.error_title")}</EmptyTitle>
+            <EmptyDescription>{t("settings:spending.events.error_description")}</EmptyDescription>
+          </EmptyHeader>
+        </Empty>
       ) : eventTypes.length > 0 ? (
         <div className="divide-border divide-y rounded-md border">
           {eventTypes.map((type) => {
@@ -163,19 +169,21 @@ export default function SpendingEventsPage() {
           })}
         </div>
       ) : (
-        <EmptyPlaceholder>
-          <EmptyPlaceholder.Icon name="Calendar" />
-          <EmptyPlaceholder.Title>
-            {t("settings:spending.events.empty_title")}
-          </EmptyPlaceholder.Title>
-          <EmptyPlaceholder.Description>
-            {t("settings:spending.events.empty_description")}
-          </EmptyPlaceholder.Description>
-          <Button onClick={handleAddEventType}>
-            <Icons.Plus className="mr-2 h-4 w-4" />
-            {t("settings:spending.events.add_type")}
-          </Button>
-        </EmptyPlaceholder>
+        <Empty>
+          <EmptyHeader>
+            <EmptyMedia variant="icon">
+              <Icons.Calendar />
+            </EmptyMedia>
+            <EmptyTitle>{t("settings:spending.events.empty_title")}</EmptyTitle>
+            <EmptyDescription>{t("settings:spending.events.empty_description")}</EmptyDescription>
+          </EmptyHeader>
+          <EmptyContent>
+            <Button onClick={handleAddEventType}>
+              <Icons.Plus className="me-2 h-4 w-4" />
+              {t("settings:spending.events.add_type")}
+            </Button>
+          </EmptyContent>
+        </Empty>
       )}
     </div>
   );
@@ -232,11 +240,13 @@ function EventTypeRow({
             size="sm"
             className="h-6 w-6 shrink-0 p-0"
             onClick={onToggleExpanded}
+            aria-label={getEventTypeLabel(t, type.id, type.name)}
+            aria-expanded={isExpanded}
           >
             {isExpanded ? (
               <Icons.ChevronDown className="h-4 w-4" />
             ) : (
-              <Icons.ChevronRight className="h-4 w-4" />
+              <Icons.ChevronRight className="h-4 w-4 rtl:rotate-180" />
             )}
           </Button>
         ) : (
@@ -245,7 +255,9 @@ function EventTypeRow({
         {type.color && (
           <div className="h-3 w-3 shrink-0 rounded-full" style={{ backgroundColor: type.color }} />
         )}
-        <span className="min-w-0 truncate text-sm font-medium">{type.name}</span>
+        <span className="min-w-0 truncate text-sm font-medium">
+          {getEventTypeLabel(t, type.id, type.name)}
+        </span>
         {hasEvents && (
           <span className="text-muted-foreground shrink-0 text-xs">({typeEvents.length})</span>
         )}
@@ -283,7 +295,7 @@ function EventTypeRow({
       <ActionPalette
         open={paletteOpen}
         onOpenChange={setPaletteOpen}
-        title={type.name}
+        title={getEventTypeLabel(t, type.id, type.name)}
         groups={paletteGroups}
         align="end"
         trigger={
@@ -303,7 +315,9 @@ function EventTypeRow({
           <AlertDialogHeader>
             <AlertDialogTitle>{t("settings:spending.events.delete_type_title")}</AlertDialogTitle>
             <AlertDialogDescription>
-              {t("settings:spending.events.delete_type_confirm", { name: type.name })}
+              {t("settings:spending.events.delete_type_confirm", {
+                name: getEventTypeLabel(t, type.id, type.name),
+              })}
               {hasEvents && (
                 <span className="text-destructive mt-2 block font-medium">
                   {t("settings:spending.events.delete_type_cascade", {
@@ -316,10 +330,7 @@ function EventTypeRow({
           </AlertDialogHeader>
           <AlertDialogFooter>
             <AlertDialogCancel>{t("common:cancel")}</AlertDialogCancel>
-            <AlertDialogAction
-              onClick={onDeleteEventType}
-              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
-            >
+            <AlertDialogAction onClick={onDeleteEventType} variant="destructive">
               {t("common:delete")}
             </AlertDialogAction>
           </AlertDialogFooter>
@@ -361,7 +372,7 @@ function EventRow({
   ];
 
   return (
-    <div className="ml-6 border-l pl-4">
+    <div className="ms-6 border-s ps-4">
       <div className="flex items-center justify-between gap-2 py-3">
         <div className="flex min-w-0 flex-1 items-center gap-3">
           <div className="w-6 shrink-0" />
@@ -433,10 +444,7 @@ function EventRow({
             </AlertDialogHeader>
             <AlertDialogFooter>
               <AlertDialogCancel>{t("common:cancel")}</AlertDialogCancel>
-              <AlertDialogAction
-                onClick={onDelete}
-                className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
-              >
+              <AlertDialogAction onClick={onDelete} variant="destructive">
                 {t("common:delete")}
               </AlertDialogAction>
             </AlertDialogFooter>

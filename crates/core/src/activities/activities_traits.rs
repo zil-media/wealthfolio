@@ -1,22 +1,26 @@
 use super::activities_constants::{ACTIVITY_TYPE_TRANSFER_IN, ACTIVITY_TYPE_TRANSFER_OUT};
 use super::activities_model::*;
+use super::cash_balances::CashLedgerActivity;
 use crate::limits::ContributionActivity;
 use crate::Result;
 use async_trait::async_trait;
 use chrono::{DateTime, NaiveDate, Utc};
-use rust_decimal::Decimal;
 use std::collections::{HashMap, HashSet};
 
 /// Trait defining the contract for Activity repository operations.
 #[async_trait]
 pub trait ActivityRepositoryTrait: Send + Sync {
+    fn has_spending_splits(&self, _activity_id: &str) -> Result<bool> {
+        Err(crate::activities::ActivityError::InvalidData("Split review unavailable".into()).into())
+    }
+    fn preview_split_effect(&self, _update: &ActivityUpdate) -> Result<ActivitySplitEffect> {
+        Err(crate::activities::ActivityError::InvalidData("Split review unavailable".into()).into())
+    }
+    /// Review an unlink-only counterpart without projecting a financial edit.
+    fn preview_unchanged_split_effect(&self, _activity_id: &str) -> Result<ActivitySplitEffect> {
+        Err(crate::activities::ActivityError::InvalidData("Split review unavailable".into()).into())
+    }
     fn get_activity(&self, activity_id: &str) -> Result<Activity>;
-    /// Returns the other activity sharing `group_id`, excluding `exclude_id`.
-    fn find_transfer_counterpart(
-        &self,
-        group_id: &str,
-        exclude_id: &str,
-    ) -> Result<Option<Activity>>;
     fn get_activities(&self) -> Result<Vec<Activity>>;
     fn get_activities_by_ids(&self, activity_ids: &[String]) -> Result<Vec<Activity>> {
         if activity_ids.is_empty() {
@@ -39,7 +43,46 @@ pub trait ActivityRepositoryTrait: Send + Sync {
         Ok(activities)
     }
     fn get_activities_by_account_id(&self, account_id: &str) -> Result<Vec<Activity>>;
+    /// Activities of the accounts, archived accounts included (the kernel
+    /// pairs transfers against archived counterparties).
+    fn get_activities_by_account_ids_including_archived(
+        &self,
+        account_ids: &[String],
+    ) -> Result<Vec<Activity>> {
+        let requested: HashSet<&str> = account_ids.iter().map(String::as_str).collect();
+        let mut activities = self.get_activities_including_archived_accounts()?;
+        activities.retain(|activity| requested.contains(activity.account_id.as_str()));
+        Ok(activities)
+    }
+    /// Every activity of the transfer groups, archived accounts included.
+    fn get_activities_by_source_group_ids(&self, group_ids: &[String]) -> Result<Vec<Activity>> {
+        let wanted: HashSet<&str> = group_ids.iter().map(String::as_str).collect();
+        if wanted.is_empty() {
+            return Ok(Vec::new());
+        }
+        let mut activities = self.get_activities_including_archived_accounts()?;
+        activities.retain(|activity| {
+            activity
+                .source_group_id
+                .as_deref()
+                .is_some_and(|g| wanted.contains(g))
+        });
+        Ok(activities)
+    }
     fn get_activities_by_account_ids(&self, account_ids: &[String]) -> Result<Vec<Activity>>;
+    /// The ledger's fields of the activities `get_activities_by_account_ids`
+    /// returns. Storage reads only those columns; the default converts whole
+    /// activities.
+    fn get_cash_ledger_activities(
+        &self,
+        account_ids: &[String],
+    ) -> Result<Vec<CashLedgerActivity>> {
+        Ok(self
+            .get_activities_by_account_ids(account_ids)?
+            .iter()
+            .map(CashLedgerActivity::from)
+            .collect())
+    }
     fn get_activities_by_account_ids_in_date_range(
         &self,
         account_ids: &[String],
@@ -53,31 +96,6 @@ pub trait ActivityRepositoryTrait: Send + Sync {
                 && activity.activity_date >= start_utc
                 && activity.activity_date <= end_utc
         });
-        Ok(activities)
-    }
-    fn get_split_activities_by_asset_ids_in_date_range(
-        &self,
-        asset_ids: &[String],
-        start_utc: DateTime<Utc>,
-        end_exclusive_utc: DateTime<Utc>,
-    ) -> Result<Vec<Activity>> {
-        if asset_ids.is_empty() {
-            return Ok(Vec::new());
-        }
-
-        let requested_assets: HashSet<&str> = asset_ids.iter().map(String::as_str).collect();
-        let mut activities = self.get_activities()?;
-        activities.retain(|activity| {
-            activity
-                .asset_id
-                .as_deref()
-                .is_some_and(|asset_id| requested_assets.contains(asset_id))
-                && activity.is_posted()
-                && activity.effective_type() == super::ACTIVITY_TYPE_SPLIT
-                && activity.activity_date >= start_utc
-                && activity.activity_date < end_exclusive_utc
-        });
-        activities.sort_by_key(|activity| activity.activity_date);
         Ok(activities)
     }
     fn get_transfer_activities_touching_account_ids_in_date_range(
@@ -201,6 +219,13 @@ pub trait ActivityRepositoryTrait: Send + Sync {
     async fn create_activity(&self, new_activity: NewActivity) -> Result<Activity>;
     async fn update_activity(&self, activity_update: ActivityUpdate) -> Result<Activity>;
     async fn delete_activity(&self, activity_id: String) -> Result<Activity>;
+    /// Deletes the reviewed rows only if their stored groups contain no other
+    /// rows. The check and deletion must share the writer transaction.
+    async fn delete_activities_checked(&self, _activity_ids: Vec<String>) -> Result<Vec<Activity>> {
+        Err(crate::Error::Unexpected(
+            "Checked activity deletion is unavailable".into(),
+        ))
+    }
     /// Pairs two existing transfer activities by writing a shared `source_group_id`
     /// and clearing `metadata.flow.is_external` on both. Order of `activity_a_id` /
     /// `activity_b_id` is irrelevant; the impl resolves which is IN vs OUT.
@@ -223,11 +248,40 @@ pub trait ActivityRepositoryTrait: Send + Sync {
         delete_ids: Vec<String>,
     ) -> Result<ActivityBulkMutationResult>;
     async fn create_activities(&self, activities: Vec<NewActivity>) -> Result<usize>;
+    /// Same insert policy/atomicity as create_activities, returning actual saved
+    /// rows in input order. Never infer persisted IDs from review UUIDs.
+    async fn create_activities_returning(
+        &self,
+        _activities: Vec<NewActivity>,
+    ) -> Result<Vec<Activity>> {
+        Err(crate::Error::Unexpected(
+            "Activity repository does not support returning inserted rows".into(),
+        ))
+    }
+
     /// Returns activities from both active and archived accounts.
     fn get_activities_including_archived_accounts(&self) -> Result<Vec<Activity>> {
         Err(crate::Error::Unexpected(
             "Activity repository does not support archived-account activity reads".to_string(),
         ))
+    }
+    /// SPLIT activities (effective type) of the given assets in every account,
+    /// archived ones included: a split belongs to the asset, so it tells how
+    /// every holder's quotes read, whichever account recorded it.
+    fn get_split_activities_by_asset_ids(&self, asset_ids: &[String]) -> Result<Vec<Activity>> {
+        if asset_ids.is_empty() {
+            return Ok(Vec::new());
+        }
+        let requested: HashSet<&str> = asset_ids.iter().map(String::as_str).collect();
+        let mut activities = self.get_activities_including_archived_accounts()?;
+        activities.retain(|activity| {
+            activity.effective_type() == "SPLIT"
+                && activity
+                    .asset_id
+                    .as_deref()
+                    .is_some_and(|asset| requested.contains(asset))
+        });
+        Ok(activities)
     }
     async fn update_activities_for_final_cash_migration(
         &self,
@@ -270,8 +324,6 @@ pub trait ActivityRepositoryTrait: Send + Sync {
         template_id: &str,
         source_system: &str,
     ) -> Result<()>;
-    // Add other repository methods if necessary, e.g., calculate_average_cost, get_deposit_activities
-    fn calculate_average_cost(&self, account_id: &str, asset_id: &str) -> Result<Decimal>;
     fn get_income_activities_data(&self, account_ids: Option<&[String]>)
         -> Result<Vec<IncomeData>>;
     fn get_first_activity_date_overall(&self) -> Result<DateTime<Utc>>;
@@ -337,6 +389,8 @@ pub trait ActivityRepositoryTrait: Send + Sync {
 pub trait ActivityServiceTrait: Send + Sync {
     fn get_activity(&self, activity_id: &str) -> Result<Activity>;
     fn get_activities(&self) -> Result<Vec<Activity>>;
+    /// Returns activities from both active and archived accounts.
+    fn get_activities_including_archived_accounts(&self) -> Result<Vec<Activity>>;
     fn get_activities_by_account_id(&self, account_id: &str) -> Result<Vec<Activity>>;
     fn get_activities_by_account_ids(&self, account_ids: &[String]) -> Result<Vec<Activity>>;
     fn get_trading_activities(&self) -> Result<Vec<Activity>>;
@@ -389,6 +443,13 @@ pub trait ActivityServiceTrait: Send + Sync {
             activity_id_filter,
         )
     }
+    /// Fills each row's cash balance: the cash after the row for cash or
+    /// credit-card accounts that hold no securities, the cash at the end of
+    /// the row's day for other accounts whose holdings come from activities.
+    /// The default leaves the rows without balances.
+    async fn attach_cash_balances(&self, _response: &mut ActivitySearchResponse) -> Result<()> {
+        Ok(())
+    }
     fn get_first_activity_date(
         &self,
         account_ids: Option<&[String]>,
@@ -402,10 +463,48 @@ pub trait ActivityServiceTrait: Send + Sync {
     fn get_import_template(&self, template_id: String) -> Result<ImportTemplateData>;
     async fn create_activity(&self, activity: NewActivity) -> Result<Activity>;
     async fn update_activity(&self, activity: ActivityUpdate) -> Result<Activity>;
+    /// Runs `update_activity`'s validation and returns what it would write,
+    /// for the activity and a linked transfer leg, without writing anything.
+    /// The asset may only be named by id: resolving a symbol may create one.
+    fn preview_activity_update(&self, activity: ActivityUpdate) -> Result<ActivityUpdatePreview>;
+    fn review_activity_split_effects_batch(
+        &self,
+        activities: Vec<ActivityUpdate>,
+    ) -> Result<Vec<Vec<ActivitySplitEffect>>> {
+        activities
+            .into_iter()
+            .map(|activity| self.review_activity_split_effects(activity))
+            .collect()
+    }
+    fn review_activity_split_effects(
+        &self,
+        _activity: ActivityUpdate,
+    ) -> Result<Vec<ActivitySplitEffect>> {
+        Err(crate::activities::ActivityError::InvalidData("Split review unavailable".into()).into())
+    }
+    async fn review_internal_transfer_pair_split_effects(
+        &self,
+        _request: InternalTransferPairRequest,
+    ) -> Result<Vec<ActivitySplitEffect>> {
+        Err(crate::activities::ActivityError::InvalidData("Split review unavailable".into()).into())
+    }
     async fn delete_activity(&self, activity_id: String) -> Result<Activity>;
     /// Moves every activity of `source_asset_id` onto `target_asset_id` and
     /// deletes the source asset. See `AssetServiceTrait::merge_assets`.
     async fn merge_assets(&self, source_asset_id: &str, target_asset_id: &str) -> Result<u32>;
+    /// Deletes exactly the reviewed rows, rejecting newly linked/grouped rows
+    /// atomically, and returns every deleted record.
+    async fn delete_activities_checked(&self, _activity_ids: Vec<String>) -> Result<Vec<Activity>> {
+        Err(crate::Error::Unexpected(
+            "Checked activity deletion is unavailable".into(),
+        ))
+    }
+    /// Every id the stored source-group deletion cascade would remove.
+    fn get_activity_deletion_ids(&self, _activity_id: &str) -> Result<Vec<String>> {
+        Err(crate::Error::Unexpected(
+            "Activity deletion preview is unavailable".into(),
+        ))
+    }
     /// Returns the internal transfer pair for the activity, or `None` when the
     /// activity exists but is not part of a valid internal transfer pair.
     fn get_transfer_pair_for_activity(
@@ -416,6 +515,14 @@ pub trait ActivityServiceTrait: Send + Sync {
         &self,
         request: TransferMatchCandidateRequest,
     ) -> Result<Vec<TransferMatchCandidate>>;
+    /// Posted transfers in scope with no linked other side, newest first, each
+    /// with its link state and best candidates, in the accounts the Health
+    /// Center checks. One read of the activities serves the scan, which runs
+    /// off the async workers.
+    async fn find_unlinked_transfers(
+        &self,
+        request: UnlinkedTransfersRequest,
+    ) -> Result<UnlinkedTransfers>;
     async fn save_internal_transfer_pair(
         &self,
         request: InternalTransferPairRequest,

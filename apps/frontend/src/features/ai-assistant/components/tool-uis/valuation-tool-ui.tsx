@@ -2,12 +2,19 @@ import type { ToolCallMessagePartProps } from "@assistant-ui/react";
 import { HistoryChart } from "@/components/history-chart";
 import { DateRange, TimePeriod } from "@/lib/types";
 import { makeAssistantToolUI } from "@assistant-ui/react";
-import { Badge, Card, CardContent, CardHeader, CardTitle, IntervalSelector } from "@wealthfolio/ui";
+import {
+  Badge,
+  Card,
+  CardContent,
+  CardHeader,
+  CardTitle,
+  IntervalSelector,
+  Spinner,
+} from "@wealthfolio/ui";
 import { isAfter, parseISO, subMonths } from "date-fns";
 import { memo, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
 
-import { Icons } from "@wealthfolio/ui/components/ui/icons";
 import { useSettingsContext } from "@/lib/settings-provider";
 import { CompactToolCard } from "./shared";
 
@@ -118,7 +125,7 @@ type ValuationContentProps = ToolCallMessagePartProps<ValuationArgs, ValuationRe
 
 const ValuationContent = memo(ValuationContentImpl);
 
-function ValuationContentImpl({ args, result, status }: ValuationContentProps) {
+export function ValuationContentImpl({ args, result, status }: ValuationContentProps) {
   const { t } = useTranslation();
   const { settings } = useSettingsContext();
   const baseCurrency = settings?.baseCurrency ?? "USD";
@@ -157,7 +164,10 @@ function ValuationContentImpl({ args, result, status }: ValuationContentProps) {
   const typedArgs = args as ValuationArgs | undefined;
 
   const accountLabel =
-    parsed?.accountName ?? parsed?.accountId ?? typedArgs?.accountId ?? "Portfolio";
+    parsed?.accountName ??
+    ((parsed?.accountId ?? typedArgs?.accountId ?? "Portfolio") === "Portfolio"
+      ? t("common:component.account_type_portfolio")
+      : (parsed?.accountId ?? typedArgs?.accountId));
 
   const isRunning = status?.type === "running";
   const isComplete = status?.type === "complete";
@@ -187,7 +197,7 @@ function ValuationContentImpl({ args, result, status }: ValuationContentProps) {
   };
 
   return (
-    <Card className="bg-muted/40 border-primary/10 max-h-[320px] overflow-hidden">
+    <Card className="bg-muted/40 border-primary/10 max-h-80 overflow-hidden">
       <CardHeader className="flex flex-col gap-2 pb-3">
         <div className="flex items-center justify-between gap-3">
           <div className="flex items-center gap-2">
@@ -213,14 +223,14 @@ function ValuationContentImpl({ args, result, status }: ValuationContentProps) {
         )}
       </CardHeader>
       <CardContent>
-        <div className="bg-background/60 h-[200px] w-full min-w-[280px] rounded-xl border p-3 shadow-inner">
+        <div className="bg-background/60 h-50 w-full min-w-70 rounded-xl border p-3 shadow-inner">
           {shouldRenderChart ? (
             <HistoryChart data={chartData} isLoading={false} />
           ) : (
             <div className="text-muted-foreground flex h-full flex-col items-center justify-center gap-2 rounded-md border border-dashed px-3 text-sm">
               {isRunning ? (
                 <>
-                  <Icons.Spinner className="h-5 w-5 animate-spin" />
+                  <Spinner className="h-5 w-5" />
                   <span>{t("ai:valuation.fetching")}</span>
                 </>
               ) : isIncomplete ? (

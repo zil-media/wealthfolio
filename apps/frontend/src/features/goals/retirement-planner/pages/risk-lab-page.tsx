@@ -14,9 +14,9 @@ import {
   CardContent,
   CardHeader,
   CardTitle,
-  useAmountFormatting,
   useNumberFormatting,
   type FormattingApi,
+  Spinner,
 } from "@wealthfolio/ui";
 import { Icons } from "@wealthfolio/ui/components/ui/icons";
 import {
@@ -52,6 +52,8 @@ import type {
 } from "../types";
 
 import { SimulationPercentage } from "../components/simulation-percentage";
+import { cardSurfaceClassName } from "@wealthfolio/ui/components/ui/card";
+import { usePrivateAmountFormatting } from "../hooks/use-private-amount-formatting";
 
 type PlannerMode = "fire" | "traditional";
 
@@ -159,29 +161,31 @@ function InlineAmountTooltip({
   delta: number;
   tone?: "default" | "shortfall";
 }) {
-  const formatting = useAmountFormatting();
+  const formatting = usePrivateAmountFormatting();
   const { t } = useTranslation();
   return (
     <UiTooltip>
-      <TooltipTrigger asChild>
-        <span
-          className={cn(
-            "cursor-help font-medium tabular-nums underline decoration-dotted underline-offset-4",
-            tone === "shortfall" ? "text-amber-600" : "text-foreground",
-          )}
-        >
-          {formatting.formatCompactAmount(value, currency)}
-        </span>
+      <TooltipTrigger
+        render={
+          <span
+            className={cn(
+              "cursor-help font-medium tabular-nums underline decoration-dotted underline-offset-4",
+              tone === "shortfall" ? "text-warning" : "text-foreground",
+            )}
+          />
+        }
+      >
+        {formatting.formatCompactAmount(value, currency)}
       </TooltipTrigger>
       <TooltipContent className="max-w-xs text-xs">
-        <div className="text-[10px] font-semibold uppercase tracking-wider">{label}</div>
+        <div className="text-2xs font-semibold tracking-wider uppercase">{label}</div>
         <div className="mt-2 grid grid-cols-2 gap-x-4 gap-y-1 tabular-nums">
-          <span className="text-muted-foreground">{t("goals:risk_lab.results.base_plan")}</span>
-          <span className="text-right">{fmt(baseline, currency, formatting)}</span>
-          <span className="text-muted-foreground">{t("goals:risk_lab.results.stress_test")}</span>
-          <span className="text-right">{fmt(stressed, currency, formatting)}</span>
-          <span className="text-muted-foreground">{t("goals:risk_lab.results.change")}</span>
-          <span className={cn("text-right", delta < 0 ? "text-destructive" : "text-amber-600")}>
+          <span className="text-background/70">{t("goals:risk_lab.results.base_plan")}</span>
+          <span className="text-end">{fmt(baseline, currency, formatting)}</span>
+          <span className="text-background/70">{t("goals:risk_lab.results.stress_test")}</span>
+          <span className="text-end">{fmt(stressed, currency, formatting)}</span>
+          <span className="text-background/70">{t("goals:risk_lab.results.change")}</span>
+          <span className="text-end">
             {delta > 0 ? "+" : delta < 0 ? "-" : ""}
             {fmt(Math.abs(delta), currency, formatting)}
           </span>
@@ -295,14 +299,14 @@ function HeroMetric({
   tone?: "default" | "good" | "bad";
 }) {
   return (
-    <div className="border-border/70 px-3 py-3 first:rounded-l-lg last:rounded-r-lg md:border-l md:first:border-l-0">
-      <p className="text-muted-foreground text-[9px] font-semibold uppercase tracking-[0.18em]">
+    <div className="border-border/70 px-3 py-3 first:rounded-s-lg last:rounded-e-lg md:border-s md:first:border-s-0">
+      <p className="text-muted-foreground text-2xs font-semibold tracking-[0.18em] uppercase">
         {label}
       </p>
       <div
         className={cn(
           "mt-1.5 text-xl font-semibold leading-none tracking-tight",
-          tone === "good" && "text-[hsl(102,32%,39%)]",
+          tone === "good" && "text-success",
           tone === "bad" && "text-destructive",
         )}
       >
@@ -352,7 +356,7 @@ function PlanResilienceHero({
   mc?: MonteCarloResult;
   plannerMode?: PlannerMode;
 }) {
-  const amountFormatting = useAmountFormatting();
+  const amountFormatting = usePrivateAmountFormatting();
 
   const { t } = useTranslation();
   const currency = plan.currency;
@@ -398,22 +402,22 @@ function PlanResilienceHero({
         <div className="flex gap-4">
           <div className="min-w-0 space-y-3">
             <div>
-              <p className="text-muted-foreground text-[9px] font-semibold uppercase tracking-[0.22em]">
+              <p className="text-muted-foreground text-2xs font-semibold tracking-[0.22em] uppercase">
                 {t("goals:risk_lab.hero.base_case")}
               </p>
-              <h2 className="mt-2 max-w-[95%] font-serif text-2xl font-normal leading-[1.15] tracking-tight">
+              <h2 className="mt-2 max-w-[95%] font-serif text-2xl leading-[1.15] font-normal tracking-tight">
                 {t("goals:risk_lab.hero.your_base_plan_is")}{" "}
                 <span
                   className={cn(
                     "whitespace-nowrap font-medium",
-                    isBaselineHealthy ? "text-[hsl(111,25%,43%)]" : "text-destructive",
+                    isBaselineHealthy ? "text-success" : "text-destructive",
                   )}
                 >
                   {status}
                 </span>
                 .
               </h2>
-              <p className="text-muted-foreground mt-4 max-w-[620px] text-sm leading-relaxed xl:max-w-4xl">
+              <p className="text-muted-foreground mt-4 max-w-155 text-sm leading-relaxed xl:max-w-4xl">
                 {risk}
               </p>
             </div>
@@ -511,16 +515,16 @@ function retirementOutcomeLabel(t: TFunction, outcome: StressTestResult["baselin
   return t("goals:risk_lab.results.funded");
 }
 
-function severityBadgeClass(severity: StressSeverity) {
-  if (severity === "high") return "bg-destructive/10 text-destructive";
-  if (severity === "medium") return "bg-amber-500/15 text-amber-700";
-  return "bg-muted text-muted-foreground";
+function severityBadgeVariant(severity: StressSeverity) {
+  if (severity === "high") return "destructive-subtle";
+  if (severity === "medium") return "warning-subtle";
+  return "secondary";
 }
 
 function impactTextClass(value: number, badWhenPositive = true) {
   if (Math.abs(value) < 1) return "text-foreground";
   const isBad = badWhenPositive ? value > 0 : value < 0;
-  return isBad ? "text-destructive" : "text-[hsl(102,32%,39%)]";
+  return isBad ? "text-destructive" : "text-success";
 }
 
 function StressIcon({ id }: { id: StressTestResult["id"] }) {
@@ -555,7 +559,7 @@ function StressMetric({
   const { t } = useTranslation();
   return (
     <div>
-      <p className="text-muted-foreground text-[10px] font-semibold uppercase tracking-[0.18em]">
+      <p className="text-muted-foreground text-2xs font-semibold tracking-[0.18em] uppercase">
         {label}
       </p>
       <p className={cn("mt-2 text-sm font-semibold tabular-nums", tone)}>{value}</p>
@@ -578,14 +582,14 @@ function SimulationMetric({
   tone?: "default" | "good" | "bad";
 }) {
   return (
-    <div className="border-border/70 px-4 py-4 first:border-l-0 md:border-l">
-      <p className="text-muted-foreground text-[10px] font-semibold uppercase tracking-[0.18em]">
+    <div className="border-border/70 px-4 py-4 first:border-s-0 md:border-s">
+      <p className="text-muted-foreground text-2xs font-semibold tracking-[0.18em] uppercase">
         {label}
       </p>
       <p
         className={cn(
           "mt-2 text-xl font-semibold tabular-nums leading-none",
-          tone === "good" && "text-[hsl(102,32%,39%)]",
+          tone === "good" && "text-success",
           tone === "bad" && "text-destructive",
         )}
       >
@@ -613,7 +617,7 @@ function StressTestsSection({
   onRun: () => void;
   plannerMode?: PlannerMode;
 }) {
-  const formatting = useAmountFormatting();
+  const formatting = usePrivateAmountFormatting();
   const { t } = useTranslation();
   const isTraditional = plannerMode === "traditional";
   const sorted = useMemo(
@@ -631,10 +635,10 @@ function StressTestsSection({
     <section className="space-y-4">
       <div className="flex flex-col gap-2 md:flex-row md:items-start md:justify-between">
         <div>
-          <p className="text-muted-foreground/55 text-[10px] font-normal uppercase leading-none tracking-[0.24em]">
+          <p className="text-muted-foreground/55 text-2xs leading-none font-normal tracking-[0.24em] uppercase">
             {t("goals:risk_lab.stress.eyebrow_with_count", { count: sorted.length || 6 })}
           </p>
-          <h2 className="mt-2 font-serif text-[23px] font-normal leading-[1.05] tracking-[-0.02em]">
+          <h2 className="mt-2 font-serif text-2xl leading-[1.05] font-normal tracking-[-0.02em]">
             {t("goals:risk_lab.stress.heading")}
           </h2>
         </div>
@@ -650,7 +654,7 @@ function StressTestsSection({
       {loading && (
         <div className="space-y-3">
           <p className="text-muted-foreground flex items-center gap-2 text-xs">
-            <Icons.Spinner className="size-3 animate-spin" />
+            <Spinner className="size-3" />
             {t("goals:risk_lab.stress.running")}
           </p>
           <div className="grid gap-3 lg:grid-cols-2">
@@ -664,10 +668,7 @@ function StressTestsSection({
       {!loading && sorted.length > 0 && (
         <div className="grid gap-3 lg:grid-cols-2">
           {sorted.map((stress) => (
-            <div
-              key={stress.id}
-              className="bg-card relative overflow-hidden rounded-xl border shadow-sm"
-            >
+            <div key={stress.id} className={cn(cardSurfaceClassName, "relative overflow-hidden")}>
               <div className="p-5">
                 <div className="flex items-start justify-between gap-4">
                   <div className="min-w-0">
@@ -678,7 +679,7 @@ function StressTestsSection({
                       >
                         <StressIcon id={stress.id} />
                       </span>
-                      <h3 className="text-base font-semibold leading-none">
+                      <h3 className="text-base leading-none font-semibold">
                         {t(`goals:risk_lab.scenarios.${stress.id}.label`)}
                       </h3>
                     </div>
@@ -687,10 +688,11 @@ function StressTestsSection({
                     </p>
                   </div>
                   <Badge
-                    variant="secondary"
+                    variant={severityBadgeVariant(stress.severity)}
                     className={cn(
-                      "rounded-full px-3 text-[10px] font-semibold uppercase tracking-[0.14em]",
-                      severityBadgeClass(stress.severity),
+                      "text-2xs rounded-full px-3 font-semibold uppercase tracking-[0.14em]",
+                      severityBadgeVariant(stress.severity) === "secondary" &&
+                        "bg-muted text-muted-foreground",
                     )}
                   >
                     {t(`goals:risk_lab.severity.${stress.severity}`)}
@@ -768,7 +770,7 @@ function MonteCarloTooltip({
   label?: string | number;
   currency: string;
 }) {
-  const amountFormatting = useAmountFormatting();
+  const amountFormatting = usePrivateAmountFormatting();
 
   const { t } = useTranslation();
   const point = payload?.[0]?.payload;
@@ -778,25 +780,15 @@ function MonteCarloTooltip({
       <p className="font-semibold">{t("goals:risk_lab.chart.age_label", { age: label })}</p>
       <div className="mt-2 grid grid-cols-2 gap-x-4 gap-y-1">
         <span className="text-muted-foreground">P90</span>
-        <span className="text-right tabular-nums">
-          {fmt(point.p90, currency, amountFormatting)}
-        </span>
+        <span className="text-end tabular-nums">{fmt(point.p90, currency, amountFormatting)}</span>
         <span className="text-muted-foreground">P75</span>
-        <span className="text-right tabular-nums">
-          {fmt(point.p75, currency, amountFormatting)}
-        </span>
+        <span className="text-end tabular-nums">{fmt(point.p75, currency, amountFormatting)}</span>
         <span className="text-muted-foreground">P50</span>
-        <span className="text-right tabular-nums">
-          {fmt(point.p50, currency, amountFormatting)}
-        </span>
+        <span className="text-end tabular-nums">{fmt(point.p50, currency, amountFormatting)}</span>
         <span className="text-muted-foreground">P25</span>
-        <span className="text-right tabular-nums">
-          {fmt(point.p25, currency, amountFormatting)}
-        </span>
+        <span className="text-end tabular-nums">{fmt(point.p25, currency, amountFormatting)}</span>
         <span className="text-muted-foreground">P10</span>
-        <span className="text-right tabular-nums">
-          {fmt(point.p10, currency, amountFormatting)}
-        </span>
+        <span className="text-end tabular-nums">{fmt(point.p10, currency, amountFormatting)}</span>
       </div>
     </div>
   );
@@ -834,7 +826,7 @@ function ReferenceCaption({ viewBox, value, fill, side }: ReferenceCaptionProps)
       y={y + 12}
       textAnchor={side === "left" ? "end" : "start"}
       fill={fill}
-      fontSize={11}
+      fontSize="0.6875rem"
       fontWeight={600}
     >
       {value}
@@ -855,7 +847,7 @@ function MonteCarloFanChart({
   showMedianFiLine?: boolean;
   goalLabel?: string;
 }) {
-  const formatting = useAmountFormatting();
+  const formatting = usePrivateAmountFormatting();
   const { t } = useTranslation();
   const chartData = useMemo(
     () =>
@@ -882,17 +874,17 @@ function MonteCarloFanChart({
   return (
     <ResponsiveContainer width="100%" height={300}>
       <AreaChart data={chartData} margin={{ top: 18, right: 28, left: 0, bottom: 0 }}>
-        <CartesianGrid vertical={false} stroke="hsl(var(--border))" />
+        <CartesianGrid vertical={false} stroke="var(--border)" />
         <XAxis
           dataKey="age"
           axisLine={false}
           tickLine={false}
-          tick={{ fill: CHART.muted, fontSize: 12 }}
+          tick={{ fill: CHART.muted, fontSize: "0.75rem" }}
         />
         <YAxis
           axisLine={false}
           tickLine={false}
-          tick={{ fill: CHART.muted, fontSize: 12 }}
+          tick={{ fill: CHART.muted, fontSize: "0.75rem" }}
           tickFormatter={(value) => formatting.formatCompactAmount(Number(value), currency)}
         />
         <Tooltip content={<MonteCarloTooltip currency={currency} />} />
@@ -957,7 +949,7 @@ function MonteCarloDistributionSection({
   activeSims: number;
   plannerMode?: PlannerMode;
 }) {
-  const amountFormatting = useAmountFormatting();
+  const amountFormatting = usePrivateAmountFormatting();
   const numberFormatting = useNumberFormatting();
 
   const { t } = useTranslation();
@@ -973,13 +965,13 @@ function MonteCarloDistributionSection({
       <CardHeader className="border-b p-0">
         <div className="flex flex-col gap-5 p-5 md:flex-row md:items-start md:justify-between md:p-6">
           <div className="min-w-0 flex-1">
-            <p className="text-muted-foreground/60 text-[10px] font-normal uppercase leading-none tracking-[0.24em]">
+            <p className="text-muted-foreground/60 text-2xs leading-none font-normal tracking-[0.24em] uppercase">
               {t("goals:risk_lab.montecarlo.eyebrow")}
             </p>
-            <CardTitle className="mt-2 font-serif text-[23px] font-normal leading-[1.05] tracking-[-0.02em]">
+            <CardTitle className="mt-2 font-serif text-2xl leading-[1.05] font-normal tracking-[-0.02em]">
               {t("goals:risk_lab.montecarlo.heading")}
             </CardTitle>
-            <p className="text-muted-foreground mt-4 max-w-[900px] text-sm leading-relaxed">
+            <p className="text-muted-foreground mt-4 max-w-225 text-sm leading-relaxed">
               {t("goals:risk_lab.montecarlo.intro")} {moneyLastsCopy}
             </p>
           </div>
@@ -1010,8 +1002,8 @@ function MonteCarloDistributionSection({
         {running && (
           <div className="bg-muted/20 m-5 rounded-xl border md:m-6">
             <div className="flex min-h-44 flex-col items-center justify-center px-5 py-8 text-center">
-              <span className="flex size-11 items-center justify-center rounded-full bg-[hsl(91,34%,29%)]/10 text-[hsl(91,34%,29%)]">
-                <Icons.Spinner className="size-5 animate-spin" />
+              <span className="bg-success-subtle text-success-subtle-foreground flex size-11 items-center justify-center rounded-full">
+                <Spinner className="size-5" />
               </span>
               <p className="mt-4 text-sm font-semibold">
                 {t("goals:risk_lab.montecarlo.running_title")}
@@ -1023,11 +1015,11 @@ function MonteCarloDistributionSection({
           </div>
         )}
         {!running && !result && (
-          <div className="m-5 rounded-xl bg-[hsl(88,45%,84%)] px-4 py-4 text-[hsl(91,31%,24%)] md:m-6 md:px-5">
-            <div className="flex flex-col gap-4 text-center md:flex-row md:items-center md:justify-between md:text-left">
+          <div className="bg-success-subtle text-success-subtle-foreground m-5 rounded-xl px-4 py-4 md:m-6 md:px-5">
+            <div className="flex flex-col gap-4 text-center md:flex-row md:items-center md:justify-between md:text-start">
               <div>
                 <p className="text-sm font-semibold">{t("goals:risk_lab.montecarlo.no_run_yet")}</p>
-                <p className="mt-1 max-w-4xl text-sm leading-relaxed text-[hsl(91,22%,32%)]">
+                <p className="text-success-subtle-foreground/85 mt-1 max-w-4xl text-sm leading-relaxed">
                   {moneyLastsCta}
                 </p>
               </div>
@@ -1036,9 +1028,9 @@ function MonteCarloDistributionSection({
                   size="sm"
                   onClick={() => onRun(10_000)}
                   disabled={running}
-                  className="bg-[hsl(91,34%,29%)] text-white hover:bg-[hsl(91,34%,24%)]"
+                  className="bg-success text-success-foreground hover:bg-success/90"
                 >
-                  <Icons.Sparkles className="mr-2 size-3.5" />
+                  <Icons.Sparkles className="me-2 size-3.5" />
                   {running && activeSims === 10_000
                     ? t("goals:risk_lab.montecarlo.running_short")
                     : t("goals:risk_lab.montecarlo.run_10k")}
@@ -1048,7 +1040,7 @@ function MonteCarloDistributionSection({
                   size="sm"
                   onClick={() => onRun(100_000)}
                   disabled={running}
-                  className="text-[hsl(91,31%,24%)] hover:bg-[hsl(91,34%,29%)]/10"
+                  className="text-success-subtle-foreground hover:bg-success-subtle-foreground/10"
                 >
                   {running && activeSims === 100_000
                     ? t("goals:risk_lab.montecarlo.running_short")
@@ -1149,7 +1141,7 @@ function MonteCarloDistributionSection({
                     {t("goals:risk_lab.chart.median_fi_age")}
                   </span>
                 )}
-                <span className="ml-auto italic">
+                <span className="ms-auto italic">
                   {t("goals:risk_lab.chart.market_paths_count", {
                     count: numberFormatting.formatDecimal(result.nSimulations),
                   })}
@@ -1184,7 +1176,7 @@ function SensitivityMatrixCard({
     <Card className="overflow-hidden">
       <CardHeader className="border-b px-4 py-3 sm:px-5 sm:py-4">
         <div className="flex flex-col gap-1.5">
-          <CardTitle className="text-[15px] leading-tight sm:text-base">{title}</CardTitle>
+          <CardTitle className="text-base leading-tight sm:text-base">{title}</CardTitle>
           <p className="text-muted-foreground max-w-[34rem] text-xs leading-snug sm:text-sm">
             {subtitle}
           </p>
@@ -1333,15 +1325,15 @@ function DecisionHeatmap({
   flatColumnHint?: string;
   ageMetricLabel: string;
 }) {
-  const amountFormatting = useAmountFormatting();
+  const amountFormatting = usePrivateAmountFormatting();
 
   const { t } = useTranslation();
   const range = useMemo(() => matrixDeltaRange(matrix), [matrix]);
   const baseline = useMemo(() => matrixBaselineCell(matrix), [matrix]);
 
   return (
-    <div className="overflow-x-auto px-3 pb-4 pt-4 sm:px-5 sm:pb-5 sm:pt-5">
-      <table className="w-full min-w-[480px] table-fixed border-separate border-spacing-[2px] text-xs sm:min-w-[540px] sm:border-spacing-[3px] sm:text-sm">
+    <div className="overflow-x-auto px-3 pt-4 pb-4 sm:px-5 sm:pt-5 sm:pb-5">
+      <table className="w-full min-w-120 table-fixed border-separate border-spacing-[2px] text-xs sm:min-w-135 sm:border-spacing-[3px] sm:text-sm">
         <thead>
           <tr>
             <th className="w-14 sm:w-16" />
@@ -1349,16 +1341,18 @@ function DecisionHeatmap({
               <th
                 key={`${value}-${column}`}
                 className={cn(
-                  "text-muted-foreground px-1 pb-2 text-center text-[11px] font-semibold tabular-nums sm:px-2 sm:pb-2.5 sm:text-[13px]",
+                  "text-muted-foreground text-2xs px-1 pb-2 text-center font-semibold tabular-nums sm:px-2 sm:pb-2.5 sm:text-sm",
                   column === matrix.baselineColumn && "text-foreground",
                 )}
               >
                 {flatColumnHint && isFlatColumn(matrix, column) ? (
                   <UiTooltip>
-                    <TooltipTrigger asChild>
-                      <span className="cursor-help underline decoration-dotted underline-offset-4">
-                        {formatColumn(value, matrix.columnLabels[column] ?? "")}
-                      </span>
+                    <TooltipTrigger
+                      render={
+                        <span className="cursor-help underline decoration-dotted underline-offset-4" />
+                      }
+                    >
+                      {formatColumn(value, matrix.columnLabels[column] ?? "")}
                     </TooltipTrigger>
                     <TooltipContent className="max-w-xs text-xs">{flatColumnHint}</TooltipContent>
                   </UiTooltip>
@@ -1375,7 +1369,7 @@ function DecisionHeatmap({
             <tr key={`${rowValue}-${row}`}>
               <td
                 className={cn(
-                  "text-muted-foreground pr-2 text-right text-[11px] font-semibold tabular-nums sm:pr-3 sm:text-[13px]",
+                  "text-muted-foreground text-2xs pe-2 text-end font-semibold tabular-nums sm:pe-3 sm:text-sm",
                   row === matrix.baselineRow && "text-foreground",
                 )}
               >
@@ -1388,54 +1382,47 @@ function DecisionHeatmap({
                 return (
                   <td key={`${columnValue}-${column}`}>
                     <UiTooltip>
-                      <TooltipTrigger asChild>
-                        <div
-                          className={cn(
-                            "flex h-12 items-center justify-center rounded-[6px] px-2 text-center text-xs font-semibold tabular-nums leading-none transition-shadow sm:h-[52px] sm:px-3 sm:text-[13px]",
-                            active && "ring-2 ring-[hsl(91,34%,29%)] ring-offset-0",
-                          )}
-                          style={sensitivityCellStyle({ cell, baseline, range, active })}
-                        >
-                          {decisionCellLabel(t, cell, currency, amountFormatting)}
-                        </div>
+                      <TooltipTrigger
+                        render={
+                          <div
+                            className={cn(
+                              "sm:h-13 flex h-12 items-center justify-center rounded-[0.375rem] px-2 text-center text-xs font-semibold tabular-nums leading-none transition-shadow sm:px-3 sm:text-sm",
+                              active && "ring-2 ring-[hsl(91,34%,29%)] ring-offset-0",
+                            )}
+                            style={sensitivityCellStyle({ cell, baseline, range, active })}
+                          />
+                        }
+                      >
+                        {decisionCellLabel(t, cell, currency, amountFormatting)}
                       </TooltipTrigger>
                       <TooltipContent className="max-w-xs text-xs">
-                        <div className="text-[10px] font-semibold uppercase tracking-wider">
+                        <div className="text-2xs font-semibold tracking-wider uppercase">
                           {localizedBackendLabel(t, matrix.rowLabel)} ×{" "}
                           {localizedBackendLabel(t, matrix.columnLabel)}
                         </div>
                         <div className="mt-2 grid grid-cols-2 gap-x-4 gap-y-1 tabular-nums">
-                          <span className="text-muted-foreground">
+                          <span className="text-background/70">
                             {localizedBackendLabel(t, matrix.rowLabel)}
                           </span>
-                          <span className="text-right">
+                          <span className="text-end">
                             {formatRow(rowValue, matrix.rowLabels[row] ?? "")}
                           </span>
-                          <span className="text-muted-foreground">
+                          <span className="text-background/70">
                             {localizedBackendLabel(t, matrix.columnLabel)}
                           </span>
-                          <span className="text-right">
+                          <span className="text-end">
                             {formatColumn(columnValue, matrix.columnLabels[column] ?? "")}
                           </span>
-                          <span className="text-muted-foreground">
+                          <span className="text-background/70">
                             {t("goals:risk_lab.results.money_left_at_end")}
                           </span>
-                          <span className="text-right">
+                          <span className="text-end">
                             {fmt(cell.portfolioAtHorizon, currency, amountFormatting)}
                           </span>
-                          <span className="text-muted-foreground">
+                          <span className="text-background/70">
                             {t("goals:risk_lab.results.change_vs_base_plan")}
                           </span>
-                          <span
-                            className={cn(
-                              "text-right",
-                              cell.portfolioAtHorizon > range.baselinePortfolio
-                                ? "text-success"
-                                : cell.portfolioAtHorizon < range.baselinePortfolio
-                                  ? "text-muted-foreground"
-                                  : "",
-                            )}
-                          >
+                          <span className="text-end">
                             {cell.portfolioAtHorizon >= range.baselinePortfolio ? "+" : "-"}
                             {fmt(
                               Math.abs(cell.portfolioAtHorizon - range.baselinePortfolio),
@@ -1443,14 +1430,14 @@ function DecisionHeatmap({
                               amountFormatting,
                             )}
                           </span>
-                          <span className="text-muted-foreground">{ageMetricLabel}</span>
-                          <span className="text-right">
+                          <span className="text-background/70">{ageMetricLabel}</span>
+                          <span className="text-end">
                             {cell.fiAge ?? t("goals:risk_lab.results.not_reached")}
                           </span>
-                          <span className="text-muted-foreground">
+                          <span className="text-background/70">
                             {t("goals:risk_lab.results.shortfall_at_retirement")}
                           </span>
-                          <span className="text-right">
+                          <span className="text-end">
                             {fmt(cell.shortfallAtGoalAge, currency, amountFormatting)}
                           </span>
                         </div>
@@ -1462,7 +1449,7 @@ function DecisionHeatmap({
               {row === 0 && (
                 <td rowSpan={matrix.rowValues.length} className="w-3 p-0 align-middle sm:w-4">
                   <span
-                    className="text-muted-foreground/80 mx-auto block whitespace-nowrap text-center text-[11px] font-normal leading-none sm:text-xs"
+                    className="text-muted-foreground/80 text-2xs mx-auto block text-center leading-none font-normal whitespace-nowrap sm:text-xs"
                     style={{ writingMode: "vertical-rl", transform: "rotate(180deg)" }}
                   >
                     {localizedBackendLabel(t, matrix.rowLabel)}
@@ -1477,7 +1464,7 @@ function DecisionHeatmap({
             <th className="w-14 sm:w-16" />
             <th
               colSpan={matrix.columnValues.length}
-              className="text-muted-foreground/80 px-1 pt-1.5 text-center text-[11px] font-normal leading-none sm:text-xs"
+              className="text-muted-foreground/80 text-2xs px-1 pt-1.5 text-center leading-none font-normal sm:text-xs"
             >
               {localizedBackendLabel(t, matrix.columnLabel)}
             </th>
@@ -1508,7 +1495,7 @@ function WhatMovesThePlanSection({
   plan: RetirementPlan;
   plannerMode?: PlannerMode;
 }) {
-  const amountFormatting = useAmountFormatting();
+  const amountFormatting = usePrivateAmountFormatting();
   const numberFormatting = useNumberFormatting();
 
   const { t } = useTranslation();
@@ -1522,10 +1509,10 @@ function WhatMovesThePlanSection({
     <section className="space-y-4">
       <div className="flex flex-col gap-2 md:flex-row md:items-start md:justify-between">
         <div>
-          <p className="text-muted-foreground/55 text-[10px] font-normal uppercase leading-none tracking-[0.24em]">
+          <p className="text-muted-foreground/55 text-2xs leading-none font-normal tracking-[0.24em] uppercase">
             {t("goals:risk_lab.moves.eyebrow")}
           </p>
-          <h2 className="mt-2 font-serif text-[23px] font-normal leading-[1.05] tracking-[-0.02em]">
+          <h2 className="mt-2 font-serif text-2xl leading-[1.05] font-normal tracking-[-0.02em]">
             {t("goals:risk_lab.moves.heading")}
           </h2>
           <p className="text-muted-foreground mt-2 max-w-4xl text-sm leading-relaxed xl:whitespace-nowrap">
@@ -1548,7 +1535,7 @@ function WhatMovesThePlanSection({
               </p>
             </div>
             <Button size="sm" onClick={onRun} disabled={loading}>
-              <Icons.Sparkles className="mr-2 size-3.5" />
+              <Icons.Sparkles className="me-2 size-3.5" />
               {loading ? t("goals:risk_lab.moves.building") : t("goals:risk_lab.moves.build_maps")}
             </Button>
           </div>
@@ -1629,7 +1616,7 @@ function SensitivityLoadingCard({ title, description }: { title: string; descrip
             <CardTitle className="text-base">{title}</CardTitle>
             <p className="text-muted-foreground mt-1 text-sm">{description}</p>
           </div>
-          <Icons.Spinner className="text-muted-foreground mt-1 size-4 animate-spin" />
+          <Spinner className="text-muted-foreground mt-1 size-4" />
         </div>
       </CardHeader>
       <CardContent className="space-y-2 p-5">
@@ -1661,7 +1648,7 @@ function SorrTooltip({
   label?: string | number;
   currency: string;
 }) {
-  const amountFormatting = useAmountFormatting();
+  const amountFormatting = usePrivateAmountFormatting();
 
   const { t } = useTranslation();
   const visiblePayload = payload?.filter((entry) => entry.value != null) ?? [];
@@ -1700,7 +1687,7 @@ function SorrChart({
   currency: string;
   retirementStartAge: number;
 }) {
-  const formatting = useAmountFormatting();
+  const formatting = usePrivateAmountFormatting();
   const { t } = useTranslation();
   const maxLen = Math.max(...scenarios.map((scenario) => scenario.portfolioPath.length));
   const data = Array.from({ length: maxLen }, (_, index) => {
@@ -1716,7 +1703,7 @@ function SorrChart({
       <LineChart data={data} margin={{ top: 12, right: 18, left: 18, bottom: 10 }}>
         <CartesianGrid
           vertical={false}
-          stroke="hsl(var(--border))"
+          stroke="var(--border)"
           strokeDasharray="3 3"
           opacity={0.55}
         />
@@ -1724,18 +1711,18 @@ function SorrChart({
           dataKey="age"
           axisLine={false}
           tickLine={false}
-          tick={{ fill: CHART.muted, fontSize: 12 }}
+          tick={{ fill: CHART.muted, fontSize: "0.75rem" }}
         />
         <YAxis
           width={54}
           axisLine={false}
           tickLine={false}
-          tick={{ fill: CHART.muted, fontSize: 12 }}
+          tick={{ fill: CHART.muted, fontSize: "0.75rem" }}
           tickFormatter={(value) => formatting.formatCompactAmount(Number(value), currency)}
         />
         <Tooltip
           content={<SorrTooltip currency={currency} />}
-          cursor={{ stroke: "hsl(var(--border))", strokeDasharray: "3 3" }}
+          cursor={{ stroke: "var(--border)", strokeDasharray: "3 3" }}
         />
         {scenarios.map((scenario, index) => (
           <Line
@@ -1744,7 +1731,7 @@ function SorrChart({
             name={localizedBackendLabel(t, scenario.label)}
             stroke={SORR_COLORS[index % SORR_COLORS.length]}
             dot={false}
-            activeDot={{ r: 4, stroke: "hsl(var(--card))", strokeWidth: 2 }}
+            activeDot={{ r: 4, stroke: "var(--card)", strokeWidth: 2 }}
             strokeWidth={index === 0 ? 2.2 : 1.5}
             strokeDasharray={index === 0 ? undefined : "4 4"}
           />
@@ -1754,12 +1741,14 @@ function SorrChart({
   );
 }
 
+// One colour per named scenario, from the theme's series colours; the outcome
+// of each is stated in text, so the colours only tell the lines apart.
 const SORR_COLORS = [
-  "hsl(91,34%,29%)",
-  "hsl(8,55%,45%)",
-  "hsl(38,65%,43%)",
-  "hsl(191,24%,42%)",
-  "hsl(50,4%,45%)",
+  "var(--series-1)",
+  "var(--series-2)",
+  "var(--series-3)",
+  "var(--series-4)",
+  "var(--series-5)",
 ];
 
 function sorrRiskAge(scenario: SorrScenario) {
@@ -1805,7 +1794,7 @@ function AdvancedSection({
   sorrError: unknown;
   onRunSorr: () => void;
 }) {
-  const amountFormatting = useAmountFormatting();
+  const amountFormatting = usePrivateAmountFormatting();
 
   const { t } = useTranslation();
   const retirementStartAge = overview?.retirementStartAge ?? plan.personal.targetRetirementAge;
@@ -1816,12 +1805,12 @@ function AdvancedSection({
   const survivingPaths = sorrResult?.filter((scenario) => scenario.survived).length ?? 0;
 
   return (
-    <details className="bg-card group overflow-hidden rounded-xl border">
+    <details className={cn(cardSurfaceClassName, "group overflow-hidden")}>
       <summary className="flex cursor-pointer list-none items-center justify-between gap-4 px-5 py-4">
         <div className="flex min-w-0 items-start gap-3">
           <Icons.ChevronDown className="text-muted-foreground mt-3 size-3.5 transition-transform group-open:rotate-180" />
           <div className="min-w-0">
-            <p className="text-muted-foreground/60 text-[10px] font-normal uppercase leading-none tracking-[0.24em]">
+            <p className="text-muted-foreground/60 text-2xs leading-none font-normal tracking-[0.24em] uppercase">
               {t("goals:risk_lab.advanced.eyebrow")}
             </p>
             <h2 className="mt-1.5 text-lg font-semibold tracking-[-0.01em]">
@@ -1861,7 +1850,7 @@ function AdvancedSection({
             </p>
             <div className="bg-muted/10 grid gap-3 border-y px-4 py-3 text-sm sm:grid-cols-3">
               <div>
-                <p className="text-muted-foreground text-[10px] font-semibold uppercase tracking-[0.16em]">
+                <p className="text-muted-foreground text-2xs font-semibold tracking-[0.16em] uppercase">
                   {t("goals:risk_lab.advanced.earliest_shortfall")}
                 </p>
                 <p className="mt-1 font-semibold tabular-nums">
@@ -1871,7 +1860,7 @@ function AdvancedSection({
                 </p>
               </div>
               <div>
-                <p className="text-muted-foreground text-[10px] font-semibold uppercase tracking-[0.16em]">
+                <p className="text-muted-foreground text-2xs font-semibold tracking-[0.16em] uppercase">
                   {t("goals:risk_lab.advanced.paths_survive")}
                 </p>
                 <p className="mt-1 font-semibold tabular-nums">
@@ -1879,7 +1868,7 @@ function AdvancedSection({
                 </p>
               </div>
               <div>
-                <p className="text-muted-foreground text-[10px] font-semibold uppercase tracking-[0.16em]">
+                <p className="text-muted-foreground text-2xs font-semibold tracking-[0.16em] uppercase">
                   {t("goals:risk_lab.advanced.base_case")}
                 </p>
                 <p className="mt-1 font-semibold tabular-nums">
@@ -1913,7 +1902,7 @@ function AdvancedSection({
                   <span
                     className={cn(
                       "shrink-0 font-semibold",
-                      scenario.survived ? "text-[hsl(102,32%,39%)]" : "text-destructive",
+                      scenario.survived ? "text-success" : "text-destructive",
                     )}
                   >
                     {sorrOutcomeText(t, scenario, plan.currency, amountFormatting)}
@@ -1924,7 +1913,7 @@ function AdvancedSection({
           </>
         ) : (
           <div className="bg-muted/10 rounded-xl border border-dashed px-5 py-6">
-            <div className="flex flex-col gap-4 text-center md:flex-row md:items-center md:justify-between md:text-left">
+            <div className="flex flex-col gap-4 text-center md:flex-row md:items-center md:justify-between md:text-start">
               <div>
                 <p className="text-sm font-semibold">
                   {canRunSorr
@@ -1940,9 +1929,9 @@ function AdvancedSection({
               {canRunSorr && (
                 <Button size="sm" onClick={onRunSorr} disabled={sorrRunning} className="shrink-0">
                   {sorrRunning ? (
-                    <Icons.Spinner className="mr-2 size-3.5 animate-spin" />
+                    <Spinner className="me-2 size-3.5" />
                   ) : (
-                    <Icons.RefreshCw className="mr-2 size-3.5" />
+                    <Icons.RefreshCw className="me-2 size-3.5" />
                   )}
                   {sorrRunning
                     ? t("goals:risk_lab.advanced.running_short")

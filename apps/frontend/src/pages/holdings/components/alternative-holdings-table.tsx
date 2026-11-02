@@ -2,7 +2,17 @@ import { useBalancePrivacy } from "@/hooks/use-balance-privacy";
 import type { AlternativeAssetHolding } from "@/lib/types";
 import { ALTERNATIVE_ASSET_KIND_DISPLAY_NAMES } from "@/lib/types";
 import type { ColumnDef } from "@tanstack/react-table";
-import { AmountDisplay, EmptyPlaceholder, GainPercent, useDateFormatting } from "@wealthfolio/ui";
+import {
+  AmountDisplay,
+  GainPercent,
+  useDateFormatting,
+  Spinner,
+  Empty,
+  EmptyHeader,
+  EmptyMedia,
+  EmptyTitle,
+  EmptyDescription,
+} from "@wealthfolio/ui";
 import {
   AlertDialog,
   AlertDialogAction,
@@ -13,6 +23,7 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from "@wealthfolio/ui/components/ui/alert-dialog";
+import { Button } from "@wealthfolio/ui/components/ui/button";
 import { DataTable } from "@wealthfolio/ui/components/ui/data-table";
 import { DataTableColumnHeader } from "@wealthfolio/ui/components/ui/data-table/data-table-column-header";
 import {
@@ -26,6 +37,11 @@ import { Icons } from "@wealthfolio/ui/components/ui/icons";
 import { Skeleton } from "@wealthfolio/ui/components/ui/skeleton";
 import { useMemo, useState } from "react";
 import { Trans, useTranslation } from "react-i18next";
+import {
+  HOLDINGS_TABLE_DENSITY,
+  PERCENT_BADGE,
+  ROW_ACTIONS_TRIGGER,
+} from "./holdings-table-styles";
 
 interface AlternativeHoldingsTableProps {
   holdings: AlternativeAssetHolding[];
@@ -104,11 +120,11 @@ export function AlternativeHoldingsTable({
                   : undefined
               }
             >
-              <div className="bg-muted flex h-10 w-10 items-center justify-center rounded-full">
-                <AssetKindIcon kind={holding.kind} size={20} />
+              <div className="bg-muted flex h-8 w-8 shrink-0 items-center justify-center rounded-full">
+                <AssetKindIcon kind={holding.kind} size={16} />
               </div>
               <div className="flex flex-col">
-                <span className="text-sm font-medium">{holding.name}</span>
+                <span className="text-sm font-semibold">{holding.name}</span>
                 <span className="text-muted-foreground text-xs">{kindDisplay}</span>
               </div>
             </div>
@@ -131,7 +147,7 @@ export function AlternativeHoldingsTable({
           const value = parseFloat(holding.marketValue);
 
           return (
-            <div className="text-right">
+            <div className="text-end">
               <AmountDisplay
                 value={value}
                 currency={holding.currency}
@@ -165,7 +181,7 @@ export function AlternativeHoldingsTable({
           const isLiability = holding.kind.toLowerCase() === "liability";
 
           if (gain === null || gainPct === null) {
-            return <div className="text-muted-foreground text-right text-sm">—</div>;
+            return <div className="text-muted-foreground text-end text-sm">—</div>;
           }
 
           return (
@@ -181,7 +197,8 @@ export function AlternativeHoldingsTable({
               <GainPercent
                 value={gainPct}
                 animated={false}
-                className="text-xs"
+                variant="badge"
+                className={PERCENT_BADGE}
                 invertColor={isLiability}
               />
             </div>
@@ -212,7 +229,7 @@ export function AlternativeHoldingsTable({
             day: "numeric",
           });
 
-          return <div className="text-muted-foreground text-right text-sm">{formatted}</div>;
+          return <div className="text-muted-foreground text-end text-sm">{formatted}</div>;
         },
         enableSorting: true,
       },
@@ -225,31 +242,34 @@ export function AlternativeHoldingsTable({
           return (
             <div className="flex justify-end">
               <DropdownMenu>
-                <DropdownMenuTrigger asChild>
-                  <button
-                    type="button"
-                    className="hover:bg-muted text-muted-foreground inline-flex h-9 w-9 items-center justify-center rounded-md border transition"
-                    aria-label={t("holdings:open_actions")}
-                  >
-                    <Icons.MoreVertical className="h-4 w-4" />
-                  </button>
+                <DropdownMenuTrigger
+                  render={
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      aria-label={t("holdings:open_actions")}
+                      className={ROW_ACTIONS_TRIGGER}
+                    />
+                  }
+                >
+                  <Icons.MoreVertical className="h-4 w-4" />
                 </DropdownMenuTrigger>
                 <DropdownMenuContent align="end">
                   {onUpdateValue && (
                     <DropdownMenuItem onClick={() => onUpdateValue(holding)}>
-                      <Icons.DollarSign className="mr-2 h-4 w-4" />
+                      <Icons.DollarSign className="me-2 h-4 w-4" />
                       {t("holdings:update_value")}
                     </DropdownMenuItem>
                   )}
                   {onViewHistory && (
                     <DropdownMenuItem onClick={() => onViewHistory(holding)}>
-                      <Icons.History className="mr-2 h-4 w-4" />
+                      <Icons.History className="me-2 h-4 w-4" />
                       {t("holdings:value_history")}
                     </DropdownMenuItem>
                   )}
                   {onEdit && (
                     <DropdownMenuItem onClick={() => onEdit(holding)}>
-                      <Icons.Pencil className="mr-2 h-4 w-4" />
+                      <Icons.Pencil className="me-2 h-4 w-4" />
                       {t("holdings:edit_details")}
                     </DropdownMenuItem>
                   )}
@@ -258,9 +278,9 @@ export function AlternativeHoldingsTable({
                       <DropdownMenuSeparator />
                       <DropdownMenuItem
                         className="text-destructive focus:text-destructive"
-                        onSelect={() => setAssetToDelete(holding)}
+                        onClick={() => setAssetToDelete(holding)}
                       >
-                        <Icons.Trash className="mr-2 h-4 w-4" />
+                        <Icons.Trash className="me-2 h-4 w-4" />
                         {t("common:delete")}
                       </DropdownMenuItem>
                     </>
@@ -288,23 +308,29 @@ export function AlternativeHoldingsTable({
   if (!holdings || holdings.length === 0) {
     return (
       <div className="flex items-center justify-center py-16">
-        <EmptyPlaceholder
-          icon={<Icons.Wallet className="text-muted-foreground h-10 w-10" />}
-          title={resolvedEmptyTitle}
-          description={resolvedEmptyDescription}
-        />
+        <Empty>
+          <EmptyHeader>
+            <EmptyMedia variant="icon">
+              {<Icons.Wallet className="text-muted-foreground size-10" />}
+            </EmptyMedia>
+            <EmptyTitle>{resolvedEmptyTitle}</EmptyTitle>
+            <EmptyDescription>{resolvedEmptyDescription}</EmptyDescription>
+          </EmptyHeader>
+        </Empty>
       </div>
     );
   }
 
   return (
     <>
-      <DataTable
-        data={holdings}
-        columns={columns}
-        searchBy="name"
-        defaultSorting={[{ id: "marketValue", desc: true }]}
-      />
+      <div className={HOLDINGS_TABLE_DENSITY}>
+        <DataTable
+          data={holdings}
+          columns={columns}
+          searchBy="name"
+          defaultSorting={[{ id: "marketValue", desc: true }]}
+        />
+      </div>
 
       {/* Delete Confirmation Dialog */}
       <AlertDialog
@@ -327,11 +353,11 @@ export function AlternativeHoldingsTable({
             <AlertDialogAction
               onClick={handleConfirmDelete}
               disabled={isDeleting}
-              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+              variant="destructive"
             >
               {isDeleting ? (
                 <>
-                  <Icons.Spinner className="mr-2 h-4 w-4 animate-spin" />
+                  <Spinner className="me-2 h-4 w-4" />
                   {t("holdings:deleting")}
                 </>
               ) : (

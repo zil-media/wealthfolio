@@ -16,6 +16,7 @@ import {
   SheetHeader,
   SheetTitle,
   useBalancePrivacy,
+  Spinner,
 } from "@wealthfolio/ui";
 
 import { cn } from "@/lib/utils";
@@ -39,7 +40,7 @@ function CurrencyNetPill({ total }: { total: CurrencyNet }) {
   const { isBalanceHidden } = useBalancePrivacy();
   const isNegative = total.amount < 0;
   return (
-    <span className="bg-muted/45 inline-flex items-center gap-1.5 whitespace-nowrap rounded-full px-2 py-0.5">
+    <span className="bg-muted/45 inline-flex items-center gap-1.5 rounded-full px-2 py-0.5 whitespace-nowrap">
       <span
         className={cn("h-2 w-1 rounded-sm", isNegative ? "bg-destructive/70" : "bg-success/70")}
         aria-hidden="true"
@@ -141,6 +142,10 @@ interface TransactionsFilterBarProps {
   filteredNet: NetSummary | null;
   isRefreshing: boolean;
   isMobile?: boolean;
+  /** Hides the loaded-of-total count, e.g. when a pager shows it instead. */
+  showCount?: boolean;
+  /** The list / grid switch, shown at the end of the desktop bar. */
+  viewToggle?: React.ReactNode;
 }
 
 export function TransactionsFilterBar({
@@ -176,6 +181,8 @@ export function TransactionsFilterBar({
   filteredNet,
   isRefreshing,
   isMobile = false,
+  showCount = true,
+  viewToggle,
 }: TransactionsFilterBarProps) {
   const { t } = useTranslation();
   const [mobileFiltersOpen, setMobileFiltersOpen] = useState(false);
@@ -273,14 +280,14 @@ export function TransactionsFilterBar({
             <div className="relative">
               <Icons.ListFilter className="h-4 w-4" />
               {controlFiltersActive && (
-                <span className="bg-primary absolute -left-[1.5px] -top-1 h-2 w-2 rounded-full" />
+                <span className="bg-primary absolute -start-[1.5px] -top-1 h-2 w-2 rounded-full" />
               )}
             </div>
           </Button>
         </div>
         <Sheet open={mobileFiltersOpen} onOpenChange={setMobileFiltersOpen}>
-          <SheetContent side="bottom" className="rounded-t-4xl mx-1 flex h-[80vh] flex-col p-0">
-            <SheetHeader className="border-border border-b px-6 py-4 text-left">
+          <SheetContent side="bottom" className="mx-1 flex h-[80vh] flex-col rounded-t-4xl p-0">
+            <SheetHeader className="border-border border-b px-6 py-4 text-start">
               <SheetTitle>{t("spending:filters.filterTransactions")}</SheetTitle>
             </SheetHeader>
             <ScrollArea className="flex-1">
@@ -295,7 +302,7 @@ export function TransactionsFilterBar({
               >
                 {t("spending:filters.clearAll")}
               </Button>
-              <Button className="ml-auto" onClick={() => setMobileFiltersOpen(false)}>
+              <Button className="ms-auto" onClick={() => setMobileFiltersOpen(false)}>
                 {t("spending:filters.done")}
               </Button>
             </SheetFooter>
@@ -323,7 +330,7 @@ export function TransactionsFilterBar({
       <FacetedSearchInput
         value={searchInput}
         onChange={onSearchInputChange}
-        className="w-[160px] lg:w-[240px]"
+        className="w-40 lg:w-60"
       />
       {filterControls}
       {filtersActive && (
@@ -336,20 +343,18 @@ export function TransactionsFilterBar({
           {t("spending:filters.clearAll")}
         </Button>
       )}
-      <div className="ml-auto flex min-w-0 flex-wrap items-center justify-end gap-x-3 gap-y-1">
+      <div className="ms-auto flex min-w-0 flex-wrap items-center justify-end gap-x-3 gap-y-1">
         {selectedNet.byCurrency.length > 0 && (
           <NetReadout label={t("spending:filters.selectedNet")} net={selectedNet} />
         )}
         {filteredNet && <NetReadout label={t("spending:filters.filteredNet")} net={filteredNet} />}
-        <span className="text-muted-foreground inline-flex items-center gap-1.5 whitespace-nowrap text-xs tabular-nums">
-          {countLabel}
+        <span className="text-muted-foreground inline-flex items-center gap-1.5 text-xs whitespace-nowrap tabular-nums">
+          {showCount && countLabel}
           {isRefreshing && (
-            <Icons.Spinner
-              className="h-3 w-3 animate-spin"
-              aria-label={t("spending:filters.refreshing")}
-            />
+            <Spinner className="h-3 w-3" aria-label={t("spending:filters.refreshing")} />
           )}
         </span>
+        {viewToggle}
       </div>
     </div>
   );

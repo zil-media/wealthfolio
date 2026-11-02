@@ -64,19 +64,21 @@ function HighlightTitle({ title, description }: { title: string; description: st
   const { t } = useTranslation();
   return (
     <div className="flex items-center gap-1.5">
-      <CardTitle className="text-muted-foreground text-sm font-medium uppercase tracking-wider">
+      <CardTitle className="text-muted-foreground text-sm font-medium tracking-wider uppercase">
         {title}
       </CardTitle>
       <Popover>
-        <PopoverTrigger asChild>
-          <Button
-            variant="ghost"
-            size="icon"
-            className="text-muted-foreground/60 hover:text-foreground h-6 w-6 shrink-0 rounded-full p-0"
-            aria-label={t("common:component.more_info_about", { label: title })}
-          >
-            <Icons.Info className="h-3.5 w-3.5" aria-hidden="true" />
-          </Button>
+        <PopoverTrigger
+          render={
+            <Button
+              variant="ghost"
+              size="icon"
+              className="text-muted-foreground/60 hover:text-foreground h-6 w-6 shrink-0 rounded-full p-0"
+              aria-label={t("common:component.more_info_about", { label: title })}
+            />
+          }
+        >
+          <Icons.Info className="h-3.5 w-3.5" aria-hidden="true" />
         </PopoverTrigger>
         <PopoverContent className="w-64 text-xs" side="top" align="start">
           {description}
@@ -137,7 +139,7 @@ export function TopMoversCard({ holdings, currency, isLoading }: HighlightProps)
         ) : (
           (["gainers", "losers"] as const).map((group) => (
             <div key={group} className="mt-3 first:mt-0">
-              <h3 className="text-muted-foreground text-[11px] font-medium uppercase tracking-wider">
+              <h3 className="text-muted-foreground text-2xs font-medium tracking-wider uppercase">
                 {t(`insights:highlights.${group}`)}
               </h3>
               {movers[group].length === 0 ? (
@@ -168,7 +170,7 @@ export function TopMoversCard({ holdings, currency, isLoading }: HighlightProps)
                             : null
                         }
                         variant="badge"
-                        className="min-w-[60px] justify-center text-xs"
+                        className="min-w-15 justify-center text-xs"
                       />
                     )}
                   </HoldingRow>

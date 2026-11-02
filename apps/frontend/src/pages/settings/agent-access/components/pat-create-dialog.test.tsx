@@ -75,8 +75,8 @@ describe("PatCreateDialog scope dependencies", () => {
       />,
     );
 
-    const write = scopeCheckbox("Classification — apply/write");
-    const suggest = scopeCheckbox("Classification — suggest");
+    const write = scopeCheckbox("Asset classification — apply/write");
+    const suggest = scopeCheckbox("Asset classification — suggest");
 
     expect(suggest).toHaveAttribute("aria-checked", "false");
 
@@ -89,5 +89,81 @@ describe("PatCreateDialog scope dependencies", () => {
     expect(write).toHaveAttribute("aria-checked", "false");
     expect(suggest).toHaveAttribute("aria-checked", "false");
     expect(suggest).not.toBeDisabled();
+  });
+
+  it.each(["Organize spending", "Manage budgets"])(
+    "derives spending read for %s without granting the other write",
+    (label) => {
+      render(<PatCreateDialog open onOpenChange={vi.fn()} onCreate={vi.fn()} isCreating={false} />);
+      const read = scopeCheckbox("View spending");
+      fireEvent.click(read);
+      expect(read).toHaveAttribute("aria-checked", "false");
+      const write = scopeCheckbox(label);
+      fireEvent.click(write);
+      expect(read).toBeDisabled();
+      expect(read).toHaveAttribute("aria-checked", "true");
+      expect(
+        scopeCheckbox(label === "Organize spending" ? "Manage budgets" : "Organize spending"),
+      ).toHaveAttribute("aria-checked", "false");
+      fireEvent.click(write);
+      expect(read).not.toBeDisabled();
+      expect(read).toHaveAttribute("aria-checked", "false");
+    },
+  );
+
+  it("derives holdings read from market data write", () => {
+    render(
+      <PatCreateDialog
+        open
+        onOpenChange={vi.fn()}
+        onCreate={vi.fn().mockResolvedValue("wfp_secret")}
+        isCreating={false}
+      />,
+    );
+
+    const write = scopeCheckbox("Market data — write");
+    const holdings = scopeCheckbox("Holdings & value \\(read\\)");
+
+    // Holdings read is on by default; drop it to see it derived.
+    fireEvent.click(holdings);
+    expect(holdings).toHaveAttribute("aria-checked", "false");
+
+    fireEvent.click(write);
+    expect(write).toHaveAttribute("aria-checked", "true");
+    expect(holdings).toHaveAttribute("aria-checked", "true");
+    expect(holdings).toBeDisabled();
+    expect(holdings).toHaveAttribute("title", "Required by Market data — write");
+
+    fireEvent.click(write);
+    expect(holdings).toHaveAttribute("aria-checked", "false");
+    expect(holdings).not.toBeDisabled();
+  });
+});
+
+describe("PatCreateDialog client config", () => {
+  it("shows the Claude Code command for the new token, and Codex TOML on request", async () => {
+    render(
+      <PatCreateDialog
+        open
+        onOpenChange={vi.fn()}
+        onCreate={vi.fn().mockResolvedValue("wfp_secret")}
+        isCreating={false}
+        serverUrl="http://127.0.0.1:4321/mcp"
+      />,
+    );
+
+    fireEvent.change(screen.getByLabelText("Name"), { target: { value: "Claude" } });
+    fireEvent.click(screen.getByRole("button", { name: "Create token" }));
+
+    expect(
+      await screen.findByText(
+        'claude mcp add --scope user --transport http wealthfolio http://127.0.0.1:4321/mcp --header "Authorization: Bearer wfp_secret"',
+      ),
+    ).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "Codex / ChatGPT" }));
+    expect(screen.getByText(/\[mcp_servers\.wealthfolio\]/)).toHaveTextContent(
+      'http_headers = { Authorization = "Bearer wfp_secret" }',
+    );
   });
 });

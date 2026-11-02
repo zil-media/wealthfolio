@@ -13,6 +13,7 @@ import {
   GainPercent,
   Input,
   Separator,
+  useAmountFormatting,
   useDateFormatting,
   useNumberFormatting,
 } from "@wealthfolio/ui";
@@ -90,8 +91,9 @@ export const HoldingsTableMobile = ({
 }: HoldingsTableMobileProps) => {
   const numberFormatting = useNumberFormatting();
   const dateFormatting = useDateFormatting();
+  const amountFormatting = useAmountFormatting();
 
-  const formatting = { ...dateFormatting, ...numberFormatting };
+  const formatting = { ...dateFormatting, ...numberFormatting, ...amountFormatting };
 
   const { t } = useTranslation();
   const { isBalanceHidden } = useBalancePrivacy();
@@ -185,7 +187,7 @@ export const HoldingsTableMobile = ({
             >
               <Icons.ListFilter className="h-4 w-4" />
               {hasActiveFilters && (
-                <span className="bg-destructive absolute right-0 top-0.5 h-2 w-2 rounded-full" />
+                <span className="bg-destructive absolute end-0 top-0.5 h-2 w-2 rounded-full" />
               )}
             </Button>
           )}
@@ -219,7 +221,11 @@ export const HoldingsTableMobile = ({
             const subtitle = isCash
               ? t("holdings:cash_balance")
               : parsedOption
-                ? formatOptionSubtitle(parsedOption, formatting)
+                ? formatOptionSubtitle(
+                    parsedOption,
+                    holding.instrument?.currency ?? holding.localCurrency,
+                    formatting,
+                  )
                 : (holding.instrument?.name ?? null);
             const isNavigable = !isCash && holding.instrument?.symbol;
             const liveAssetId =
@@ -248,7 +254,7 @@ export const HoldingsTableMobile = ({
                       <div className="flex items-center gap-1.5">
                         <p className="truncate font-semibold">{displaySymbol}</p>
                         {isClosed && (
-                          <Badge variant="outline" className="h-4 px-1 py-0 text-[10px]">
+                          <Badge variant="outline" className="text-2xs h-4 px-1 py-0">
                             {t("holdings:closed")}
                           </Badge>
                         )}
@@ -267,7 +273,7 @@ export const HoldingsTableMobile = ({
                       {liveQuote && <IntradaySparkline quote={liveQuote} width={64} height={28} />}
                     </LiveVisibilityProbe>
                   )}
-                  <div className="ml-2 text-right">
+                  <div className="ms-2 text-end">
                     {isClosed ? (
                       <p className="text-muted-foreground font-medium">—</p>
                     ) : (

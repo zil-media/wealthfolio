@@ -26,7 +26,7 @@ use crate::sync::{
 use crate::taxonomies::AssetTaxonomyAssignmentDB;
 use uuid::Uuid;
 use wealthfolio_core::portfolio::snapshot::SnapshotSource;
-use wealthfolio_core::settings::INSIGHTS_OVERVIEW_LAYOUT_KEY;
+use wealthfolio_core::settings::{GAIN_COLORS_KEY, INSIGHTS_OVERVIEW_LAYOUT_KEY};
 use wealthfolio_core::sync::SyncEntity;
 use wealthfolio_core::sync::SyncOperation;
 use wealthfolio_spending::settings::{
@@ -84,8 +84,11 @@ impl SyncOutboxModel for QuoteDB {
         &self.id
     }
 
+    // Manual quotes carry user-entered prices under UUIDs (valuations) or
+    // `{asset}_{day}_MANUAL` ids (history edits, imports, loan balances); both
+    // sync. Provider quotes are refetched on each device.
     fn should_sync_outbox(&self, _op: SyncOperation) -> bool {
-        self.source.eq_ignore_ascii_case("MANUAL") && Uuid::parse_str(&self.id).is_ok()
+        self.source.eq_ignore_ascii_case("MANUAL")
     }
 }
 
@@ -306,7 +309,7 @@ impl SyncOutboxModel for AppSettingDB {
 }
 
 pub(crate) fn is_syncable_app_preference_key(key: &str) -> bool {
-    key == INSIGHTS_OVERVIEW_LAYOUT_KEY
+    key == INSIGHTS_OVERVIEW_LAYOUT_KEY || key == GAIN_COLORS_KEY
 }
 
 impl SyncOutboxModel for AppPreferenceDB<'_> {

@@ -2,6 +2,7 @@ import { listen } from "@tauri-apps/api/event";
 import { act, fireEvent, render, screen, waitFor } from "@/test/render";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
+import commonCopy from "@/i18n/locales/en/common.json";
 import copy from "@/i18n/locales/en/settings.json";
 import { NativeDatabaseGate } from "./native-database-gate";
 const mocks = vi.hoisted(() => ({
@@ -108,7 +109,7 @@ it("discards a preview on Back and clears password state", async () => {
   fireEvent.click(await screen.findByRole("button", { name: copy.recovery_choose_file }));
   await screen.findByText("backup.wfbackup");
   fireEvent.click(screen.getByRole("button", { name: copy.recovery_inspect }));
-  fireEvent.click(await screen.findByRole("button", { name: copy.recovery_back }));
+  fireEvent.click(await screen.findByRole("button", { name: commonCopy.back }));
   await waitFor(() => expect(mocks.discard).toHaveBeenCalledWith("validated"));
   expect(screen.getByLabelText(copy.recovery_password)).toHaveValue("");
   expect(mocks.recover).not.toHaveBeenCalled();
@@ -146,6 +147,36 @@ it("retries failed startup before allowing the portfolio to mount", async () => 
   fireEvent.click(screen.getByRole("button", { name: copy.recovery_retry }));
   await screen.findByText("Portfolio mounted");
   expect(mocks.retry).toHaveBeenCalledOnce();
+});
+
+it("reports a failed retry once without repeating the startup error", async () => {
+  const error = "Invalid input: Operation not permitted (os error 1)";
+  mocks.status.mockResolvedValue({ ready: false, error, canRecover: false });
+  mocks.retry.mockRejectedValue(error);
+  mount();
+  await screen.findByText(error);
+  fireEvent.click(screen.getByRole("button", { name: copy.recovery_retry }));
+  expect(await screen.findByRole("alert")).toHaveTextContent(copy.recovery_retry_failed);
+  expect(screen.getAllByText(error)).toHaveLength(1);
+});
+
+it("keeps the startup error collapsed until opened, then copies it", async () => {
+  const writeText = vi.fn().mockResolvedValue(undefined);
+  Object.defineProperty(navigator, "clipboard", { configurable: true, value: { writeText } });
+  try {
+    mount();
+    const disclosure = (await screen.findByText(copy.recovery_details)).closest("details");
+    expect(disclosure).not.toHaveAttribute("open");
+    fireEvent.click(screen.getByText(copy.recovery_details));
+    expect(disclosure).toHaveAttribute("open");
+    fireEvent.click(screen.getByRole("button", { name: copy.recovery_copy_details }));
+    expect(
+      await screen.findByRole("button", { name: copy.recovery_details_copied }),
+    ).toBeInTheDocument();
+    expect(writeText).toHaveBeenCalledWith("Missing device key");
+  } finally {
+    Reflect.deleteProperty(navigator, "clipboard");
+  }
 });
 
 it("observes an owned recovery after the webview reloads", async () => {

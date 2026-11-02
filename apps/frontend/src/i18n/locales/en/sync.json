@@ -214,7 +214,8 @@
       "descriptionDated": "Data from your other device (copied {{date}}) will replace the data on this device.",
       "replace": "Replace data",
       "backupLabel": "Back up this profile first",
-      "backupAndReplace": "Back up and replace"
+      "backupAndReplace": "Back up and replace",
+      "descriptionEmpty": "Your other device has an empty portfolio. Continuing will replace the portfolio on this device with that empty portfolio."
     },
     "backingUp": {
       "title": "Backing up this profile",
@@ -263,7 +264,20 @@
       "show": "Show progress"
     }
   },
-  "errors": {},
+  "errors": {
+    "portfolioRepair": "A portfolio contains a deleted account link. Open Settings > Portfolios, edit the portfolio, then save.",
+    "fallback": "Something went wrong. Please try again.",
+    "restoreRequired": "Sync needs to be restored from this device before you can connect another device.",
+    "invalidCode": "Invalid code. Check and try again.",
+    "expired": "Session expired. Please start again.",
+    "cancelled": "Pairing was canceled.",
+    "network": "Network error. Check your connection.",
+    "timeout": "Connection timed out.",
+    "notFound": "Session not found or expired.",
+    "security": "Security verification failed.",
+    "technical": "Sync could not finish. Please try again. If this keeps happening, check the app logs.",
+    "namedPortfolioRepair": "Portfolio \"{{name}}\" contains a deleted account link. Open Settings > Portfolios, edit the portfolio, then save."
+  },
   "wizard": {
     "progressLabel": "Setup progress",
     "steps": {

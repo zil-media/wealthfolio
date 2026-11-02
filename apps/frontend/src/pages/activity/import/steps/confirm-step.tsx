@@ -1,3 +1,4 @@
+import { omitLocalDraftErrors } from "../utils/draft-validation-messages";
 import { useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
 import type { TFunction } from "i18next";
@@ -20,6 +21,7 @@ import { createAsset } from "@/adapters";
 import { draftToActivityImport } from "../utils/draft-utils";
 import { buildNewAssetFromDraft } from "../utils/asset-review-utils";
 import type { ActivityType } from "@/lib/constants";
+import { Spinner } from "@wealthfolio/ui";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Types
@@ -241,6 +243,10 @@ export function ConfirmStep() {
             return {
               ...draft,
               errors: { ...(draft.errors ?? {}), ...backendActivity.errors },
+              localErrorMessages: omitLocalDraftErrors(
+                draft.localErrorMessages,
+                Object.keys(backendActivity.errors),
+              ),
               status: "error" as DraftActivityStatus,
             };
           });
@@ -490,7 +496,7 @@ export function ConfirmStep() {
         {/* Activity type breakdown */}
         {Object.keys(summary.byType).length > 0 && (
           <div className="space-y-3">
-            <h4 className="text-muted-foreground text-xs font-medium uppercase tracking-wider">
+            <h4 className="text-muted-foreground text-xs font-medium tracking-wider uppercase">
               {t("activity:import.confirm.byActivityType")}
             </h4>
             <div className="flex flex-wrap gap-2">
@@ -519,7 +525,7 @@ export function ConfirmStep() {
         {/* Skipped breakdown */}
         {Object.keys(summary.bySkipReason).length > 0 && (
           <div className="space-y-3">
-            <h4 className="text-muted-foreground text-xs font-medium uppercase tracking-wider">
+            <h4 className="text-muted-foreground text-xs font-medium tracking-wider uppercase">
               {t("activity:import.confirm.skippedBreakdown")}
             </h4>
             <div className="flex flex-wrap gap-2">
@@ -556,7 +562,7 @@ export function ConfirmStep() {
       {/* Action buttons */}
       <div className="flex justify-between gap-3 border-t pt-6">
         <Button variant="outline" onClick={handleBack} disabled={isProcessing}>
-          <Icons.ArrowLeft className="mr-2 h-4 w-4" />
+          <Icons.ArrowLeft className="me-2 h-4 w-4 rtl:rotate-180" />
           {t("activity:import.toolbar.back")}
         </Button>
 
@@ -568,14 +574,14 @@ export function ConfirmStep() {
           >
             {isProcessing ? (
               <>
-                <Icons.Spinner className="mr-2 h-4 w-4 animate-spin" />
+                <Spinner className="me-2 h-4 w-4" />
                 {isPreparingAssets
                   ? t("activity:import.confirm.preparingAssets")
                   : t("activity:import.confirm.importing")}
               </>
             ) : (
               <>
-                <Icons.Import className="mr-2 h-4 w-4" />
+                <Icons.Import className="me-2 h-4 w-4" />
                 {t("activity:import.confirm.importActivities", { count: summary.toImport })}
               </>
             )}

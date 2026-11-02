@@ -18,6 +18,7 @@ use crate::env::AgentEnvironment;
 use crate::scope::AgentScope;
 use crate::tool::{AgentTool, AgentToolAccess, AgentToolError, AgentToolResult};
 use wealthfolio_core::accounts::account_types;
+use wealthfolio_spending::cash_activities::model::CashFlowBucket;
 use wealthfolio_spending::cash_activities::{
     CashActivity, CashActivitySearchRequest, CashActivityStatusFilter,
 };
@@ -113,6 +114,9 @@ pub struct UnproposedActivity {
     pub currency: String,
     pub notes: Option<String>,
     pub reason: String,
+    /// Only this taxonomy is compatible with the current cash-flow bucket.
+    #[serde(default)]
+    pub allowed_taxonomy_id: Option<String>,
 }
 
 /// Filters shared by `list_categorization_context` and
@@ -131,6 +135,7 @@ pub struct CategorizationFilters {
 pub struct CategorizationState {
     pub is_empty: bool,
     pub total: usize,
+    pub protected_splits: usize,
     pub proposals: Vec<Proposal>,
     pub unproposed: Vec<UnproposedActivity>,
     pub taxonomies: Vec<TaxonomySummary>,
@@ -161,7 +166,7 @@ pub async fn compute_categorization_state(
     };
 
     let cash = env.cash_activity_service();
-    let targets = if let Some(ids) = filters.activity_ids.as_ref() {
+    let mut targets = if let Some(ids) = filters.activity_ids.as_ref() {
         validate_explicit_activity_ids(ids)?;
         let mut targets = cash
             .get_by_activity_ids(ids)
@@ -185,10 +190,13 @@ pub async fn compute_categorization_state(
             .map_err(|e| AgentToolError::ExecutionFailed(e.to_string()))?
             .items
     };
+    let protected_splits = targets.iter().filter(|row| !row.splits.is_empty()).count();
+    targets.retain(|row| row.splits.is_empty());
     if targets.is_empty() {
         return Ok(CategorizationState {
             is_empty: true,
             total: 0,
+            protected_splits,
             proposals: Vec::new(),
             unproposed: Vec::new(),
             taxonomies: Vec::new(),
@@ -214,7 +222,11 @@ pub async fn compute_categorization_state(
         .map_err(|e| AgentToolError::ExecutionFailed(e.to_string()))?;
     let activity_taxonomies: Vec<_> = all_taxonomies
         .into_iter()
-        .filter(|t| t.taxonomy.scope == "activity")
+        .filter(|t| {
+            t.taxonomy.scope == "activity"
+                && wealthfolio_core::taxonomies::TRANSACTION_CATEGORY_TAXONOMY_IDS
+                    .contains(&t.taxonomy.id.as_str())
+        })
         .collect();
 
     // category_id -> (taxonomy_id, taxonomy_name, category_name, path, color)
@@ -332,6 +344,9 @@ pub async fn compute_categorization_state(
     let mut proposals = Vec::new();
     let mut unproposed = Vec::new();
     for target in &targets {
+        let Some(expected_taxonomy) = target.cash_flow_bucket.taxonomy_id() else {
+            continue;
+        };
         let act = &target.activity;
         let amount = act.amount.and_then(|d| d.to_f64()).unwrap_or(0.0);
         let date = act.activity_date.format("%Y-%m-%d").to_string();
@@ -339,19 +354,24 @@ pub async fn compute_categorization_state(
 
         let notes = act.notes.as_deref().unwrap_or("");
         let notes_upper = notes.to_uppercase();
-        let rule_match = wealthfolio_spending::categorization_rules::matcher::match_compiled(
-            &compiled_rules,
-            &notes_upper,
-            notes,
-            act.effective_type(),
-            &act.account_id,
-            act.amount.map(|d| d.abs()),
-        );
+        let rule_match =
+            wealthfolio_spending::categorization_rules::matcher::match_compiled_for_taxonomy(
+                &compiled_rules,
+                Some(expected_taxonomy),
+                &notes_upper,
+                notes,
+                act.effective_type(),
+                &act.account_id,
+                act.amount.map(|d| d.abs()),
+            );
         if let Some(m) = rule_match {
             if let (Some(tax_id), Some(cat_id)) =
                 (m.rule.taxonomy_id.clone(), m.rule.category_id.clone())
             {
-                if let Some((_, _, _, path, _)) = category_lookup.get(&cat_id) {
+                if let Some((_, _, _, path, _)) = category_lookup
+                    .get(&cat_id)
+                    .filter(|(actual_tax, ..)| tax_id == expected_taxonomy && *actual_tax == tax_id)
+                {
                     proposals.push(Proposal {
                         activity_id: act.id.clone(),
                         activity_date: date.clone(),
@@ -388,7 +408,10 @@ pub async fn compute_categorization_state(
             });
 
         if let Some((tax_id, cat_id, count)) = history_match {
-            if let Some((_, _, _, path, _)) = category_lookup.get(&cat_id) {
+            if let Some((_, _, _, path, _)) = category_lookup
+                .get(&cat_id)
+                .filter(|(actual_tax, ..)| tax_id == expected_taxonomy && *actual_tax == tax_id)
+            {
                 let confidence = if count >= 3 {
                     0.92
                 } else if count == 2 {
@@ -420,12 +443,14 @@ pub async fn compute_categorization_state(
             currency: act.currency.clone(),
             notes: notes_trimmed,
             reason: "No rule or history match — needs AI or manual judgement.".to_string(),
+            allowed_taxonomy_id: Some(expected_taxonomy.to_string()),
         });
     }
 
     Ok(CategorizationState {
         is_empty: false,
         total,
+        protected_splits,
         proposals,
         unproposed,
         taxonomies: taxonomy_summaries,
@@ -477,8 +502,9 @@ pub fn retain_explicit_targets(
             }
         }
 
-        let has_category =
-            is_neutral_visible_target(item, account_type_by_id) || !item.assignments.is_empty();
+        let has_category = is_neutral_visible_target(item, account_type_by_id)
+            || !item.assignments.is_empty()
+            || !item.splits.is_empty();
         match status {
             CashActivityStatusFilter::All => true,
             CashActivityStatusFilter::NeedsReview => item.activity.needs_review,
@@ -521,8 +547,14 @@ fn is_neutral_visible_target(
         .get(&item.activity.account_id)
         .is_some_and(|account_type| {
             account_type == account_types::CREDIT_CARD
-                && item.activity.effective_type() == "TRANSFER_IN"
+                && matches!(
+                    item.activity.effective_type(),
+                    "TRANSFER_IN" | "TRANSFER_OUT"
+                )
                 && item.activity.source_group_id.is_some()
+                // A card transfer out to an investing account is a saving and
+                // still needs a savings category.
+                && item.cash_flow_bucket == CashFlowBucket::Neutral
         })
 }
 
@@ -583,6 +615,7 @@ pub struct ContextSummary {
     /// Rows the agent should propose categories for via
     /// `propose_transaction_categories(aiProposals: [...])`.
     pub needs_ai_judgement: usize,
+    pub protected_splits: usize,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -658,14 +691,15 @@ impl AgentTool for ListCategorizationContext {
     }
 
     fn required_scopes(&self) -> &'static [AgentScope] {
-        // Returns cash-activity rows (ids, amounts, currencies, notes), so it
-        // requires activities:read in addition to classification:read — a
-        // classification-only token must not read transaction data.
-        &[AgentScope::ActivitiesRead, AgentScope::ClassificationRead]
+        &[AgentScope::SpendingRead]
     }
 
     fn access_level(&self) -> AgentToolAccess {
         AgentToolAccess::Read
+    }
+
+    fn sanitize_args_for_audit(&self, _: &serde_json::Value) -> serde_json::Value {
+        serde_json::json!({"categorizationArguments":"[redacted]"})
     }
 
     async fn call(
@@ -674,7 +708,11 @@ impl AgentTool for ListCategorizationContext {
         args: serde_json::Value,
     ) -> Result<AgentToolResult, AgentToolError> {
         debug!("list_categorization_context called");
-        let args: ListCategorizationContextArgs = serde_json::from_value(args)?;
+        let args: ListCategorizationContextArgs = serde_json::from_value(args).map_err(|_| {
+            AgentToolError::InvalidInput(
+                "Invalid categorization arguments; see the input schema".into(),
+            )
+        })?;
 
         let state = compute_categorization_state(
             env.as_ref(),
@@ -693,6 +731,7 @@ impl AgentTool for ListCategorizationContext {
             total: state.total,
             deterministically_proposed: state.proposals.len(),
             needs_ai_judgement: state.unproposed.len(),
+            protected_splits: state.protected_splits,
         };
         let next_step = next_step_instruction(&summary);
 
@@ -732,7 +771,6 @@ mod tests {
     use rust_decimal::Decimal;
     use wealthfolio_core::activities::{Activity, ActivityStatus};
     use wealthfolio_core::taxonomies::Category;
-    use wealthfolio_spending::cash_activities::model::CashFlowBucket;
 
     // ----- normalize_payee -------------------------------------------------
 
@@ -892,6 +930,8 @@ mod tests {
             net_amount: -10.0,
             net_amount_base: None,
             visible_spending_amount: 0.0,
+            cash_balance: None,
+            cash_balance_currency: None,
         }
     }
 
@@ -956,6 +996,44 @@ mod tests {
     }
 
     #[test]
+    fn explicit_split_targets_are_already_categorized() {
+        let mut split = make_cash_activity("split", "acct-1", "2024-06-15T00:00:00Z", false, false);
+        let now = chrono::Utc::now().naive_utc();
+        split
+            .splits
+            .push(wealthfolio_spending::activity_splits::ActivitySplit {
+                id: "split-1".to_string(),
+                activity_id: "split".to_string(),
+                taxonomy_id: "spending_categories".to_string(),
+                category_id: "cat_groceries".to_string(),
+                amount: rust_decimal::Decimal::TEN,
+                note: None,
+                sort_order: 0,
+                created_at: now,
+                updated_at: now,
+            });
+        let mut uncategorized = vec![split.clone()];
+        retain_explicit_targets(
+            &mut uncategorized,
+            &CategorizationFilters::default(),
+            CashActivityStatusFilter::Uncategorized,
+            &HashMap::new(),
+        )
+        .unwrap();
+        assert!(uncategorized.is_empty());
+
+        let mut categorized = vec![split];
+        retain_explicit_targets(
+            &mut categorized,
+            &CategorizationFilters::default(),
+            CashActivityStatusFilter::Categorized,
+            &HashMap::new(),
+        )
+        .unwrap();
+        assert_eq!(categorized.len(), 1);
+    }
+
+    #[test]
     fn explicit_targets_apply_categorized_status_filter() {
         let mut targets = vec![
             make_cash_activity("assigned", "acct-1", "2024-06-15T00:00:00Z", false, true),
@@ -980,6 +1058,7 @@ mod tests {
             make_cash_activity("payment", "card-1", "2024-06-15T00:00:00Z", false, false);
         payment.activity.activity_type = "TRANSFER_IN".to_string();
         payment.activity.source_group_id = Some("payment-group".to_string());
+        payment.cash_flow_bucket = CashFlowBucket::Neutral;
         let mut targets = vec![payment];
         let account_type_by_id = HashMap::from([(
             "card-1".to_string(),
@@ -995,6 +1074,43 @@ mod tests {
         .unwrap();
 
         assert!(targets.is_empty());
+    }
+
+    #[test]
+    fn explicit_targets_treat_linked_credit_card_transfers_out_as_categorized() {
+        let mut balance_transfer = make_cash_activity(
+            "balance-transfer",
+            "card-1",
+            "2024-06-15T00:00:00Z",
+            false,
+            false,
+        );
+        balance_transfer.activity.activity_type = "TRANSFER_OUT".to_string();
+        balance_transfer.activity.source_group_id = Some("balance-transfer-group".to_string());
+        balance_transfer.cash_flow_bucket = CashFlowBucket::Neutral;
+        // A card transfer out to an investing account is a saving: it still
+        // needs a savings category.
+        let mut invested =
+            make_cash_activity("invested", "card-1", "2024-06-16T00:00:00Z", false, false);
+        invested.activity.activity_type = "TRANSFER_OUT".to_string();
+        invested.activity.source_group_id = Some("invest-group".to_string());
+        invested.cash_flow_bucket = CashFlowBucket::Saving;
+        let mut targets = vec![balance_transfer, invested];
+        let account_type_by_id = HashMap::from([(
+            "card-1".to_string(),
+            wealthfolio_core::accounts::account_types::CREDIT_CARD.to_string(),
+        )]);
+
+        retain_explicit_targets(
+            &mut targets,
+            &CategorizationFilters::default(),
+            CashActivityStatusFilter::Uncategorized,
+            &account_type_by_id,
+        )
+        .unwrap();
+
+        assert_eq!(targets.len(), 1);
+        assert_eq!(targets[0].activity.id, "invested");
     }
 
     #[test]

@@ -17,9 +17,10 @@ import { getZonedDateParts } from "../../../lib/timezone";
 import type { EventSpendingSummary } from "../../../types/event";
 import { useEventDialog } from "../../event-dialog-provider";
 import { getEventColors } from "./event-colors";
+import { Card } from "@wealthfolio/ui/components/ui/card";
 
-const CARD_CLASS = "border-border/60 bg-card/40 rounded-2xl border p-4 backdrop-blur-xl";
-const LABEL_CLASS = "text-muted-foreground/70 text-[10px] font-normal uppercase tracking-[0.12em]";
+const CARD_CLASS = "p-4";
+const LABEL_CLASS = "text-muted-foreground/70 text-2xs font-normal uppercase tracking-[0.12em]";
 
 interface Props {
   events: EventSpendingSummary[];
@@ -82,7 +83,7 @@ export const EventsCalendarCard: FC<Props> = ({
   const orderedDayNames = [...dayNames.slice(weekStartsOn), ...dayNames.slice(0, weekStartsOn)];
 
   return (
-    <div className={CARD_CLASS}>
+    <Card className={CARD_CLASS}>
       {/* Header */}
       <div className="mb-3">
         <div className="flex items-center justify-between gap-2">
@@ -98,7 +99,7 @@ export const EventsCalendarCard: FC<Props> = ({
               className="h-7 w-7"
               onClick={() => setCursor(addMonths(cursor, -1))}
             >
-              <Icons.ChevronLeft className="h-4 w-4" />
+              <Icons.ChevronLeft className="h-4 w-4 rtl:rotate-180" />
             </Button>
             <Button
               variant="outline"
@@ -108,13 +109,13 @@ export const EventsCalendarCard: FC<Props> = ({
               className="h-7 w-7"
               onClick={() => setCursor(addMonths(cursor, 1))}
             >
-              <Icons.ChevronRight className="h-4 w-4" />
+              <Icons.ChevronRight className="h-4 w-4 rtl:rotate-180" />
             </Button>
             <Button
               variant="outline"
               size="icon"
               aria-label={t("spending:events.createEvent")}
-              className="ml-1 h-7 w-7 rounded-full"
+              className="ms-1 h-7 w-7 rounded-full"
               onClick={() =>
                 openEventDialog({
                   prefill: { startDate: monthStart, endDate: monthEnd },
@@ -126,7 +127,7 @@ export const EventsCalendarCard: FC<Props> = ({
             </Button>
           </div>
         </div>
-        <div className="text-muted-foreground/80 mt-1 text-[11px]">
+        <div className="text-muted-foreground/80 text-2xs mt-1">
           {t("spending:calendar.monthSummary", {
             count: monthEvents.length,
             month: monthLabel,
@@ -159,7 +160,7 @@ export const EventsCalendarCard: FC<Props> = ({
                 <div
                   key={`d-${di}`}
                   className={cn(
-                    "flex h-7 items-center justify-center text-[11px] tabular-nums",
+                    "text-2xs flex h-7 items-center justify-center tabular-nums",
                     !inMonth && "text-muted-foreground/40",
                     inMonth && "text-foreground/80",
                     isToday && "font-semibold",
@@ -192,7 +193,7 @@ export const EventsCalendarCard: FC<Props> = ({
                       : formatting.formatAmount(bar.event.totalSpending, currency)
                   }`}
                   className={cn(
-                    "min-h-[16px] truncate rounded-sm px-1 text-left text-[10px] leading-[16px]",
+                    "text-2xs min-h-4 truncate rounded-sm px-1 text-start leading-[1rem]",
                     isSel ? "font-semibold" : "hover:brightness-95",
                   )}
                   style={{
@@ -210,7 +211,7 @@ export const EventsCalendarCard: FC<Props> = ({
           </div>
         ))}
       </div>
-    </div>
+    </Card>
   );
 };
 

@@ -1,5 +1,16 @@
+import { getTaxonomyLabel, getCategoryLabel } from "@/lib/taxonomy-labels";
+import { taxonomyTabLabel } from "./taxonomy-tab-label";
 import { useState, useMemo } from "react";
-import { Icons, ScrollArea, Card, Button, Tabs, TabsList, TabsTrigger } from "@wealthfolio/ui";
+import {
+  Icons,
+  ScrollArea,
+  Card,
+  Button,
+  Tabs,
+  TabsList,
+  TabsTrigger,
+  Spinner,
+} from "@wealthfolio/ui";
 import {
   TreeView,
   buildCategoryTree,
@@ -38,8 +49,13 @@ export default function TaxonomiesPage() {
   // Build tree from categories
   const categoryTree = useMemo(() => {
     if (!taxonomyWithCategories?.categories) return [];
-    return buildCategoryTree(taxonomyWithCategories.categories);
-  }, [taxonomyWithCategories?.categories]);
+    return buildCategoryTree(
+      taxonomyWithCategories.categories.map((c) => ({
+        ...c,
+        name: getCategoryLabel(t, c.taxonomyId, c.id, c.name),
+      })),
+    );
+  }, [taxonomyWithCategories?.categories, t]);
 
   // Find selected category
   const selectedCategory = useMemo(() => {
@@ -108,7 +124,7 @@ export default function TaxonomiesPage() {
               )
             }
           >
-            {t("settings:health_banner_clear")}
+            {t("common:clear")}
           </Button>
         </div>
       )}
@@ -142,7 +158,7 @@ export default function TaxonomiesPage() {
                     className="h-2.5 w-2.5 shrink-0 rounded-full"
                     style={{ backgroundColor: taxonomy.color }}
                   />
-                  <span>{taxonomy.name.replace(" (GICS)", "")}</span>
+                  <span>{taxonomyTabLabel(t, taxonomy.id, taxonomy.name)}</span>
                 </TabsTrigger>
               ))}
             </TabsList>
@@ -161,7 +177,9 @@ export default function TaxonomiesPage() {
                 style={{ backgroundColor: activeTaxonomy?.color }}
               />
               <div>
-                <h3 className="font-semibold">{activeTaxonomy?.name}</h3>
+                <h3 className="font-semibold">
+                  {activeTaxonomy && getTaxonomyLabel(t, activeTaxonomy.id, activeTaxonomy.name)}
+                </h3>
                 <p className="text-muted-foreground text-xs">
                   {t("settings:tax_categories_count", {
                     count: taxonomyWithCategories.categories.length,
@@ -172,22 +190,22 @@ export default function TaxonomiesPage() {
             <div className="flex items-center gap-2">
               {isEditableTaxonomy && (
                 <Button variant="default" size="sm" onClick={handleAddCategory}>
-                  <Icons.Plus className="mr-2 h-4 w-4" />
+                  <Icons.Plus className="me-2 h-4 w-4" />
                   {t("settings:tax_add_category")}
                 </Button>
               )}
               <Button variant="outline" size="sm" onClick={handleExport}>
-                <Icons.Download className="mr-2 h-4 w-4" />
-                {t("settings:tax_export")}
+                <Icons.Download className="me-2 h-4 w-4" />
+                {t("common:export")}
               </Button>
             </div>
           </div>
 
           {/* Categories and details */}
-          <div className="flex min-h-[500px] flex-col lg:flex-row">
+          <div className="flex min-h-125 flex-col lg:flex-row">
             {/* Category tree */}
-            <div className="w-full border-b lg:w-80 lg:border-b-0 lg:border-r">
-              <ScrollArea className="h-[300px] lg:h-[500px]">
+            <div className="w-full border-b lg:w-80 lg:border-e lg:border-b-0">
+              <ScrollArea className="h-75 lg:h-125">
                 {isLoadingCategories ? (
                   <div className="text-muted-foreground p-4 text-center text-sm">
                     {t("settings:tax_loading_generic")}
@@ -238,7 +256,7 @@ export default function TaxonomiesPage() {
       ) : isLoading ? (
         <Card className="flex h-64 items-center justify-center">
           <div className="text-muted-foreground text-center">
-            <Icons.Loader className="mx-auto mb-2 h-6 w-6 animate-spin" />
+            <Spinner className="mx-auto mb-2 h-6 w-6" />
             <p>{t("settings:tax_loading")}</p>
           </div>
         </Card>

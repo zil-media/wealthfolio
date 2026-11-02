@@ -10,6 +10,7 @@
 use std::borrow::Cow;
 use std::collections::HashMap;
 use std::sync::Arc;
+use std::time::Duration;
 
 use chrono::{DateTime, Utc};
 use log::{debug, warn};
@@ -23,7 +24,29 @@ use crate::models::{
     SearchResult, SplitEvent,
 };
 use crate::provider::{MarketDataProvider, DATA_SOURCE_CUSTOM_SCRAPER};
-use crate::resolver::{check_profile, SymbolResolver};
+use crate::resolver::{check_profile, ResolutionSource, SymbolResolver};
+
+// Supplementary venue searches must not hold healthy general results for the HTTP timeout.
+const EXCHANGE_SEARCH_TIMEOUT: Duration = Duration::from_secs(2);
+
+// Search budgets are deliberately shorter than quote HTTP timeouts. Reuse the
+// existing breaker under an operation key so search backoff cannot disable prices.
+fn search_circuit_id(provider: &str) -> ProviderId {
+    Cow::Owned(format!("{provider}:search"))
+}
+
+fn is_unverified_fallback(source: ResolutionSource) -> bool {
+    source == ResolutionSource::RulesFallback
+}
+
+/// A security assigned to a custom provider is served by it alone, so its identifiers
+/// never reach other providers when the custom source fails.
+fn excluded_by_custom_assignment(
+    provider: &dyn MarketDataProvider,
+    context: &QuoteContext,
+) -> bool {
+    context.assigned_custom_provider().is_some() && provider.id() != DATA_SOURCE_CUSTOM_SCRAPER
+}
 
 /// Provider registry for orchestrating market data fetching.
 pub struct ProviderRegistry {
@@ -143,6 +166,11 @@ impl ProviderRegistry {
             }
             let result = async {
                 let resolved = self.resolver.resolve(&provider_id, context)?;
+                if is_unverified_fallback(resolved.source) {
+                    return Err(MarketDataError::ResolutionFailed {
+                        provider: provider_id.to_string(),
+                    });
+                }
                 self.rate_limiter.acquire(&provider_id).await;
                 let quotes = provider
                     .get_historical_quotes(context, resolved.instrument, start, end)
@@ -239,6 +267,17 @@ impl ProviderRegistry {
                     continue;
                 }
             };
+
+            if is_unverified_fallback(resolved.source) {
+                debug!(
+                    "Skipping unverified bare-symbol fallback for provider '{}'",
+                    provider_id
+                );
+                last_error = Some(MarketDataError::ResolutionFailed {
+                    provider: provider_id.to_string(),
+                });
+                continue;
+            }
 
             debug!(
                 "Fetching quotes from provider '{}' with {:?} (source: {:?})",
@@ -355,6 +394,13 @@ impl ProviderRegistry {
                 Err(_) => continue,
             };
 
+            if is_unverified_fallback(resolved.source) {
+                last_error = Some(MarketDataError::ResolutionFailed {
+                    provider: provider_id.to_string(),
+                });
+                continue;
+            }
+
             self.rate_limiter.acquire(&provider_id).await;
 
             match provider
@@ -463,6 +509,10 @@ impl ProviderRegistry {
                 Err(_) => continue,
             };
 
+            if is_unverified_fallback(resolved.source) {
+                continue;
+            }
+
             self.rate_limiter.acquire(&provider_id).await;
 
             match provider
@@ -496,7 +546,9 @@ impl ProviderRegistry {
             .iter()
             .filter(|p| {
                 let caps = p.capabilities();
-                caps.supports_dividends && caps.supports_instrument(&context.instrument)
+                caps.supports_dividends
+                    && caps.supports_instrument(&context.instrument)
+                    && !excluded_by_custom_assignment(p.as_ref(), context)
             })
             .collect();
 
@@ -525,6 +577,13 @@ impl ProviderRegistry {
                     continue;
                 }
             };
+
+            if is_unverified_fallback(resolved.source) {
+                last_error = Some(MarketDataError::ResolutionFailed {
+                    provider: provider_id.to_string(),
+                });
+                continue;
+            }
 
             self.rate_limiter.acquire(&provider_id).await;
 
@@ -565,8 +624,9 @@ impl ProviderRegistry {
     /// Orders providers by:
     /// 1. Filter to providers that support the instrument (kind + coverage)
     /// 2. Filter by operation capability (historical or latest)
-    /// 3. Preferred provider first (if set and available)
-    /// 4. Then by priority (lower is higher priority)
+    /// 3. Only the custom provider, if the security is assigned to one
+    /// 4. Preferred provider first (if set and available)
+    /// 5. Then by priority (lower is higher priority)
     ///
     /// # Arguments
     /// * `context` - The quote context with instrument info
@@ -580,6 +640,9 @@ impl ProviderRegistry {
             .providers
             .iter()
             .filter(|p| {
+                if excluded_by_custom_assignment(p.as_ref(), context) {
+                    return false;
+                }
                 let caps = p.capabilities();
                 // Check instrument support
                 if !caps.supports_instrument(&context.instrument) {
@@ -608,7 +671,9 @@ impl ProviderRegistry {
             .iter()
             .filter(|p| {
                 let caps = p.capabilities();
-                caps.supports_profile && caps.supports_instrument(&context.instrument)
+                caps.supports_profile
+                    && caps.supports_instrument(&context.instrument)
+                    && !excluded_by_custom_assignment(p.as_ref(), context)
             })
             .collect();
 
@@ -627,6 +692,10 @@ impl ProviderRegistry {
 
         for provider in &self.providers {
             let provider_id: ProviderId = Cow::Borrowed(provider.id());
+            if excluded_by_custom_assignment(provider.as_ref(), context) {
+                diagnostics.record_skip(provider_id, SkipReason::AssignedToCustomProvider);
+                continue;
+            }
             let caps = provider.capabilities();
 
             // Check capability for fetch type
@@ -728,8 +797,66 @@ impl ProviderRegistry {
 
     /// Search for symbols matching the query.
     ///
-    /// Tries providers that support search until one succeeds.
+    /// Tries providers that support search until one succeeds, and adds the
+    /// results of providers that look the query up as one of their own
+    /// identifiers. Those exact matches come first, so unscored text matches
+    /// don't bury them.
     pub async fn search(&self, query: &str) -> Result<Vec<SearchResult>, MarketDataError> {
+        let searched = self.search_providers(query).await;
+        let mut looked_up = self.look_up_identifier(query).await;
+        match searched {
+            Ok(results) => {
+                looked_up.extend(results);
+                Ok(looked_up)
+            }
+            Err(_) if !looked_up.is_empty() => Ok(looked_up),
+            Err(e) => Err(e),
+        }
+    }
+
+    /// Results of providers that look `query` up as one of their own identifiers.
+    ///
+    /// These calls take no rate-limit token: such a provider meters its own
+    /// requests, and a token per lookup would make an import that searches many
+    /// rows skip lookups or wait for them.
+    async fn look_up_identifier(&self, query: &str) -> Vec<SearchResult> {
+        let mut results = Vec::new();
+        for provider in self
+            .providers
+            .iter()
+            .filter(|p| p.looks_up_identifier(query))
+        {
+            let provider_id: ProviderId = Cow::Borrowed(provider.id());
+
+            if !self.circuit_breaker.is_allowed(&provider_id) {
+                warn!("Search: skipping '{}' — circuit breaker open", provider_id);
+                continue;
+            }
+
+            match provider.search(query).await {
+                Ok(found) => {
+                    self.circuit_breaker.record_success(&provider_id);
+                    results.extend(found);
+                }
+                Err(e) => {
+                    warn!(
+                        "Search: provider '{}' failed to look up '{}': {}",
+                        provider_id, query, e
+                    );
+                    if matches!(
+                        e.retry_class(),
+                        RetryClass::FailoverWithPenalty | RetryClass::CircuitOpen
+                    ) {
+                        self.circuit_breaker.record_failure(&provider_id);
+                    }
+                }
+            }
+        }
+        results
+    }
+
+    /// Try providers that support search until one succeeds.
+    async fn search_providers(&self, query: &str) -> Result<Vec<SearchResult>, MarketDataError> {
         let mut providers: Vec<_> = self
             .providers
             .iter()
@@ -749,6 +876,94 @@ impl ProviderRegistry {
             });
         }
 
+        let (scoped, general): (Vec<_>, Vec<_>) = providers
+            .into_iter()
+            .partition(|provider| provider.capabilities().coverage.is_exchange_scoped());
+        let (searched, (extra, scoped_error)) = tokio::join!(
+            self.search_in_priority_order(&general, query),
+            self.search_exchange_scoped(&scoped, query)
+        );
+        match searched {
+            Ok(mut results) => {
+                for result in extra {
+                    if !results.iter().any(|existing| {
+                        existing.symbol.eq_ignore_ascii_case(&result.symbol)
+                            && existing.exchange_mic == result.exchange_mic
+                    }) {
+                        results.push(result);
+                    }
+                }
+                Ok(results)
+            }
+            Err(_) if !extra.is_empty() => Ok(extra),
+            Err(MarketDataError::AllProvidersFailed) => {
+                Err(scoped_error.unwrap_or(MarketDataError::AllProvidersFailed))
+            }
+            Err(error) => Err(error),
+        }
+    }
+
+    async fn search_exchange_scoped(
+        &self,
+        providers: &[&Arc<dyn MarketDataProvider>],
+        query: &str,
+    ) -> (Vec<SearchResult>, Option<MarketDataError>) {
+        let mut results = Vec::new();
+        let mut last_error = None;
+        for provider in providers {
+            let id = Cow::Borrowed(provider.id());
+            let search_id = search_circuit_id(provider.id());
+            if !self.circuit_breaker.is_allowed(&id) || !self.circuit_breaker.is_allowed(&search_id)
+            {
+                continue;
+            }
+            // Imports search sequential rows: wait for a token rather than
+            // dropping the venue candidate just because the burst is exhausted.
+            let mut search_started = false;
+            let request = async {
+                self.rate_limiter.acquire(&id).await;
+                search_started = true;
+                provider.search(query).await
+            };
+            let response = tokio::time::timeout(EXCHANGE_SEARCH_TIMEOUT, request).await;
+            let result = match response {
+                Ok(result) => result,
+                Err(_) => {
+                    // Local quota contention is not evidence of provider failure.
+                    // Only an attempted search can penalize the search circuit.
+                    if search_started {
+                        self.circuit_breaker.record_failure(&search_id);
+                    }
+                    last_error = Some(MarketDataError::Timeout {
+                        provider: id.to_string(),
+                    });
+                    continue;
+                }
+            };
+            match result {
+                Ok(found) => {
+                    self.circuit_breaker.record_success(&search_id);
+                    results.extend(found);
+                }
+                Err(error) => {
+                    if matches!(
+                        error.retry_class(),
+                        RetryClass::FailoverWithPenalty | RetryClass::CircuitOpen
+                    ) {
+                        self.circuit_breaker.record_failure(&search_id);
+                    }
+                    last_error = Some(error);
+                }
+            }
+        }
+        (results, last_error)
+    }
+
+    async fn search_in_priority_order(
+        &self,
+        providers: &[&Arc<dyn MarketDataProvider>],
+        query: &str,
+    ) -> Result<Vec<SearchResult>, MarketDataError> {
         let mut last_error: Option<MarketDataError> = None;
         let mut fallback_results: Option<Vec<SearchResult>> = None;
 
@@ -852,6 +1067,10 @@ impl ProviderRegistry {
                 Err(_) => continue, // Provider can't handle this instrument
             };
 
+            if is_unverified_fallback(resolved.source) {
+                continue;
+            }
+
             let symbol = resolved.instrument.to_symbol_string();
 
             self.rate_limiter.acquire(&provider_id).await;
@@ -926,7 +1145,9 @@ impl ProviderRegistry {
             return (Err(MarketDataError::NoProvidersAvailable), diagnostics);
         }
 
-        let mut last_error: Option<MarketDataError> = None;
+        // The most-preferred provider's failure explains the fetch best. Later
+        // fallbacks failing must not replace it in the sync error.
+        let mut first_error: Option<MarketDataError> = None;
         let mut saw_no_data = false;
 
         for provider in providers {
@@ -945,6 +1166,16 @@ impl ProviderRegistry {
                     continue;
                 }
             };
+
+            if is_unverified_fallback(resolved.source) {
+                diagnostics.record_skip(
+                    provider_id.clone(),
+                    SkipReason::ResolutionFailed {
+                        message: "unverified bare-symbol fallback".to_string(),
+                    },
+                );
+                continue;
+            }
 
             debug!(
                 "Fetching quotes from provider '{}' with {:?} (source: {:?})",
@@ -989,9 +1220,12 @@ impl ProviderRegistry {
                             provider_id.clone(),
                             "All quotes failed validation".to_string(),
                         );
-                        last_error = Some(MarketDataError::ValidationFailed {
-                            message: "All quotes failed validation".to_string(),
-                        });
+                        if first_error.is_none() {
+                            first_error = Some(MarketDataError::ValidationFailed {
+                                message: "All quotes failed validation".to_string(),
+                            });
+                            diagnostics.error_provider = Some(provider_id.clone());
+                        }
                         continue;
                     }
 
@@ -1013,7 +1247,10 @@ impl ProviderRegistry {
                     diagnostics.record_error(provider_id.clone(), format!("{:?}", e));
 
                     match retry_class {
+                        // A terminal answer wins over an earlier failure: sync relies on its
+                        // kind (e.g. "symbol not found" is non-fatal while backfilling).
                         RetryClass::Never => {
+                            diagnostics.error_provider = Some(provider_id);
                             return (Err(e), diagnostics);
                         }
                         RetryClass::FailoverWithPenalty | RetryClass::CircuitOpen => {
@@ -1022,7 +1259,10 @@ impl ProviderRegistry {
                         RetryClass::NextProvider => {}
                     }
 
-                    last_error = Some(e);
+                    if first_error.is_none() {
+                        first_error = Some(e);
+                        diagnostics.error_provider = Some(provider_id);
+                    }
                 }
             }
         }
@@ -1031,7 +1271,7 @@ impl ProviderRegistry {
             "All providers failed. Diagnostics: {}",
             diagnostics.summary()
         );
-        let error = last_error.unwrap_or_else(|| {
+        let error = first_error.unwrap_or_else(|| {
             if saw_no_data {
                 MarketDataError::NoDataForRange
             } else {
@@ -1070,6 +1310,16 @@ impl ProviderRegistry {
                     continue;
                 }
             };
+
+            if is_unverified_fallback(resolved.source) {
+                diagnostics.record_skip(
+                    provider_id.clone(),
+                    SkipReason::ResolutionFailed {
+                        message: "unverified bare-symbol fallback".to_string(),
+                    },
+                );
+                continue;
+            }
 
             self.rate_limiter.acquire(&provider_id).await;
 
@@ -1125,7 +1375,7 @@ mod tests {
     use super::*;
     use crate::models::{Coverage, Currency, InstrumentKind, ProviderInstrument};
     use crate::provider::{ProviderCapabilities, RateLimit};
-    use crate::resolver::{ResolutionSource, ResolvedInstrument};
+    use crate::resolver::{ResolutionSource, ResolvedInstrument, ResolverChain};
     use rust_decimal_macros::dec;
     use std::sync::atomic::{AtomicUsize, Ordering};
     use std::time::Duration;
@@ -1256,6 +1506,401 @@ mod tests {
         ) -> Option<Currency> {
             Some(Cow::Borrowed("USD"))
         }
+    }
+
+    struct FallbackResolver;
+
+    impl SymbolResolver for FallbackResolver {
+        fn resolve(
+            &self,
+            _provider: &ProviderId,
+            _context: &QuoteContext,
+        ) -> Result<ResolvedInstrument, MarketDataError> {
+            Ok(ResolvedInstrument {
+                instrument: ProviderInstrument::EquitySymbol {
+                    symbol: Arc::from("COLLISION"),
+                },
+                source: ResolutionSource::RulesFallback,
+            })
+        }
+
+        fn get_currency(
+            &self,
+            _provider: &ProviderId,
+            _context: &QuoteContext,
+        ) -> Option<Currency> {
+            None
+        }
+    }
+
+    #[derive(Default)]
+    struct OperationCounts {
+        latest: AtomicUsize,
+        historical: AtomicUsize,
+        splits: AtomicUsize,
+        dividends: AtomicUsize,
+        profile: AtomicUsize,
+    }
+
+    struct AllOperationsProvider {
+        id: &'static str,
+        counts: Arc<OperationCounts>,
+    }
+
+    #[async_trait::async_trait]
+    impl MarketDataProvider for AllOperationsProvider {
+        fn id(&self) -> &'static str {
+            self.id
+        }
+
+        fn priority(&self) -> u8 {
+            1
+        }
+
+        fn capabilities(&self) -> ProviderCapabilities {
+            ProviderCapabilities {
+                instrument_kinds: &[InstrumentKind::Equity],
+                coverage: Coverage::global_best_effort(),
+                supports_latest: true,
+                supports_historical: true,
+                supports_search: false,
+                supports_profile: true,
+                supports_dividends: true,
+            }
+        }
+
+        fn rate_limit(&self) -> RateLimit {
+            RateLimit::default()
+        }
+
+        async fn get_latest_quote(
+            &self,
+            _context: &QuoteContext,
+            _instrument: ProviderInstrument,
+        ) -> Result<Quote, MarketDataError> {
+            self.counts.latest.fetch_add(1, Ordering::SeqCst);
+            unreachable!("unverified resolutions must not reach the provider")
+        }
+
+        async fn get_historical_quotes(
+            &self,
+            _context: &QuoteContext,
+            _instrument: ProviderInstrument,
+            _start: DateTime<Utc>,
+            _end: DateTime<Utc>,
+        ) -> Result<Vec<Quote>, MarketDataError> {
+            self.counts.historical.fetch_add(1, Ordering::SeqCst);
+            unreachable!("unverified resolutions must not reach the provider")
+        }
+
+        async fn get_splits(
+            &self,
+            _context: &QuoteContext,
+            _instrument: ProviderInstrument,
+            _start: DateTime<Utc>,
+            _end: DateTime<Utc>,
+        ) -> Result<Vec<SplitEvent>, MarketDataError> {
+            self.counts.splits.fetch_add(1, Ordering::SeqCst);
+            unreachable!("unverified resolutions must not reach the provider")
+        }
+
+        async fn get_dividends(
+            &self,
+            _context: &QuoteContext,
+            _instrument: ProviderInstrument,
+            _start: DateTime<Utc>,
+            _end: DateTime<Utc>,
+        ) -> Result<Vec<DividendEvent>, MarketDataError> {
+            self.counts.dividends.fetch_add(1, Ordering::SeqCst);
+            unreachable!("unverified resolutions must not reach the provider")
+        }
+
+        async fn get_profile(&self, _symbol: &str) -> Result<AssetProfile, MarketDataError> {
+            self.counts.profile.fetch_add(1, Ordering::SeqCst);
+            unreachable!("unverified resolutions must not reach the provider")
+        }
+    }
+
+    #[tokio::test]
+    async fn unverified_fallback_never_reaches_market_data_operations() {
+        let counts = Arc::new(OperationCounts::default());
+        let provider: Arc<dyn MarketDataProvider> = Arc::new(AllOperationsProvider {
+            id: "ALL_OPERATIONS",
+            counts: Arc::clone(&counts),
+        });
+        let registry = ProviderRegistry::new(vec![provider], Arc::new(FallbackResolver));
+        let context = QuoteContext {
+            instrument: InstrumentId::Equity {
+                ticker: Arc::from("COLLISION"),
+                mic: Some(Cow::Borrowed("21XX")),
+            },
+            identifiers: Default::default(),
+            overrides: None,
+            currency_hint: None,
+            preferred_provider: None,
+            bond_metadata: None,
+            custom_provider_code: None,
+        };
+        let now = Utc::now();
+
+        assert!(registry.fetch_latest_quote(&context).await.is_err());
+        assert!(registry.fetch_quotes(&context, now, now).await.is_err());
+        assert!(registry
+            .fetch_quotes_for_reset(&context, now, now)
+            .await
+            .is_err());
+        assert!(registry.fetch_splits(&context, now, now).await.is_empty());
+        assert!(registry.fetch_dividends(&context, now, now).await.is_err());
+        assert!(registry.get_profile(&context).await.is_err());
+        assert!(registry
+            .fetch_latest_quote_with_diagnostics(&context)
+            .await
+            .0
+            .is_err());
+        assert!(registry
+            .fetch_quotes_with_diagnostics(&context, now, now)
+            .await
+            .0
+            .is_err());
+
+        assert_eq!(counts.latest.load(Ordering::SeqCst), 0);
+        assert_eq!(counts.historical.load(Ordering::SeqCst), 0);
+        assert_eq!(counts.splits.load(Ordering::SeqCst), 0);
+        assert_eq!(counts.dividends.load(Ordering::SeqCst), 0);
+        assert_eq!(counts.profile.load(Ordering::SeqCst), 0);
+    }
+
+    fn equity_context(
+        preferred_provider: Option<&'static str>,
+        custom_provider_code: Option<&str>,
+    ) -> QuoteContext {
+        QuoteContext {
+            instrument: InstrumentId::Equity {
+                ticker: Arc::from("FUNDA"),
+                mic: Some(Cow::Borrowed("XNAS")),
+            },
+            identifiers: Default::default(),
+            overrides: None,
+            currency_hint: None,
+            preferred_provider: preferred_provider.map(Cow::Borrowed),
+            bond_metadata: None,
+            custom_provider_code: custom_provider_code.map(str::to_string),
+        }
+    }
+
+    #[tokio::test]
+    async fn custom_assignment_keeps_every_operation_on_the_custom_provider() {
+        let counts = Arc::new(OperationCounts::default());
+        let builtin: Arc<dyn MarketDataProvider> = Arc::new(AllOperationsProvider {
+            id: "YAHOO",
+            counts: Arc::clone(&counts),
+        });
+        let custom = Arc::new(MockProvider::new(DATA_SOURCE_CUSTOM_SCRAPER, 50, true));
+        let registry = ProviderRegistry::new(vec![builtin, custom.clone()], Arc::new(MockResolver));
+        let context = equity_context(Some(DATA_SOURCE_CUSTOM_SCRAPER), Some("private-nav"));
+        let now = Utc::now();
+
+        assert!(registry.fetch_latest_quote(&context).await.is_err());
+        assert!(registry.fetch_quotes(&context, now, now).await.is_err());
+        assert!(registry
+            .fetch_quotes_for_reset(&context, now, now)
+            .await
+            .is_err());
+        assert!(registry.fetch_splits(&context, now, now).await.is_empty());
+        assert!(registry.fetch_dividends(&context, now, now).await.is_err());
+        assert!(registry.get_profile(&context).await.is_err());
+        assert!(registry
+            .fetch_latest_quote_with_diagnostics(&context)
+            .await
+            .0
+            .is_err());
+        let (history, diagnostics) = registry
+            .fetch_quotes_with_diagnostics(&context, now, now)
+            .await;
+
+        assert!(history.is_err());
+        assert!(diagnostics.skip_reasons().iter().any(|(id, reason)| {
+            id.as_ref() == "YAHOO" && matches!(reason, SkipReason::AssignedToCustomProvider)
+        }));
+        assert!(custom.call_count.load(Ordering::SeqCst) > 0);
+        assert_eq!(counts.latest.load(Ordering::SeqCst), 0);
+        assert_eq!(counts.historical.load(Ordering::SeqCst), 0);
+        assert_eq!(counts.splits.load(Ordering::SeqCst), 0);
+        assert_eq!(counts.dividends.load(Ordering::SeqCst), 0);
+        assert_eq!(counts.profile.load(Ordering::SeqCst), 0);
+    }
+
+    #[tokio::test]
+    async fn stale_custom_code_does_not_restrict_another_preferred_provider() {
+        let yahoo = Arc::new(MockProvider::new("YAHOO", 1, false));
+        let registry = ProviderRegistry::new(vec![yahoo.clone()], Arc::new(MockResolver));
+        let context = equity_context(Some("YAHOO"), Some("private-nav"));
+
+        assert!(registry.fetch_latest_quote(&context).await.is_ok());
+        assert_eq!(yahoo.call_count.load(Ordering::SeqCst), 1);
+    }
+
+    #[tokio::test]
+    async fn diagnostics_report_the_most_preferred_providers_failure() {
+        let preferred = Arc::new(MockProvider::new("PREFERRED", 1, true));
+        let fallback = Arc::new(MockProvider::new("FALLBACK", 10, true));
+        let registry = ProviderRegistry::new(
+            vec![fallback.clone(), preferred.clone()],
+            Arc::new(MockResolver),
+        );
+        let now = Utc::now();
+
+        let (result, diagnostics) = registry
+            .fetch_quotes_with_diagnostics(&equity_context(None, None), now, now)
+            .await;
+
+        match result {
+            Err(MarketDataError::ProviderError { provider, .. }) => {
+                assert_eq!(provider, "PREFERRED")
+            }
+            other => panic!("expected the preferred provider's error, got {other:?}"),
+        }
+        assert_eq!(diagnostics.error_provider.as_deref(), Some("PREFERRED"));
+        assert_eq!(fallback.call_count.load(Ordering::SeqCst), 1);
+    }
+
+    #[tokio::test]
+    async fn unknown_dotted_suffix_without_mic_never_reaches_a_provider() {
+        let counts = Arc::new(OperationCounts::default());
+        let provider: Arc<dyn MarketDataProvider> = Arc::new(AllOperationsProvider {
+            id: "BOERSE_FRANKFURT",
+            counts: Arc::clone(&counts),
+        });
+        let registry = ProviderRegistry::new(vec![provider], Arc::new(ResolverChain::new()));
+        let now = Utc::now();
+
+        for ticker in ["ABC.ZZ", "AAPL"] {
+            let context = QuoteContext {
+                instrument: InstrumentId::Equity {
+                    ticker: Arc::from(ticker),
+                    mic: None,
+                },
+                identifiers: Default::default(),
+                overrides: None,
+                currency_hint: None,
+                preferred_provider: None,
+                bond_metadata: None,
+                custom_provider_code: None,
+            };
+
+            assert!(registry.fetch_latest_quote(&context).await.is_err());
+            assert!(registry.fetch_quotes(&context, now, now).await.is_err());
+            assert!(registry
+                .fetch_quotes_for_reset(&context, now, now)
+                .await
+                .is_err());
+            assert!(registry.fetch_splits(&context, now, now).await.is_empty());
+            assert!(registry.fetch_dividends(&context, now, now).await.is_err());
+            assert!(registry.get_profile(&context).await.is_err());
+            assert!(registry
+                .fetch_latest_quote_with_diagnostics(&context)
+                .await
+                .0
+                .is_err());
+            assert!(registry
+                .fetch_quotes_with_diagnostics(&context, now, now)
+                .await
+                .0
+                .is_err());
+        }
+
+        assert_eq!(counts.latest.load(Ordering::SeqCst), 0);
+        assert_eq!(counts.historical.load(Ordering::SeqCst), 0);
+        assert_eq!(counts.splits.load(Ordering::SeqCst), 0);
+        assert_eq!(counts.dividends.load(Ordering::SeqCst), 0);
+        assert_eq!(counts.profile.load(Ordering::SeqCst), 0);
+    }
+
+    #[tokio::test]
+    async fn ambiguous_yahoo_suffix_without_mic_never_reaches_quote_provider() {
+        let counts = Arc::new(OperationCounts::default());
+        let provider: Arc<dyn MarketDataProvider> = Arc::new(AllOperationsProvider {
+            id: "YAHOO",
+            counts: Arc::clone(&counts),
+        });
+        let registry = ProviderRegistry::new(vec![provider], Arc::new(ResolverChain::new()));
+        let context = QuoteContext {
+            instrument: InstrumentId::Equity {
+                ticker: Arc::from("FOO.AE"),
+                mic: None,
+            },
+            identifiers: Default::default(),
+            overrides: None,
+            currency_hint: None,
+            preferred_provider: None,
+            bond_metadata: None,
+            custom_provider_code: None,
+        };
+
+        assert!(registry.fetch_latest_quote(&context).await.is_err());
+        assert_eq!(counts.latest.load(Ordering::SeqCst), 0);
+    }
+
+    #[tokio::test]
+    async fn verified_us_bare_rules_reach_supported_quote_providers() {
+        for provider_id in ["FINNHUB", "MARKETDATA_APP"] {
+            let provider = Arc::new(MockProvider::new(provider_id, 1, false));
+            let providers: Vec<Arc<dyn MarketDataProvider>> = vec![provider.clone()];
+            let registry = ProviderRegistry::new(providers, Arc::new(ResolverChain::new()));
+            let context = QuoteContext {
+                instrument: InstrumentId::Equity {
+                    ticker: Arc::from("AAPL"),
+                    mic: Some(Cow::Borrowed("XNAS")),
+                },
+                identifiers: Default::default(),
+                overrides: None,
+                currency_hint: Some(Cow::Borrowed("USD")),
+                preferred_provider: None,
+                bond_metadata: None,
+                custom_provider_code: None,
+            };
+
+            registry.fetch_latest_quote(&context).await.unwrap();
+            assert_eq!(
+                provider.call_count.load(Ordering::SeqCst),
+                1,
+                "{provider_id}"
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn enabled_amfi_only_prices_funds_that_chose_it() {
+        let amfi = Arc::new(MockProvider::new("AMFI", 1, false));
+        let yahoo = Arc::new(MockProvider::new("YAHOO", 5, false));
+        let providers: Vec<Arc<dyn MarketDataProvider>> = vec![amfi.clone(), yahoo.clone()];
+        let registry = ProviderRegistry::new(providers, Arc::new(ResolverChain::new()));
+        let mut fund = QuoteContext {
+            instrument: InstrumentId::Equity {
+                ticker: Arc::from("0P0000YWL1"),
+                mic: Some(Cow::Borrowed("XBOM")),
+            },
+            identifiers: Default::default(),
+            overrides: None,
+            currency_hint: Some(Cow::Borrowed("INR")),
+            preferred_provider: None,
+            bond_metadata: None,
+            custom_provider_code: None,
+        };
+        fund.identifiers.isin = Some(Cow::Borrowed("INF879O01027"));
+        let now = Utc::now();
+
+        // AMFI ranks first, but an INR fund with an INF ISIN didn't choose it.
+        registry.fetch_quotes(&fund, now, now).await.unwrap();
+        registry.fetch_latest_quote(&fund).await.unwrap();
+        assert_eq!(amfi.call_count.load(Ordering::SeqCst), 0);
+        assert_eq!(yahoo.call_count.load(Ordering::SeqCst), 2);
+
+        fund.preferred_provider = Some(Cow::Borrowed("AMFI"));
+        registry.fetch_quotes(&fund, now, now).await.unwrap();
+        registry.fetch_latest_quote(&fund).await.unwrap();
+        assert_eq!(amfi.call_count.load(Ordering::SeqCst), 2);
+        assert_eq!(yahoo.call_count.load(Ordering::SeqCst), 2);
     }
 
     struct EmptyHistoricalProvider {
@@ -1946,12 +2591,13 @@ mod tests {
         );
     }
 
-    /// The measured P10C case, end to end: an unknown MIC resolves to the bare
-    /// ticker, the provider answers for a US listing, and the registry must
-    /// throw that answer away instead of handing it to the classifier.
+    /// An unknown venue must not be sent to a profile provider because a bare
+    /// ticker can identify a different listing.
     #[tokio::test]
-    async fn test_get_profile_discards_an_unconfirmed_fallback_match() {
-        struct WrongListingProvider;
+    async fn test_get_profile_skips_an_unconfirmed_fallback() {
+        struct WrongListingProvider {
+            calls: Arc<AtomicUsize>,
+        }
 
         #[async_trait::async_trait]
         impl MarketDataProvider for WrongListingProvider {
@@ -1998,12 +2644,8 @@ mod tests {
             }
 
             async fn get_profile(&self, _: &str) -> Result<AssetProfile, MarketDataError> {
-                Ok(AssetProfile {
-                    name: Some("First Equities Corp".to_string()),
-                    quote_type: Some("MUTUALFUND".to_string()),
-                    currency: Some("USD".to_string()),
-                    ..Default::default()
-                })
+                self.calls.fetch_add(1, Ordering::SeqCst);
+                unreachable!("unverified resolutions must not reach the provider")
             }
         }
 
@@ -2032,7 +2674,10 @@ mod tests {
             }
         }
 
-        let providers: Vec<Arc<dyn MarketDataProvider>> = vec![Arc::new(WrongListingProvider)];
+        let calls = Arc::new(AtomicUsize::new(0));
+        let providers: Vec<Arc<dyn MarketDataProvider>> = vec![Arc::new(WrongListingProvider {
+            calls: Arc::clone(&calls),
+        })];
         let registry = ProviderRegistry::new(providers, Arc::new(FallbackResolver));
 
         let context = QuoteContext {
@@ -2050,10 +2695,8 @@ mod tests {
 
         let error = registry.get_profile(&context).await.unwrap_err();
 
-        assert!(
-            matches!(error, MarketDataError::ValidationFailed { .. }),
-            "expected a validation failure, got {error:?}"
-        );
+        assert!(matches!(error, MarketDataError::SymbolNotFound(_)));
+        assert_eq!(calls.load(Ordering::SeqCst), 0);
     }
     struct ResetProvider {
         base: MockProvider,
@@ -2268,5 +2911,413 @@ mod tests {
                 "timestamp {timestamp}"
             );
         }
+    }
+
+    /// A free-text search provider, or one that looks up only ISIN-shaped
+    /// queries (starting with "INF") as its own identifiers.
+    struct SearchProvider {
+        id: &'static str,
+        priority: u8,
+        identifier_lookup: bool,
+        coverage: Coverage,
+        delay: Duration,
+        results: Vec<SearchResult>,
+        fails: bool,
+        times_out: bool,
+        searches: AtomicUsize,
+    }
+
+    impl SearchProvider {
+        fn new(id: &'static str, priority: u8, identifier_lookup: bool, symbols: &[&str]) -> Self {
+            Self {
+                id,
+                priority,
+                identifier_lookup,
+                coverage: Coverage::global_best_effort(),
+                delay: Duration::ZERO,
+                results: symbols
+                    .iter()
+                    .map(|symbol| {
+                        let result = SearchResult::new(*symbol, *symbol, "", "MUTUALFUND")
+                            .with_data_source(id);
+                        // Free-text results come from an exchange, as Yahoo's do.
+                        if identifier_lookup {
+                            result
+                        } else {
+                            result.with_exchange_mic("XBOM")
+                        }
+                    })
+                    .collect(),
+                fails: false,
+                times_out: false,
+                searches: AtomicUsize::new(0),
+            }
+        }
+
+        fn failing(mut self) -> Self {
+            self.fails = true;
+            self
+        }
+
+        fn searches(&self) -> usize {
+            self.searches.load(Ordering::SeqCst)
+        }
+    }
+
+    #[async_trait::async_trait]
+    impl MarketDataProvider for SearchProvider {
+        fn id(&self) -> &'static str {
+            self.id
+        }
+
+        fn priority(&self) -> u8 {
+            self.priority
+        }
+
+        fn capabilities(&self) -> ProviderCapabilities {
+            ProviderCapabilities {
+                instrument_kinds: &[InstrumentKind::Equity],
+                coverage: self.coverage,
+                supports_latest: true,
+                supports_historical: true,
+                supports_search: !self.identifier_lookup,
+                supports_profile: false,
+                supports_dividends: false,
+            }
+        }
+
+        fn rate_limit(&self) -> RateLimit {
+            // One request a minute: a call that took a token would wait.
+            RateLimit {
+                requests_per_minute: 1,
+                max_concurrency: 1,
+                min_delay: Duration::ZERO,
+            }
+        }
+
+        fn looks_up_identifier(&self, query: &str) -> bool {
+            self.identifier_lookup && query.starts_with("INF")
+        }
+
+        async fn search(&self, _query: &str) -> Result<Vec<SearchResult>, MarketDataError> {
+            self.searches.fetch_add(1, Ordering::SeqCst);
+            tokio::time::sleep(self.delay).await;
+            if self.times_out {
+                return Err(MarketDataError::Timeout {
+                    provider: self.id.to_string(),
+                });
+            }
+            if self.fails {
+                return Err(MarketDataError::ProviderError {
+                    provider: self.id.to_string(),
+                    message: "Mock failure".to_string(),
+                });
+            }
+            Ok(self.results.clone())
+        }
+
+        async fn get_latest_quote(
+            &self,
+            _context: &QuoteContext,
+            _instrument: ProviderInstrument,
+        ) -> Result<Quote, MarketDataError> {
+            Err(MarketDataError::NoDataForRange)
+        }
+
+        async fn get_historical_quotes(
+            &self,
+            _context: &QuoteContext,
+            _instrument: ProviderInstrument,
+            _start: DateTime<Utc>,
+            _end: DateTime<Utc>,
+        ) -> Result<Vec<Quote>, MarketDataError> {
+            Err(MarketDataError::NoDataForRange)
+        }
+    }
+
+    fn symbols(results: &[SearchResult]) -> Vec<&str> {
+        results
+            .iter()
+            .map(|result| result.symbol.as_str())
+            .collect()
+    }
+
+    #[tokio::test]
+    async fn search_puts_identifier_lookups_before_listed_results() {
+        let yahoo = Arc::new(SearchProvider::new("YAHOO", 1, false, &["0P0000YWL1.BO"]));
+        let amfi = Arc::new(SearchProvider::new("AMFI", 15, true, &["122639"]));
+        let providers: Vec<Arc<dyn MarketDataProvider>> = vec![yahoo.clone(), amfi.clone()];
+        let registry = ProviderRegistry::new(providers, Arc::new(MockResolver));
+
+        let results = registry.search("INF879O01027").await.unwrap();
+
+        // Yahoo's result has an exchange, which used to end the search.
+        assert_eq!(symbols(&results), vec!["122639", "0P0000YWL1.BO"]);
+        assert_eq!(results[0].data_source.as_deref(), Some("AMFI"));
+        assert_eq!((yahoo.searches(), amfi.searches()), (1, 1));
+    }
+
+    #[tokio::test]
+    async fn search_does_not_call_lookups_for_other_queries() {
+        let yahoo = Arc::new(SearchProvider::new("YAHOO", 1, false, &["0P0000YWL1.BO"]));
+        let amfi = Arc::new(SearchProvider::new("AMFI", 15, true, &["122639"]));
+        let providers: Vec<Arc<dyn MarketDataProvider>> = vec![yahoo.clone(), amfi.clone()];
+        let registry = ProviderRegistry::new(providers, Arc::new(MockResolver));
+
+        let results = registry.search("Parag Parikh").await.unwrap();
+
+        assert_eq!(symbols(&results), vec!["0P0000YWL1.BO"]);
+        // Not a search provider either, so free text never reaches it.
+        assert_eq!(amfi.searches(), 0);
+    }
+
+    #[tokio::test]
+    async fn search_returns_lookups_when_search_providers_find_nothing() {
+        let empty = Arc::new(SearchProvider::new("YAHOO", 1, false, &[]));
+        let amfi = Arc::new(SearchProvider::new("AMFI", 15, true, &["142916", "143451"]));
+        let providers: Vec<Arc<dyn MarketDataProvider>> = vec![empty, amfi];
+        let registry = ProviderRegistry::new(providers, Arc::new(MockResolver));
+        assert_eq!(
+            symbols(&registry.search("INF204KB1XN0").await.unwrap()),
+            vec!["142916", "143451"]
+        );
+
+        // Without any search provider, a lookup still answers.
+        let amfi = Arc::new(SearchProvider::new("AMFI", 15, true, &["122639"]));
+        let registry = ProviderRegistry::new(vec![amfi], Arc::new(MockResolver));
+        assert_eq!(
+            symbols(&registry.search("INF879O01027").await.unwrap()),
+            vec!["122639"]
+        );
+    }
+
+    #[tokio::test]
+    async fn search_survives_a_failed_lookup() {
+        let yahoo = Arc::new(SearchProvider::new("YAHOO", 1, false, &["0P0000YWL1.BO"]));
+        let amfi = Arc::new(SearchProvider::new("AMFI", 15, true, &[]).failing());
+        let providers: Vec<Arc<dyn MarketDataProvider>> = vec![yahoo, amfi.clone()];
+        let registry = ProviderRegistry::new(providers, Arc::new(MockResolver));
+
+        let results = registry.search("INF879O01027").await.unwrap();
+
+        assert_eq!(symbols(&results), vec!["0P0000YWL1.BO"]);
+        assert_eq!(amfi.searches(), 1);
+
+        // With nothing found anywhere, the search still fails.
+        let empty = Arc::new(SearchProvider::new("YAHOO", 1, false, &[]));
+        let amfi = Arc::new(SearchProvider::new("AMFI", 15, true, &[]).failing());
+        let providers: Vec<Arc<dyn MarketDataProvider>> = vec![empty, amfi];
+        let registry = ProviderRegistry::new(providers, Arc::new(MockResolver));
+        assert!(registry.search("INF879O01027").await.is_err());
+    }
+
+    #[tokio::test]
+    async fn search_lookup_circuit_breaks_only_for_penalizing_errors() {
+        for times_out in [false, true] {
+            let yahoo = Arc::new(SearchProvider::new("YAHOO", 1, false, &["0P0000YWL1.BO"]));
+            let mut amfi = SearchProvider::new("AMFI", 15, true, &[]).failing();
+            amfi.times_out = times_out;
+            let amfi = Arc::new(amfi);
+            let providers: Vec<Arc<dyn MarketDataProvider>> = vec![yahoo, amfi.clone()];
+            let registry = ProviderRegistry::new(providers, Arc::new(MockResolver));
+            // Keep Yahoo's token waits out of this circuit-breaker check.
+            registry.rate_limiter.configure(
+                &Cow::Borrowed("YAHOO"),
+                RateLimitConfig {
+                    burst_capacity: 6.0,
+                    ..Default::default()
+                },
+            );
+
+            for attempt in 1..=6 {
+                let results = registry.search("INF879O01027").await.unwrap();
+                assert_eq!(symbols(&results), vec!["0P0000YWL1.BO"]);
+                let expected_calls = if times_out { attempt.min(5) } else { attempt };
+                assert_eq!(amfi.searches(), expected_calls);
+                assert_eq!(
+                    registry.is_circuit_open(&Cow::Borrowed("AMFI")),
+                    times_out && attempt >= 5
+                );
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn lookups_take_no_rate_limit_token() {
+        // An import searches row after row; a lookup waiting for its provider's
+        // one token a minute would stall it.
+        let amfi = Arc::new(SearchProvider::new("AMFI", 15, true, &["122639"]));
+        let registry = ProviderRegistry::new(vec![amfi.clone()], Arc::new(MockResolver));
+
+        let searches = async {
+            for _ in 0..5 {
+                registry.search("INF879O01027").await.unwrap();
+            }
+        };
+        tokio::time::timeout(Duration::from_secs(5), searches)
+            .await
+            .expect("lookups should not wait for rate-limit tokens");
+        assert_eq!(amfi.searches(), 5);
+    }
+    fn moex_search_provider(symbols: &[&str]) -> SearchProvider {
+        let mut provider = SearchProvider::new("MOEX", 14, false, symbols);
+        provider.coverage = Coverage::moex();
+        for result in &mut provider.results {
+            result.exchange_mic = Some("MISX".to_string());
+        }
+        provider
+    }
+
+    #[tokio::test]
+    async fn search_merges_scoped_listings_without_changing_general_fallback_order() {
+        let yahoo = Arc::new(SearchProvider::new("YAHOO", 1, false, &["HYDR"]));
+        let fallback = Arc::new(SearchProvider::new("FALLBACK", 2, false, &["OTHER"]));
+        let moex = Arc::new(moex_search_provider(&["HYDR"]));
+        let registry = ProviderRegistry::new(
+            vec![moex.clone(), fallback.clone(), yahoo],
+            Arc::new(MockResolver),
+        );
+        let results = registry.search("HYDR").await.unwrap();
+        assert_eq!(results.len(), 2);
+        assert_eq!(results[0].data_source.as_deref(), Some("YAHOO"));
+        assert_eq!(results[1].exchange_mic.as_deref(), Some("MISX"));
+        assert_eq!(fallback.searches(), 0);
+        assert_eq!(moex.searches(), 1);
+    }
+
+    #[tokio::test]
+    async fn scoped_search_failure_is_isolated_and_scoped_only_search_works() {
+        let yahoo = Arc::new(SearchProvider::new("YAHOO", 1, false, &["AAPL"]));
+        let moex = Arc::new(moex_search_provider(&[]).failing());
+        let registry = ProviderRegistry::new(vec![yahoo, moex], Arc::new(MockResolver));
+        assert_eq!(
+            symbols(&registry.search("AAPL").await.unwrap()),
+            vec!["AAPL"]
+        );
+        let moex = Arc::new(moex_search_provider(&["AFLT"]));
+        let registry = ProviderRegistry::new(vec![moex], Arc::new(MockResolver));
+        assert_eq!(
+            symbols(&registry.search("AFLT").await.unwrap()),
+            vec!["AFLT"]
+        );
+    }
+
+    #[tokio::test]
+    async fn slow_scoped_search_backs_off_without_penalizing_quote_sync() {
+        let yahoo = Arc::new(SearchProvider::new("YAHOO", 1, false, &["AAPL"]));
+        let mut moex = moex_search_provider(&[]);
+        moex.delay = EXCHANGE_SEARCH_TIMEOUT * 10;
+        let moex = Arc::new(moex);
+        let mut registry = ProviderRegistry::new(vec![yahoo, moex.clone()], Arc::new(MockResolver));
+        registry.circuit_breaker =
+            CircuitBreaker::with_config(crate::registry::circuit_breaker::CircuitBreakerConfig {
+                failure_threshold: 1,
+                ..Default::default()
+            });
+        registry.rate_limiter.configure(
+            &Cow::Borrowed("YAHOO"),
+            RateLimitConfig {
+                requests_per_minute: 6000,
+                burst_capacity: 2.0,
+            },
+        );
+        let results = tokio::time::timeout(
+            EXCHANGE_SEARCH_TIMEOUT + Duration::from_secs(1),
+            registry.search("AAPL"),
+        )
+        .await
+        .expect("slow supplementary provider must not hold the general result for its HTTP timeout")
+        .unwrap();
+        assert_eq!(symbols(&results), vec!["AAPL"]);
+        assert_eq!(moex.searches(), 1);
+        assert!(!registry.is_circuit_open(&Cow::Borrowed("MOEX")));
+        assert!(registry.is_circuit_open(&search_circuit_id("MOEX")));
+        let results = tokio::time::timeout(Duration::from_millis(100), registry.search("AAPL"))
+            .await
+            .expect("an open search circuit must return the healthy general result immediately")
+            .unwrap();
+        assert_eq!(symbols(&results), vec!["AAPL"]);
+        assert_eq!(moex.searches(), 1);
+    }
+
+    #[tokio::test]
+    async fn scoped_search_waits_for_tokens_without_dropping_sequential_import_candidates() {
+        let moex = Arc::new(moex_search_provider(&["HYDR"]));
+        let registry = ProviderRegistry::new(vec![moex.clone()], Arc::new(MockResolver));
+        registry.rate_limiter.configure(
+            &Cow::Borrowed("MOEX"),
+            RateLimitConfig {
+                requests_per_minute: 6000,
+                burst_capacity: 1.0,
+            },
+        );
+        for _ in 0..5 {
+            assert_eq!(
+                symbols(&registry.search("HYDR").await.unwrap()),
+                vec!["HYDR"]
+            );
+        }
+        assert_eq!(moex.searches(), 5);
+    }
+
+    #[tokio::test]
+    async fn scoped_search_token_wait_timeout_does_not_open_search_circuit() {
+        let moex = Arc::new(moex_search_provider(&["HYDR"]));
+        let mut registry = ProviderRegistry::new(vec![moex.clone()], Arc::new(MockResolver));
+        registry.circuit_breaker =
+            CircuitBreaker::with_config(crate::registry::circuit_breaker::CircuitBreakerConfig {
+                failure_threshold: 1,
+                ..Default::default()
+            });
+        registry.rate_limiter.configure(
+            &Cow::Borrowed("MOEX"),
+            RateLimitConfig {
+                requests_per_minute: 1,
+                burst_capacity: 1.0,
+            },
+        );
+        assert!(registry.rate_limiter.try_acquire(&Cow::Borrowed("MOEX")));
+
+        assert!(matches!(
+            registry.search("HYDR").await,
+            Err(MarketDataError::Timeout { .. })
+        ));
+        assert_eq!(moex.searches(), 0);
+        assert!(!registry.is_circuit_open(&search_circuit_id("MOEX")));
+        assert!(!registry.is_circuit_open(&Cow::Borrowed("MOEX")));
+    }
+
+    #[tokio::test]
+    async fn scoped_search_token_wait_and_request_share_one_timeout_budget() {
+        let mut moex = moex_search_provider(&[]);
+        moex.delay = EXCHANGE_SEARCH_TIMEOUT * 10;
+        let moex = Arc::new(moex);
+        let mut registry = ProviderRegistry::new(vec![moex.clone()], Arc::new(MockResolver));
+        registry.circuit_breaker =
+            CircuitBreaker::with_config(crate::registry::circuit_breaker::CircuitBreakerConfig {
+                failure_threshold: 1,
+                ..Default::default()
+            });
+        registry.rate_limiter.configure(
+            &Cow::Borrowed("MOEX"),
+            RateLimitConfig {
+                requests_per_minute: 60,
+                burst_capacity: 1.0,
+            },
+        );
+        assert!(registry.rate_limiter.try_acquire(&Cow::Borrowed("MOEX")));
+
+        // Acquiring the next token takes one second. A fresh two-second
+        // request timeout would exceed this bound; the shared budget does not.
+        let result = tokio::time::timeout(
+            EXCHANGE_SEARCH_TIMEOUT + Duration::from_millis(500),
+            registry.search("HYDR"),
+        )
+        .await
+        .expect("token waiting must not extend the overall search budget");
+        assert!(matches!(result, Err(MarketDataError::Timeout { .. })));
+        assert_eq!(moex.searches(), 1);
+        assert!(registry.is_circuit_open(&search_circuit_id("MOEX")));
+        assert!(!registry.is_circuit_open(&Cow::Borrowed("MOEX")));
     }
 }

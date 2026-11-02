@@ -1,5 +1,6 @@
 import { useSettings } from "@/hooks/use-settings";
-import { ACTIVITY_SUBTYPES, ActivityType } from "@/lib/constants";
+import { ACTIVITY_SUBTYPES, ActivityType, DECIMAL_PRECISION } from "@/lib/constants";
+import { cryptoMoneyDecimals } from "@/lib/currency-decimals";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { Button } from "@wealthfolio/ui/components/ui/button";
 import { Icons } from "@wealthfolio/ui/components/ui/icons";
@@ -24,6 +25,9 @@ import {
   type AccountSelectOption,
 } from "./fields";
 import { calculateIncomeFinalAmount } from "@/lib/activity-final-amount";
+import { invalidTypeError, requiredError } from "@/lib/zod-errors";
+import { assetMetadataSchema } from "./schemas";
+import { Spinner } from "@wealthfolio/ui";
 
 // Non-UI sentinel for the "cash" income mode (not a DB value; internal only).
 const INCOME_MODE_CASH = "CASH";
@@ -46,22 +50,21 @@ export const createDividendFormSchema = (t?: TFunction) =>
       existingAssetId: z.string().nullable().optional(),
       exchangeMic: z.string().nullable().optional(),
       activityDate: z.date({
-        required_error: msg(t, "activity:form.err_select_date", "Please select a date."),
+        error: requiredError(msg(t, "activity:form.err_select_date", "Please select a date.")),
       }),
       amount: z.coerce
         .number({
-          required_error: msg(t, "activity:form.err_enter_amount", "Please enter an amount."),
-          invalid_type_error: msg(t, "activity:form.err_amount_number", "Amount must be a number."),
+          error: invalidTypeError(
+            msg(t, "activity:form.err_amount_number", "Amount must be a number."),
+          ),
         })
         .min(0, {
           message: msg(t, "activity:form.err_amount_non_negative", "Amount must be non-negative."),
         }),
       tax: z.coerce
         .number({
-          invalid_type_error: msg(
-            t,
-            "activity:form.err_withholding_tax_number",
-            "Withholding tax must be a number.",
+          error: invalidTypeError(
+            msg(t, "activity:form.err_withholding_tax_number", "Withholding tax must be a number."),
           ),
         })
         .min(0, {
@@ -74,15 +77,15 @@ export const createDividendFormSchema = (t?: TFunction) =>
         .default(0),
       comment: z.string().optional().nullable(),
       // Advanced options
-      currency: z.string().min(1, {
-        message: msg(t, "activity:form.err_currency_required", "Currency is required."),
-      }),
+      currency: z
+        .string({ error: msg(t, "activity:form.err_currency_required", "Currency is required.") })
+        .min(1, {
+          message: msg(t, "activity:form.err_currency_required", "Currency is required."),
+        }),
       fxRate: z.coerce
         .number({
-          invalid_type_error: msg(
-            t,
-            "activity:form.err_fxrate_number",
-            "FX Rate must be a number.",
+          error: invalidTypeError(
+            msg(t, "activity:form.err_fxrate_number", "FX Rate must be a number."),
           ),
         })
         .positive({
@@ -96,24 +99,25 @@ export const createDividendFormSchema = (t?: TFunction) =>
       // and a top-level .positive() would reject editing them.
       unitPrice: z.coerce
         .number({
-          invalid_type_error: msg(
-            t,
-            "activity:form.err_fmv_number",
-            "FMV per unit must be a number.",
+          error: invalidTypeError(
+            msg(t, "activity:form.err_fmv_number", "FMV per unit must be a number."),
           ),
         })
         .optional(),
       quantity: z.coerce
         .number({
-          invalid_type_error: msg(
-            t,
-            "activity:form.err_received_quantity_number",
-            "Received quantity must be a number.",
+          error: invalidTypeError(
+            msg(
+              t,
+              "activity:form.err_received_quantity_number",
+              "Received quantity must be a number.",
+            ),
           ),
         })
         .optional(),
       symbolQuoteCcy: z.string().nullable().optional(),
       symbolInstrumentType: z.string().nullable().optional(),
+      assetMetadata: assetMetadataSchema,
     })
     .superRefine((data, ctx) => {
       const isAssetBacked =
@@ -227,6 +231,7 @@ export function DividendForm({
   const { getFieldState, getValues, setValue } = form;
   const accountId = watch("accountId");
   const currency = watch("currency");
+  const symbolInstrumentType = watch("symbolInstrumentType");
   const subtype = watch("subtype");
   const quantity = watch("quantity");
   const unitPrice = watch("unitPrice");
@@ -240,11 +245,12 @@ export function DividendForm({
     const q = Number(quantity);
     const p = Number(unitPrice);
     if (amountWasEdited.current) return;
-    const computedAmount = calculateIncomeFinalAmount(
+    const computedAmount = calculateIncomeFinalAmount({
       quantity,
       unitPrice,
-      getValues("symbolInstrumentType"),
-    );
+      instrumentType: symbolInstrumentType,
+      currency,
+    });
     if (computedAmount === undefined) return;
     const currentAmount = Number(getValues("amount"));
     const quantityIsDirty = getFieldState("quantity").isDirty;
@@ -261,14 +267,23 @@ export function DividendForm({
         });
       }
     }
-  }, [getFieldState, getValues, isAssetBacked, quantity, setValue, unitPrice]);
+  }, [
+    currency,
+    getFieldState,
+    getValues,
+    isAssetBacked,
+    quantity,
+    setValue,
+    symbolInstrumentType,
+    unitPrice,
+  ]);
 
   const handleDividendModeChange = (value: string) => {
     setValue("subtype", value === INCOME_MODE_CASH ? null : value, {
       shouldDirty: true,
       shouldValidate: true,
     });
-    if (value === INCOME_MODE_CASH) {
+    if (value === INCOME_MODE_CASH || value === ACTIVITY_SUBTYPES.RETURN_OF_CAPITAL) {
       setValue("quantity", undefined, { shouldDirty: true, shouldValidate: false });
       setValue("unitPrice", undefined, { shouldDirty: true, shouldValidate: false });
     }
@@ -280,6 +295,7 @@ export function DividendForm({
     [accounts, accountId],
   );
   const accountCurrency = selectedAccount?.currency;
+  const moneyDecimals = cryptoMoneyDecimals(selectedAccount?.accountType, symbolInstrumentType);
 
   const handleSubmit = createValidatedSubmit(form, async (data) => {
     await onSubmit(data);
@@ -299,7 +315,10 @@ export function DividendForm({
             quoteCcyName="symbolQuoteCcy"
             instrumentTypeName="symbolInstrumentType"
             existingAssetIdName="existingAssetId"
+            assetMetadataName="assetMetadata"
           />
+          <input type="hidden" {...form.register("assetMetadata.providerId")} />
+          <input type="hidden" {...form.register("assetMetadata.providerSymbol")} />
           <input type="hidden" {...form.register("symbolQuoteCcy")} />
           <input type="hidden" {...form.register("symbolInstrumentType")} />
           <input type="hidden" {...form.register("existingAssetId")} />
@@ -340,6 +359,18 @@ export function DividendForm({
                   {t("activity:form.type_in_kind")}
                 </Label>
               </div>
+              <div className="flex items-center space-x-2">
+                <RadioGroupItem
+                  value={ACTIVITY_SUBTYPES.RETURN_OF_CAPITAL}
+                  id="dividend-type-return-of-capital"
+                />
+                <Label
+                  htmlFor="dividend-type-return-of-capital"
+                  className="cursor-pointer text-sm font-normal"
+                >
+                  {t("activity:form.type_return_of_capital")}
+                </Label>
+              </div>
             </RadioGroup>
           </div>
 
@@ -363,7 +394,7 @@ export function DividendForm({
                     : t("activity:form.label_fmv_per_unit")
                 }
                 labelHelpText={subtype === ACTIVITY_SUBTYPES.DRIP ? undefined : fmvHelpText}
-                maxDecimalPlaces={4}
+                maxDecimalPlaces={DECIMAL_PRECISION}
                 currency={currency}
               />
             </div>
@@ -382,11 +413,13 @@ export function DividendForm({
               onValueChange={() => {
                 amountWasEdited.current = true;
               }}
+              maxDecimalPlaces={moneyDecimals}
             />
             <AmountInput
               name="tax"
               label={t("activity:form.label_withholding_tax")}
               currency={currency}
+              maxDecimalPlaces={moneyDecimals}
             />
           </div>
         </FormSection>
@@ -418,11 +451,11 @@ export function DividendForm({
             </Button>
           )}
           <Button type="submit" disabled={isLoading}>
-            {isLoading && <Icons.Spinner className="mr-2 h-4 w-4 animate-spin" />}
+            {isLoading && <Spinner className="me-2 h-4 w-4" />}
             {isEditing ? (
-              <Icons.Check className="mr-2 h-4 w-4" />
+              <Icons.Check className="me-2 h-4 w-4" />
             ) : (
-              <Icons.Plus className="mr-2 h-4 w-4" />
+              <Icons.Plus className="me-2 h-4 w-4" />
             )}
             {isEditing ? t("activity:form.button_update") : t("activity:form.button_add_dividend")}
           </Button>

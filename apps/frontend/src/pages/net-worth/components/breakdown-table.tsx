@@ -15,6 +15,7 @@ import {
   CATEGORY_CSS_COLORS,
   deriveChange,
   formatChangePercent,
+  hadBalanceBefore,
   seriesFor,
   type Change,
   type ParsedHistoryPoint,
@@ -30,20 +31,16 @@ const SHARED_GRID =
 const ROW_GRID = `${SHARED_GRID} items-baseline gap-y-1`;
 const NAME_CELL = "col-span-full min-w-0 @min-[28rem]/breakdown:col-span-1";
 const AMOUNT_CELL =
-  "min-w-0 text-right text-xs tabular-nums [overflow-wrap:anywhere] @min-[40rem]/breakdown:text-sm";
+  "min-w-0 text-end text-xs tabular-nums [overflow-wrap:anywhere] @min-[40rem]/breakdown:text-sm";
 
 function ChangeCell({ change, currency }: { change: Change; currency: string }) {
   const formatting = useNumberFormatting();
   const { t } = useTranslation();
   const isZero = Math.abs(change.amount) < 0.005;
-  const color = isZero
-    ? "text-muted-foreground/60"
-    : change.amount > 0
-      ? "text-success"
-      : "text-destructive";
+  const color = isZero ? "text-muted-foreground/60" : change.amount > 0 ? "text-gain" : "text-loss";
   const sign = isZero ? "" : change.amount > 0 ? "+" : "-";
   return (
-    <div className="@min-[48rem]/breakdown:flex-row @min-[48rem]/breakdown:flex-wrap @min-[48rem]/breakdown:items-baseline @min-[48rem]/breakdown:justify-end flex min-w-0 flex-col items-end gap-x-2 gap-y-0.5 text-right">
+    <div className="flex min-w-0 flex-col items-end gap-x-2 gap-y-0.5 text-end @min-[48rem]/breakdown:flex-row @min-[48rem]/breakdown:flex-wrap @min-[48rem]/breakdown:items-baseline @min-[48rem]/breakdown:justify-end">
       <span className={`${AMOUNT_CELL} ${color} inline-flex items-baseline justify-end`}>
         {sign}
         <CompactAmount className="min-w-0" value={Math.abs(change.amount)} currency={currency} />
@@ -76,8 +73,11 @@ function BreakdownRow({
   negative,
   onClick,
 }: RowProps) {
+  // The hover is a layer reaching 8px past the row on each side, so the row, its
+  // subgrid columns and its divider stay put (the layout guard keeps rows inside
+  // their parent).
   const interactive = onClick
-    ? "hover:bg-muted/40 cursor-pointer rounded-md transition-colors"
+    ? "relative isolate cursor-pointer before:absolute before:-inset-x-2 before:inset-y-0 before:-z-10 before:rounded-md before:transition-colors hover:before:bg-muted/40"
     : "";
   return (
     <div
@@ -98,11 +98,11 @@ function BreakdownRow({
     >
       <div className={`${NAME_CELL} flex items-center gap-2.5`}>
         <div className="h-2 w-2 shrink-0 rounded-full" style={{ backgroundColor: dotColor }} />
-        <span className="text-foreground @min-[40rem]/breakdown:text-sm min-w-0 text-xs [overflow-wrap:anywhere]">
+        <span className="text-foreground min-w-0 text-xs [overflow-wrap:anywhere] @min-[40rem]/breakdown:text-sm">
           {name}
         </span>
       </div>
-      <span className="text-muted-foreground/70 @min-[40rem]/breakdown:block hidden text-right text-sm tabular-nums">
+      <span className="text-muted-foreground/70 hidden text-end text-sm tabular-nums @min-[40rem]/breakdown:block">
         {percentOfSection.toFixed(1)}%
       </span>
       <span className={`text-foreground ${AMOUNT_CELL} inline-flex items-baseline justify-end`}>
@@ -144,23 +144,23 @@ export function BreakdownTable({
         title={t("insights:networth.breakdown")}
         meta={t("insights:networth.breakdown_table.change_over", { period: periodLabel })}
       >
-        <div className="grid-cols-(--breakdown-columns) @min-[28rem]/breakdown:[--breakdown-fallback-columns:repeat(3,minmax(0,1fr))] @min-[40rem]/breakdown:[--breakdown-fallback-columns:minmax(0,2fr)_4rem_minmax(0,1.5fr)_minmax(0,2fr)] supports-[grid-template-columns:subgrid]:@min-[28rem]/breakdown:[--breakdown-columns:minmax(0,1fr)_minmax(0,max-content)_minmax(0,max-content)] supports-[grid-template-columns:subgrid]:@min-[40rem]/breakdown:[--breakdown-columns:minmax(0,1fr)_max-content_minmax(0,max-content)_minmax(0,max-content)] @min-[40rem]/breakdown:gap-x-4 grid gap-x-3 [--breakdown-columns:var(--breakdown-fallback-columns)] [--breakdown-fallback-columns:repeat(2,minmax(0,1fr))]">
+        <div className="grid grid-cols-(--breakdown-columns) gap-x-3 [--breakdown-columns:var(--breakdown-fallback-columns)] [--breakdown-fallback-columns:repeat(2,minmax(0,1fr))] @min-[28rem]/breakdown:[--breakdown-fallback-columns:repeat(3,minmax(0,1fr))] supports-[grid-template-columns:subgrid]:@min-[28rem]/breakdown:[--breakdown-columns:minmax(0,1fr)_minmax(0,max-content)_minmax(0,max-content)] @min-[40rem]/breakdown:gap-x-4 @min-[40rem]/breakdown:[--breakdown-fallback-columns:minmax(0,2fr)_4rem_minmax(0,1.5fr)_minmax(0,2fr)] supports-[grid-template-columns:subgrid]:@min-[40rem]/breakdown:[--breakdown-columns:minmax(0,1fr)_max-content_minmax(0,max-content)_minmax(0,max-content)]">
           {/* Assets — collapsible */}
           <Collapsible className={SHARED_GRID} open={assetsOpen} onOpenChange={setAssetsOpen}>
-            <CollapsibleTrigger className="col-span-full flex min-w-0 flex-wrap items-baseline justify-between gap-x-3 gap-y-1 text-left">
+            <CollapsibleTrigger className="col-span-full flex min-w-0 flex-wrap items-baseline justify-between gap-x-3 gap-y-1 text-start">
               <span className="flex items-center gap-1.5 text-sm font-semibold">
                 <Icons.ChevronRight
-                  className={`text-muted-foreground h-3.5 w-3.5 transition-transform ${assetsOpen ? "rotate-90" : ""}`}
+                  className={`text-muted-foreground h-3.5 w-3.5 transition-transform ${assetsOpen ? "rotate-90" : "rtl:rotate-180"}`}
                 />
                 {t("insights:networth.breakdown_table.assets")}
               </span>
-              <span className="text-success min-w-0 text-sm font-semibold tabular-nums [overflow-wrap:anywhere]">
+              <span className="text-success min-w-0 text-sm font-semibold [overflow-wrap:anywhere] tabular-nums">
                 <CompactAmount value={data.assets.total} currency={currency} />
               </span>
             </CollapsibleTrigger>
             <CollapsibleContent className={SHARED_GRID}>
               {/* Composition — proportion of assets (the rows below are its legend) */}
-              <div className="border-border/60 col-span-full mb-1 mt-2.5 border-b pb-3">
+              <div className="border-border/60 col-span-full mt-2.5 mb-1 border-b pb-3">
                 <CompositionBar data={data} />
               </div>
 
@@ -169,13 +169,13 @@ export function BreakdownTable({
                 <span className={`${CARD_LABEL} ${NAME_CELL}`}>
                   {t("insights:networth.breakdown_table.category")}
                 </span>
-                <span className={`${CARD_LABEL} @min-[40rem]/breakdown:block hidden text-right`}>
+                <span className={`${CARD_LABEL} hidden text-end @min-[40rem]/breakdown:block`}>
                   %
                 </span>
-                <span className={`${CARD_LABEL} min-w-0 text-right [overflow-wrap:anywhere]`}>
+                <span className={`${CARD_LABEL} min-w-0 text-end [overflow-wrap:anywhere]`}>
                   {t("insights:networth.breakdown_table.value")}
                 </span>
-                <span className={`${CARD_LABEL} min-w-0 text-right [overflow-wrap:anywhere]`}>
+                <span className={`${CARD_LABEL} min-w-0 text-end [overflow-wrap:anywhere]`}>
                   {t("insights:networth.breakdown_table.delta_period", { period: periodLabel })}
                 </span>
               </div>
@@ -225,14 +225,14 @@ export function BreakdownTable({
               open={liabilitiesOpen}
               onOpenChange={setLiabilitiesOpen}
             >
-              <CollapsibleTrigger className="col-span-full flex min-w-0 flex-wrap items-baseline justify-between gap-x-3 gap-y-1 text-left">
+              <CollapsibleTrigger className="col-span-full flex min-w-0 flex-wrap items-baseline justify-between gap-x-3 gap-y-1 text-start">
                 <span className="flex items-center gap-1.5 text-sm font-semibold">
                   <Icons.ChevronRight
-                    className={`text-muted-foreground h-3.5 w-3.5 transition-transform ${liabilitiesOpen ? "rotate-90" : ""}`}
+                    className={`text-muted-foreground h-3.5 w-3.5 transition-transform ${liabilitiesOpen ? "rotate-90" : "rtl:rotate-180"}`}
                   />
                   {t("insights:networth.breakdown_table.liabilities")}
                 </span>
-                <span className="text-destructive inline-flex min-w-0 items-baseline justify-end text-sm font-semibold tabular-nums [overflow-wrap:anywhere]">
+                <span className="text-destructive inline-flex min-w-0 items-baseline justify-end text-sm font-semibold [overflow-wrap:anywhere] tabular-nums">
                   -
                   <CompactAmount
                     className="min-w-0"
@@ -258,7 +258,11 @@ export function BreakdownTable({
                             ? (item.value / data.liabilities.total) * 100
                             : 0
                         }
-                        change={deriveChange(series, true)}
+                        change={deriveChange(
+                          series,
+                          true,
+                          hadBalanceBefore(history, item.firstValueDate),
+                        )}
                         currency={currency}
                         onClick={
                           item.assetId
@@ -269,6 +273,7 @@ export function BreakdownTable({
                                   value: item.value,
                                   isLiability: true,
                                   isInvestment: false,
+                                  firstValueDate: item.firstValueDate,
                                   children: [],
                                 })
                             : undefined
@@ -292,7 +297,7 @@ export function BreakdownTable({
               </span>
               {t("insights:networth.breakdown_table.net_worth")}
             </span>
-            <span className="@min-[40rem]/breakdown:block hidden" />
+            <span className="hidden @min-[40rem]/breakdown:block" />
             <span className={`${AMOUNT_CELL} font-bold`}>
               <CompactAmount value={data.netWorth} currency={currency} />
             </span>

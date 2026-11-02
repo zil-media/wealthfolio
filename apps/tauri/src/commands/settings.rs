@@ -76,32 +76,18 @@ pub async fn update_settings(
     let timezone_changed = updated_settings.timezone != previous_timezone;
 
     if let Some(menu_visible) = settings_update.menu_bar_visible {
-        #[cfg(not(any(target_os = "android", target_os = "ios")))]
+        #[cfg(not(any(target_os = "android", target_os = "ios", target_os = "macos")))]
         {
-            if menu_visible {
-                // Create and set the menu on desktop platforms
-                match crate::menu::create_menu(&handle) {
-                    Ok(menu) => {
-                        if let Err(e) = handle.set_menu(menu) {
-                            debug!("Failed to set menu: {}", e);
-                        }
-                    }
-                    Err(e) => {
-                        debug!("Failed to create menu: {}", e);
-                    }
-                }
-            } else {
-                // Remove the menu entirely by setting it to None
-                if let Err(e) = handle.remove_menu() {
-                    debug!("Failed to remove menu: {}", e);
-                }
+            if let Err(e) = crate::menu::set_menu_visibility(&handle, menu_visible) {
+                debug!("Failed to apply menu visibility: {}", e);
             }
         }
 
-        #[cfg(any(target_os = "android", target_os = "ios"))]
+        // macOS keeps its menu installed (see `desktop::setup_menu` in lib.rs).
+        #[cfg(any(target_os = "android", target_os = "ios", target_os = "macos"))]
         {
             let _ = menu_visible;
-            debug!("Menu bar visibility toggling is not supported on mobile runtimes.");
+            debug!("Menu bar visibility toggling is not supported on macOS or mobile runtimes.");
         }
     }
 

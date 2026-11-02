@@ -11,6 +11,7 @@
 //! tool behavior — fix the migration, do not accept the snapshot.
 
 #![cfg(feature = "test-utils")]
+#![allow(clippy::unwrap_used, clippy::panic, reason = "test code")]
 
 use chrono::{DateTime, NaiveDate, Utc};
 
@@ -20,7 +21,8 @@ use std::sync::RwLock;
 use wealthfolio_agent_tools::AgentTool;
 use wealthfolio_ai::env::test_env::{
     MockAccountService, MockActivityService, MockAssetService, MockCashActivityService,
-    MockEnvironment, MockHoldingsService, MockQuoteService, MockTaxonomyService,
+    MockCategorizationRulesService, MockEnvironment, MockHealthService, MockHoldingsService,
+    MockQuoteService, MockTaxonomyService,
 };
 use wealthfolio_ai::tools::{
     GetAccounts, GetAssetAllocation, GetAssetTaxonomyAssignments, GetCashBalances, GetGoals,
@@ -38,6 +40,16 @@ use wealthfolio_core::taxonomies::{
 };
 use wealthfolio_spending::cash_activities::model::CashFlowBucket;
 use wealthfolio_spending::cash_activities::CashActivity;
+
+/// A JSON snapshot with sorted keys. Rig enables serde_json's
+/// `preserve_order`, so keys would otherwise follow insertion order.
+macro_rules! assert_sorted_json_snapshot {
+    ($value:expr) => {
+        insta::with_settings!({ sort_maps => true }, {
+            insta::assert_json_snapshot!($value);
+        })
+    };
+}
 
 fn fixture_account(id: &str, name: &str, account_type: &str, currency: &str) -> Account {
     let ts = NaiveDate::from_ymd_opt(2024, 1, 1)
@@ -112,7 +124,7 @@ macro_rules! output_test_dyn {
         #[tokio::test]
         async fn $test_name() {
             let result = call_json_dyn($tool, env(), serde_json::json!($args)).await;
-            insta::assert_json_snapshot!(result);
+            assert_sorted_json_snapshot!(result);
         }
     };
 }
@@ -123,7 +135,7 @@ macro_rules! output_test_dyn_env {
         #[tokio::test]
         async fn $test_name() {
             let result = call_json_dyn($tool, $env, serde_json::json!($args)).await;
-            insta::assert_json_snapshot!(result);
+            assert_sorted_json_snapshot!(result);
         }
     };
 }
@@ -206,6 +218,102 @@ output_test_dyn!(output_get_income, GetIncome, { "period": "ALL" });
 output_test_dyn!(output_get_income_default, GetIncome, {});
 output_test_dyn!(output_get_goals, GetGoals, {});
 output_test_dyn!(output_get_health_status, GetHealthStatus, {});
+output_test_dyn!(
+    output_get_health_status_refresh,
+    GetHealthStatus,
+    { "refresh": true }
+);
+
+/// A currency override must be a three-letter code, and a rate only applies
+/// between two currencies.
+#[tokio::test]
+async fn record_activity_rejects_a_bad_currency_and_a_same_currency_rate() {
+    let errors = |result: &serde_json::Value| -> Vec<String> {
+        result["ok"]["validation"]["errors"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|error| error["field"].as_str().unwrap().to_string())
+            .collect()
+    };
+    let deposit = |extra: serde_json::Value| {
+        let mut args = serde_json::json!({
+            "activityType": "DEPOSIT", "activityDate": "2026-01-17", "amount": 100.0
+        });
+        args.as_object_mut()
+            .unwrap()
+            .extend(extra.as_object().unwrap().clone());
+        args
+    };
+
+    let named = call_json_dyn(
+        RecordActivity,
+        single_account_env(),
+        deposit(serde_json::json!({ "currency": "us dollars" })),
+    )
+    .await;
+    assert_eq!(errors(&named), vec!["currency"], "{named}");
+    assert_eq!(named["ok"]["validation"]["isValid"], false);
+    assert_eq!(named["ok"]["draft"]["currency"], "USD", "{named}");
+
+    let same = call_json_dyn(
+        RecordActivity,
+        single_account_env(),
+        deposit(serde_json::json!({ "fxRate": 1.08 })),
+    )
+    .await;
+    assert_eq!(errors(&same), vec!["fx_rate"], "{same}");
+    assert_eq!(same["ok"]["validation"]["isValid"], false);
+}
+
+/// A refresh within a minute of the last run returns that run; an older one
+/// runs the checks again (the mock run reports INFO).
+#[tokio::test]
+async fn health_refresh_reuses_a_run_from_the_last_minute() {
+    let env_with_run_at = |checked_at: DateTime<Utc>| {
+        let mut status = wealthfolio_core::health::HealthStatus::healthy();
+        status.overall_severity = wealthfolio_core::health::Severity::Warning;
+        status.checked_at = checked_at;
+        let mut env = MockEnvironment::new();
+        env.health_service = Arc::new(MockHealthService {
+            cached_status: Some(status),
+            ..Default::default()
+        });
+        Arc::new(env)
+    };
+    let refresh = serde_json::json!({ "refresh": true });
+
+    let recent = call_json_dyn(
+        GetHealthStatus,
+        env_with_run_at(Utc::now()),
+        refresh.clone(),
+    )
+    .await;
+    assert_eq!(recent["ok"]["overallSeverity"], "WARNING", "{recent}");
+
+    let old = Utc::now() - chrono::Duration::minutes(2);
+    let rerun = call_json_dyn(GetHealthStatus, env_with_run_at(old), refresh).await;
+    assert_eq!(rerun["ok"]["overallSeverity"], "INFO", "{rerun}");
+}
+
+/// Two refreshes at once run the checks once: the second waits for the first
+/// and returns its run.
+#[tokio::test]
+async fn concurrent_health_refreshes_run_the_checks_once() {
+    let health = Arc::new(MockHealthService::default());
+    let mut env = MockEnvironment::new();
+    env.health_service = health.clone();
+    let env = Arc::new(env);
+    let refresh = serde_json::json!({ "refresh": true });
+
+    let (first, second) = tokio::join!(
+        call_json_dyn(GetHealthStatus, env.clone(), refresh.clone()),
+        call_json_dyn(GetHealthStatus, env, refresh),
+    );
+    assert_eq!(first["ok"]["overallSeverity"], "INFO", "{first}");
+    assert_eq!(second["ok"]["overallSeverity"], "INFO", "{second}");
+    assert_eq!(health.runs.load(std::sync::atomic::Ordering::SeqCst), 1);
+}
 output_test_dyn!(output_list_asset_taxonomies, ListAssetTaxonomies, {});
 output_test_dyn!(
     output_get_asset_taxonomy_assignments,
@@ -608,6 +716,8 @@ fn fixture_cash_activity(
         net_amount: -12.5,
         net_amount_base: None,
         visible_spending_amount: 0.0,
+        cash_balance: None,
+        cash_balance_currency: None,
     }
 }
 
@@ -620,12 +730,12 @@ fn categorization_env() -> Arc<MockEnvironment> {
     });
     env.taxonomy_service = Arc::new(MockTaxonomyService {
         taxonomies: vec![fixture_taxonomy(
-            "spending",
+            "spending_categories",
             "Spending",
             "activity",
             vec![
-                fixture_category("spending", "cat-food", "Food"),
-                fixture_child_category("spending", "cat-coffee", "cat-food", "Coffee"),
+                fixture_category("spending_categories", "cat-food", "Food"),
+                fixture_child_category("spending_categories", "cat-coffee", "cat-food", "Coffee"),
             ],
         )],
         assignments: vec![],
@@ -644,11 +754,66 @@ fn categorization_env() -> Arc<MockEnvironment> {
                 "acc-1",
                 "2024-05-10T00:00:00Z",
                 "SQ *COFFEE SHOP OTTAWA",
-                Some(("spending", "cat-coffee")),
+                Some(("spending_categories", "cat-coffee")),
             ),
         ],
     });
     Arc::new(env)
+}
+
+#[tokio::test]
+async fn incompatible_savings_rule_does_not_hide_compatible_rule_proposals() {
+    use wealthfolio_agent_tools::tools::categorization_context::{
+        compute_categorization_state, CategorizationFilters,
+    };
+    use wealthfolio_spending::categorization_rules::{CategorizationRule, RuleMatchType};
+
+    let mut env = Arc::into_inner(categorization_env()).expect("only fixture owner");
+    let now = Utc::now().naive_utc();
+    env.categorization_rules_service = Arc::new(MockCategorizationRulesService {
+        rules: [
+            ("savings_categories", "cat-savings", 10),
+            ("spending_categories", "cat-coffee", 1),
+        ]
+        .into_iter()
+        .map(|(taxonomy, category, priority)| CategorizationRule {
+            id: category.to_string(),
+            name: category.to_string(),
+            pattern: "COFFEE".to_string(),
+            match_type: RuleMatchType::Contains,
+            taxonomy_id: Some(taxonomy.to_string()),
+            category_id: Some(category.to_string()),
+            activity_type: None,
+            amount_op: None,
+            amount_value: None,
+            amount_value2: None,
+            priority,
+            is_global: true,
+            account_id: None,
+            preset_id: None,
+            preset_rule_key: None,
+            preset_version: None,
+            preset_modified: false,
+            created_at: now,
+            updated_at: now,
+        })
+        .collect(),
+    });
+
+    let state = compute_categorization_state(
+        &env,
+        CategorizationFilters {
+            activity_ids: Some(vec!["cash-a".to_string()]),
+            ..Default::default()
+        },
+    )
+    .await
+    .unwrap();
+    assert_eq!(state.proposals.len(), 1);
+    assert_eq!(state.proposals[0].activity_id, "cash-a");
+    assert_eq!(state.proposals[0].category_id, "cat-coffee");
+    assert_eq!(state.proposals[0].source, "rule");
+    assert!(state.unproposed.is_empty());
 }
 
 output_test_dyn_env!(
@@ -696,6 +861,18 @@ output_test_dyn_env!(
     RecordActivity,
     single_account_env(),
     { "activityType": "DEPOSIT", "activityDate": "2026-01-17", "amount": 5000.0 }
+);
+output_test_dyn_env!(
+    output_record_activity_foreign_currency,
+    RecordActivity,
+    single_account_env(),
+    {
+        "activityType": "DEPOSIT",
+        "activityDate": "2026-01-17",
+        "amount": 1000.0,
+        "currency": " eur ",
+        "fxRate": 1.08
+    }
 );
 output_test_dyn_env!(
     output_record_activity_dividend_drip,
@@ -977,12 +1154,16 @@ async fn live_ollama_each_assistant_tool() {
     use futures::StreamExt;
     use rig::{
         agent::MultiTurnStreamItem,
-        client::{AgentClientExt, Nothing},
-        streaming::StreamedAssistantContent,
+        http_client::ReqwestClient,
+        message::ToolName,
+        providers::ollama::wire::OllamaConfig,
+        streaming::{Item, StreamEvent},
         tool::{DynamicTool, PortableTool, ToolOutput},
+        AgentBuilder,
     };
     use std::sync::Mutex;
     use wealthfolio_ai::tools::{agent_catalog, ImportCsvTool};
+    use wealthfolio_ai::types::MessageAttachment;
     let thinking = std::env::var("WF_TEST_OLLAMA_THINKING").as_deref() == Ok("true");
     let model = std::env::var("WF_TEST_OLLAMA_MODEL").expect("set model");
     let mut names: Vec<_> = agent_catalog()
@@ -1009,10 +1190,10 @@ async fn live_ollama_each_assistant_tool() {
                 serde_json::json!({"activities":[{"activityType":"DEPOSIT","activityDate":"2024-06-15","amount":100,"account":"acc-1"}]})
             }
             "create_categorization_rule" => {
-                serde_json::json!({"pattern":"COFFEE","matchType":"contains","categoryKey":"coffee","taxonomyId":"spending"})
+                serde_json::json!({"pattern":"COFFEE","matchType":"contains","categoryKey":"coffee","taxonomyId":"spending_categories"})
             }
             "propose_transaction_categories" => {
-                serde_json::json!({"activityIds":["cash-a"],"aiProposals":[{"activityId":"cash-a","taxonomyId":"spending","categoryKey":"coffee","confidence":0.95}]})
+                serde_json::json!({"activityIds":["cash-a"],"aiProposals":[{"activityId":"cash-a","taxonomyId":"spending_categories","categoryKey":"coffee","confidence":0.95}]})
             }
             "get_asset_taxonomy_assignments" => serde_json::json!({"assetQuery":"AAPL"}),
             "prepare_asset_classification" => {
@@ -1020,7 +1201,7 @@ async fn live_ollama_each_assistant_tool() {
             }
             "get_performance" => serde_json::json!({"period":"ALL"}),
             "import_csv" => {
-                serde_json::json!({"csvContent":"Date,Type,Amount\n2024-06-15,DEPOSIT,100\n","accountId":"acc-1"})
+                serde_json::json!({"attachmentName":"deposits.csv","accountId":"acc-1"})
             }
             _ => serde_json::json!({}),
         };
@@ -1031,7 +1212,7 @@ async fn live_ollama_each_assistant_tool() {
             let definition = adapter.definition();
             let tool_name = definition.name.clone();
             let observed = observations.clone();
-            tools.push(DynamicTool::new(definition.name, definition.description, definition.parameters, move |_, args| {
+            tools.push(DynamicTool::new(definition.name, definition.description, definition.parameters, move |args| {
                 let adapter=adapter.clone(); let observed=observed.clone(); let tool_name=tool_name.clone();
                 Box::pin(async move {
                     let result=adapter.call(args).await;
@@ -1040,14 +1221,22 @@ async fn live_ollama_each_assistant_tool() {
                 })
             }));
         }
-        let csv = Arc::new(ImportCsvTool::new(test_env.clone(), "USD".into()));
+        let csv = Arc::new(ImportCsvTool::new(
+            test_env.clone(),
+            "USD".into(),
+            vec![MessageAttachment {
+                name: "deposits.csv".into(),
+                content_type: "text/csv".into(),
+                data: "Date,Type,Amount\n2024-06-15,DEPOSIT,100\n".into(),
+            }],
+        ));
         let def = rig::completion::ToolDefinition {
-            name: "import_csv".into(),
+            name: ToolName::new("import_csv").unwrap(),
             description: csv.description(),
             parameters: csv.parameters(),
         };
         let observed = observations.clone();
-        tools.push(DynamicTool::new(def.name,def.description,def.parameters,move |_,args| {
+        tools.push(DynamicTool::new(def.name,def.description,def.parameters,move |args| {
             let csv=csv.clone();let observed=observed.clone();
             Box::pin(async move {
                 let parsed=serde_json::from_value(args).map_err(rig::tool::ToolExecutionError::from_error)?;
@@ -1056,26 +1245,22 @@ async fn live_ollama_each_assistant_tool() {
                 result.map(|r| ToolOutput::json(serde_json::to_value(r).unwrap()))
             })
         }));
-        let client = rig::providers::ollama::Client::builder()
-            .api_key(Nothing)
-            .http_client(wealthfolio_http::client())
-            .build()
-            .unwrap();
-        let agent=client.agent(&model).temperature(0.0)
+        let client = OllamaConfig::new().connect(ReqwestClient::from(wealthfolio_http::client()));
+        let agent=AgentBuilder::new(client.native_completion(&model)).temperature(0.0)
             .preamble("You are testing tool integration against synthetic fixtures. Call the specifically requested tool once with the supplied arguments. Do not call other tools. After its response, briefly report the result and stop.")
             .additional_params(serde_json::json!({"think":thinking,"options":{"num_ctx":32768,"num_predict":1024}}))
             .dynamic_tools(tools).build();
         let prompt =
             format!("Call {name} with these arguments: {args}. Then briefly report its result.");
-        let mut stream = agent.runner(prompt).max_turns(2).stream().await;
+        let mut stream = agent.prompt(prompt).max_turns(2).stream();
         let mut text = String::new();
         let mut stream_error = None;
         let finished = tokio::time::timeout(std::time::Duration::from_secs(120), async {
             while let Some(item) = stream.next().await {
                 match item {
-                    Ok(MultiTurnStreamItem::StreamAssistantItem(
-                        StreamedAssistantContent::Text(t),
-                    )) => text.push_str(&t.text),
+                    Ok(MultiTurnStreamItem::StreamAssistantItem(Item::Event(
+                        StreamEvent::Text { text: t, .. },
+                    ))) => text.push_str(&t),
                     Err(e) => {
                         stream_error = Some(e.to_string());
                         break;

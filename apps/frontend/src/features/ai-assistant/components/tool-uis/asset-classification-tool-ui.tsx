@@ -1,3 +1,4 @@
+import { getTaxonomyLabel, getCategoryLabel } from "@/lib/taxonomy-labels";
 import { updateToolResult } from "@/adapters";
 import { TickerAvatar } from "@/components/ticker-avatar";
 import { useReplaceAssetTaxonomyAssignments } from "@/hooks/use-taxonomies";
@@ -17,6 +18,7 @@ import {
   useDateFormatting,
   useNumberFormatting,
   type FormattingApi,
+  Spinner,
 } from "@wealthfolio/ui";
 import { Icons } from "@wealthfolio/ui/components/ui/icons";
 import type { TFunction } from "i18next";
@@ -190,7 +192,7 @@ function AssetClassificationLoadingState() {
         <div className="min-w-0 flex-1">
           <p className="text-sm font-medium">{t("ai:assetClassification.preparing")}</p>
         </div>
-        <Icons.Spinner className="text-muted-foreground h-4 w-4 shrink-0 animate-spin" />
+        <Spinner className="text-muted-foreground h-4 w-4 shrink-0" />
       </CardContent>
     </Card>
   );
@@ -215,16 +217,20 @@ function validatePreview(
   const proposedAssignments = result.proposedAssignments ?? [];
   const categoryIds = new Set<string>();
   for (const row of proposedAssignments) {
+    const categoryName = getCategoryLabel(
+      t,
+      result.taxonomy?.taxonomyId ?? "",
+      row.categoryId,
+      row.categoryName,
+    );
     if (row.weightBasisPoints < 0 || row.weightBasisPoints > 10000) {
-      issues.push(t("ai:assetClassification.invalidWeight", { categoryName: row.categoryName }));
+      issues.push(t("ai:assetClassification.invalidWeight", { categoryName }));
     }
 
     if (row.weightBasisPoints === 0) continue;
 
     if (categoryIds.has(row.categoryId)) {
-      issues.push(
-        t("ai:assetClassification.duplicateCategory", { categoryName: row.categoryName }),
-      );
+      issues.push(t("ai:assetClassification.duplicateCategory", { categoryName }));
     }
     categoryIds.add(row.categoryId);
   }
@@ -298,7 +304,7 @@ function DiffStat({
   return (
     <div className="bg-background/70 min-w-[5rem] rounded-md border px-2 py-1.5">
       <div className={cn("text-sm font-semibold", className)}>{value}</div>
-      <div className="text-muted-foreground text-[11px] leading-4">{label}</div>
+      <div className="text-muted-foreground text-2xs leading-4">{label}</div>
     </div>
   );
 }
@@ -354,6 +360,7 @@ function buildComparisonRows(
 }
 
 function ClassificationComparisonTable({
+  taxonomyId,
   currentRows,
   proposedRows,
   emptyLabel,
@@ -362,6 +369,7 @@ function ClassificationComparisonTable({
   onDraftPercentValueChange,
   onNewWeightChange,
 }: {
+  taxonomyId: string;
   currentRows: AssetClassificationAssignmentPreview[];
   proposedRows: AssetClassificationAssignmentPreview[];
   emptyLabel: string;
@@ -385,10 +393,10 @@ function ClassificationComparisonTable({
         {t("ai:assetClassification.allocation")}
       </div>
       <div className="bg-background/70 overflow-hidden rounded-md border">
-        <div className="text-muted-foreground grid grid-cols-[minmax(0,1fr)_4.25rem_4.25rem] gap-2 border-b px-2.5 py-1.5 text-[11px] font-medium sm:grid-cols-[minmax(0,1fr)_5.25rem_5.25rem]">
+        <div className="text-muted-foreground text-2xs grid grid-cols-[minmax(0,1fr)_4.25rem_4.25rem] gap-2 border-b px-2.5 py-1.5 font-medium sm:grid-cols-[minmax(0,1fr)_5.25rem_5.25rem]">
           <div>{t("ai:assetClassification.section")}</div>
-          <div className="text-right">{t("ai:assetClassification.current")}</div>
-          <div className="text-right">{t("ai:assetClassification.new")}</div>
+          <div className="text-end">{t("ai:assetClassification.current")}</div>
+          <div className="text-end">{t("ai:assetClassification.new")}</div>
         </div>
         {rows.length === 0 ? (
           <div className="text-muted-foreground px-3 py-3 text-xs">{emptyLabel}</div>
@@ -404,13 +412,15 @@ function ClassificationComparisonTable({
                   style={row.categoryColor ? { backgroundColor: row.categoryColor } : undefined}
                 />
                 <div className="min-w-0">
-                  <div className="truncate text-xs font-medium sm:text-sm">{row.categoryName}</div>
+                  <div className="truncate text-xs font-medium sm:text-sm">
+                    {getCategoryLabel(t, taxonomyId, row.categoryId, row.categoryName)}
+                  </div>
                 </div>
               </div>
-              <div className="text-right">
+              <div className="text-end">
                 <span
                   aria-label={t("ai:assetClassification.currentPercentLabel", {
-                    categoryName: row.categoryName,
+                    categoryName: getCategoryLabel(t, taxonomyId, row.categoryId, row.categoryName),
                   })}
                   className={cn(
                     "bg-muted/60 inline-flex min-w-[3.75rem] justify-end rounded-md px-1.5 py-0.5 text-xs font-medium sm:min-w-[4.5rem]",
@@ -420,7 +430,7 @@ function ClassificationComparisonTable({
                   {formatBasisPoints(row.currentWeightBasisPoints, formatting)}
                 </span>
               </div>
-              <div className="text-right">
+              <div className="text-end">
                 <div
                   className={cn(
                     "bg-background relative inline-flex min-w-[3.75rem] items-center rounded-md border sm:min-w-[4.5rem]",
@@ -433,9 +443,14 @@ function ClassificationComparisonTable({
                 >
                   <input
                     aria-label={t("ai:assetClassification.newPercentLabel", {
-                      categoryName: row.categoryName,
+                      categoryName: getCategoryLabel(
+                        t,
+                        taxonomyId,
+                        row.categoryId,
+                        row.categoryName,
+                      ),
                     })}
-                    className="h-6 w-full bg-transparent pl-1.5 pr-4 text-right text-xs font-medium outline-none disabled:cursor-not-allowed"
+                    className="h-6 w-full bg-transparent ps-1.5 pe-4 text-end text-xs font-medium outline-none disabled:cursor-not-allowed"
                     disabled={disabled}
                     inputMode="decimal"
                     type="text"
@@ -461,7 +476,7 @@ function ClassificationComparisonTable({
                       onNewWeightChange(row, basisPoints);
                     }}
                   />
-                  <span className="pointer-events-none absolute right-1.5 text-[10px]">%</span>
+                  <span className="text-2xs pointer-events-none absolute end-1.5">%</span>
                 </div>
               </div>
             </div>
@@ -469,13 +484,13 @@ function ClassificationComparisonTable({
         )}
         {rows.length > 0 ? (
           <div className="bg-muted/50 grid grid-cols-[minmax(0,1fr)_4.25rem_4.25rem] items-center gap-2 px-2.5 py-1.5 sm:grid-cols-[minmax(0,1fr)_5.25rem_5.25rem]">
-            <div className="text-muted-foreground text-right text-xs font-medium">
+            <div className="text-muted-foreground text-end text-xs font-medium">
               {t("ai:assetClassification.total")}
             </div>
-            <div className="text-right text-sm font-semibold">
+            <div className="text-end text-sm font-semibold">
               {formatBasisPoints(currentTotalBasisPoints, formatting)}
             </div>
-            <div className="text-primary text-right text-sm font-semibold">
+            <div className="text-primary text-end text-sm font-semibold">
               {formatBasisPoints(proposedTotalBasisPoints, formatting)}
             </div>
           </div>
@@ -696,7 +711,7 @@ export function AssetClassificationToolUIContentImpl({
                 })}
             </CardTitle>
             <p className="text-muted-foreground mt-1 text-xs">
-              {parsedResult.taxonomy.name}
+              {getTaxonomyLabel(t, parsedResult.taxonomy.taxonomyId, parsedResult.taxonomy.name)}
               {selectedAsset ? ` · ${selectedAsset.currency}` : ""}
               {selectedAsset?.exchangeMic ? ` · ${selectedAsset.exchangeMic}` : ""}
             </p>
@@ -748,7 +763,7 @@ export function AssetClassificationToolUIContentImpl({
                     onClick={() => handleSelectAsset(candidate)}
                     disabled={isApplied}
                     className={cn(
-                      "bg-background/70 grid grid-cols-[auto_minmax(0,1fr)_auto] items-center gap-3 rounded-md border px-3 py-2 text-left transition-colors disabled:cursor-not-allowed disabled:opacity-60",
+                      "bg-background/70 grid grid-cols-[auto_minmax(0,1fr)_auto] items-center gap-3 rounded-md border px-3 py-2 text-start transition-colors disabled:cursor-not-allowed disabled:opacity-60",
                       isSelected && "border-primary/50 bg-primary/5",
                     )}
                   >
@@ -807,6 +822,7 @@ export function AssetClassificationToolUIContentImpl({
         </div>
 
         <ClassificationComparisonTable
+          taxonomyId={parsedResult.taxonomy.taxonomyId}
           currentRows={currentAssignments}
           proposedRows={proposedAssignments}
           emptyLabel={
@@ -836,7 +852,7 @@ export function AssetClassificationToolUIContentImpl({
           <Alert variant="error">
             <Icons.AlertCircle className="h-4 w-4" />
             <AlertTitle>{t("ai:assetClassification.failedApplyTitle")}</AlertTitle>
-            <AlertDescription className="break-words text-xs">{applyError}</AlertDescription>
+            <AlertDescription className="text-xs break-words">{applyError}</AlertDescription>
           </Alert>
         ) : null}
 
@@ -845,21 +861,17 @@ export function AssetClassificationToolUIContentImpl({
         ) : null}
 
         {isApplied ? (
-          <div className="border-success/30 bg-success/10 flex items-center gap-3 rounded-md border px-3 py-2">
-            <div className="bg-success/20 text-success flex h-7 w-7 shrink-0 items-center justify-center rounded-full">
-              <Icons.Check className="h-4 w-4" />
-            </div>
-            <div className="min-w-0 flex-1">
-              <p className="text-success text-sm font-medium">
-                {t("ai:assetClassification.categoriesClassified", { count: appliedCategoryCount })}
-              </p>
-              <p className="text-muted-foreground text-xs">
-                {t("ai:assetClassification.allocationsSaved", {
-                  asset: selectedAsset?.label ?? t("ai:assetClassification.yourAsset"),
-                })}
-              </p>
-            </div>
-          </div>
+          <Alert variant="success" className="px-3 py-2">
+            <Icons.Check />
+            <AlertTitle>
+              {t("ai:assetClassification.categoriesClassified", { count: appliedCategoryCount })}
+            </AlertTitle>
+            <AlertDescription className="text-xs">
+              {t("ai:assetClassification.allocationsSaved", {
+                asset: selectedAsset?.label ?? t("ai:assetClassification.yourAsset"),
+              })}
+            </AlertDescription>
+          </Alert>
         ) : null}
 
         <div className="flex flex-wrap items-center justify-between gap-3">
@@ -875,9 +887,9 @@ export function AssetClassificationToolUIContentImpl({
           </div>
           <Button size="sm" onClick={handleConfirm} disabled={!canConfirm}>
             {isSubmitting ? (
-              <Icons.Spinner className="mr-2 h-4 w-4 animate-spin" />
+              <Spinner className="me-2 h-4 w-4" />
             ) : isApplied ? (
-              <Icons.Check className="mr-2 h-4 w-4" />
+              <Icons.Check className="me-2 h-4 w-4" />
             ) : null}
             {isApplied ? t("ai:assetClassification.applied") : t("ai:assetClassification.confirm")}
           </Button>

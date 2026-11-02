@@ -9,6 +9,9 @@ import { AmountDisplay } from "../financial/amount-display";
 import { ChartContainer, ChartTooltip, ChartTooltipContent } from "../ui/chart";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "../ui/tooltip";
 
+// The theme's first seven chart colours, then the same seven again mixed halfway
+// toward the card, round after round: a long tail stays coloured but reads as
+// the rest, and isn't mistaken for the leading slices.
 const COLORS = [
   "var(--chart-1)",
   "var(--chart-2)",
@@ -17,9 +20,21 @@ const COLORS = [
   "var(--chart-5)",
   "var(--chart-6)",
   "var(--chart-7)",
-  "var(--chart-8)",
-  "var(--chart-9)",
 ];
+
+/** Colour for the item at `index` of a composition (donut slice, strip segment, list
+ * swatch), so an item keeps its colour across views: the theme's first seven chart
+ * colours, then the same seven mixed halfway toward the card. */
+export function chartSliceColor(index: number): string {
+  const color = COLORS[index % COLORS.length];
+  return index < COLORS.length ? color : `color-mix(in oklab, ${color} 50%, var(--card))`;
+}
+
+// A 1 px edge, the slice's colour 15% toward the text colour, sets each slice off
+// the card, the pale tail included.
+function sliceEdge(index: number): string {
+  return `color-mix(in oklab, ${chartSliceColor(index)} 85%, var(--foreground))`;
+}
 
 const PADDING_ANGLE = 4;
 const CORNER_RADIUS = 6;
@@ -43,11 +58,11 @@ const ChartCenterLabel: React.FC<ChartCenterLabelProps> = ({ activeData, totalVa
 
   return (
     <TooltipProvider>
-      <div className="pointer-events-auto absolute left-1/2 top-[108px] -translate-x-1/2 -translate-y-1/2 text-center">
+      <div className="pointer-events-auto absolute top-27 left-1/2 -translate-x-1/2 -translate-y-1/2 text-center">
         <p className="text-muted-foreground text-xs font-medium">{activeData.name}</p>
-        <Tooltip delayDuration={100}>
-          <TooltipTrigger asChild>
-            <p className="text-foreground cursor-default text-xs font-bold">{compactValue}</p>
+        <Tooltip>
+          <TooltipTrigger delay={100} render={<p className="text-foreground cursor-default text-xs font-bold" />}>
+            {compactValue}
           </TooltipTrigger>
           <TooltipContent side="bottom" className="text-center">
             <AmountDisplay value={activeData.value} currency={activeData.currency} isHidden={isBalanceHidden} />
@@ -147,7 +162,7 @@ export const DonutChart: React.FC<DonutChartProps> = ({
     const payload = entry.payload as { currency: string };
     return (
       <div className="flex flex-col">
-        <span className="text-muted-foreground text-[0.70rem] uppercase">{name}</span>
+        <span className="text-muted-foreground text-2xs uppercase">{name}</span>
         <span className="font-bold">
           <AmountDisplay value={Number(value ?? 0)} currency={payload.currency} isHidden={isBalanceHidden} />
         </span>
@@ -181,7 +196,7 @@ export const DonutChart: React.FC<DonutChartProps> = ({
   } as PieComponentProps;
 
   return (
-    <div className="relative h-[160px] w-full p-0">
+    <div className="relative h-40 w-full p-0">
       <ChartContainer config={{}} className="h-full w-full">
         <PieChart onMouseLeave={handleMouseLeave} margin={{ top: 0, right: 0, bottom: 0, left: 0 }}>
           {displayTooltip && (
@@ -195,7 +210,9 @@ export const DonutChart: React.FC<DonutChartProps> = ({
             {data.map((_, index) => (
               <Cell
                 key={`cell-${index}`}
-                fill={COLORS[index % COLORS.length]}
+                fill={chartSliceColor(index)}
+                stroke={sliceEdge(index)}
+                strokeWidth={1}
                 style={{ cursor: onSectionClick ? "pointer" : "default" }}
               />
             ))}

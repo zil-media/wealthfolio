@@ -38,12 +38,12 @@ test.describe("Symbol Mapping Validation", () => {
     const existingRow = page.getByRole("row").filter({ hasText: ASSET_SYMBOL });
     if (await existingRow.isVisible({ timeout: 2000 }).catch(() => false)) return;
 
-    await page.getByRole("button", { name: "Add Security" }).click();
+    await page.getByRole("button", { name: "Add security" }).click();
     await expect(page.getByRole("dialog")).toBeVisible({ timeout: 5000 });
 
     await page.getByPlaceholder("e.g., AAPL").fill(ASSET_SYMBOL);
     await page.getByPlaceholder("e.g., Apple Inc.").fill("Symbol Validation Test Asset");
-    await page.getByRole("button", { name: "Create Security" }).click();
+    await page.getByRole("button", { name: "Create security" }).click();
     await expect(page.getByRole("dialog")).not.toBeVisible({
       timeout: 10000,
     });
@@ -91,25 +91,20 @@ test.describe("Symbol Mapping Validation", () => {
     await expect(editSheet).toBeVisible({ timeout: 5000 });
 
     // Click the Market Data tab
-    await page.getByRole("tab", { name: "Market Data" }).click();
+    await page.getByRole("tab", { name: "Market data" }).click();
 
     // Symbol Mapping section is only visible when pricing is Automatic.
     // If the asset is in Manual mode, enable Automatic pricing first.
-    const pricingSwitch = editSheet.getByRole("switch").first();
-    if (await pricingSwitch.isVisible({ timeout: 2000 }).catch(() => false)) {
-      const isChecked = await pricingSwitch.getAttribute("aria-checked");
-      if (isChecked === "false") {
-        await pricingSwitch.click();
-        // Confirm if a confirmation dialog appears
-        // Using broad regex because the exact button label varies by app state
-        const confirmBtn = page
-          .getByRole("button")
-          .filter({ hasText: /confirm|enable|yes/i })
-          .first();
-        if (await confirmBtn.isVisible({ timeout: 2000 }).catch(() => false)) {
-          await confirmBtn.click();
-        }
-      }
+    // The switch is decorative; the named popover trigger owns the interaction.
+    const pricingToggle = editSheet.getByRole("button", { name: "Automatic updates" });
+    await expect(pricingToggle).toBeVisible();
+    if (
+      await editSheet
+        .getByText("Automatic syncing is off. You manage prices manually.", { exact: true })
+        .isVisible()
+    ) {
+      await pricingToggle.click();
+      await page.getByRole("button", { name: "Confirm", exact: true }).click();
     }
 
     // Wait for the Symbol Mapping "Add" button to be visible

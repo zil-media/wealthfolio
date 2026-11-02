@@ -8,6 +8,8 @@ pub struct ProfileStartup {
     identifier: String,
     error: Mutex<Option<String>>,
     initialization: tokio::sync::Mutex<()>,
+    #[cfg(mobile)]
+    pub(crate) backup_suspended: std::sync::atomic::AtomicBool,
 }
 
 impl ProfileStartup {
@@ -17,6 +19,8 @@ impl ProfileStartup {
             identifier,
             error: Mutex::new(None),
             initialization: tokio::sync::Mutex::new(()),
+            #[cfg(mobile)]
+            backup_suspended: std::sync::atomic::AtomicBool::new(false),
         }
     }
 
@@ -56,7 +60,13 @@ impl ProfileStartup {
             }
         })
         .await
-        .map_err(|_| "Profile initialization failed.".to_string())
+        .map_err(|error| {
+            log::error!(
+                "Profile initialization task failed (panic={})",
+                matches!(error, tauri::Error::JoinError(ref join) if join.is_panic())
+            );
+            "Profile initialization failed.".to_string()
+        })
         .and_then(|result| result);
         *self
             .error

@@ -26,6 +26,32 @@ export function CategoryIcon({
   return <IconCmp weight="duotone" className={cn("h-4 w-4", className)} />;
 }
 
+/** Category icon on a tinted square, as in the category settings list. */
+export function CategoryIconTile({
+  icon,
+  color,
+  className,
+  iconClassName,
+}: {
+  icon: string | null;
+  color: string | null;
+  className?: string;
+  iconClassName?: string;
+}) {
+  return (
+    <span
+      className={cn("flex h-6 w-6 shrink-0 items-center justify-center rounded-md", className)}
+      style={{
+        backgroundColor: color ? `${color}1F` : "var(--muted)",
+        color: color ?? "var(--muted-foreground)",
+      }}
+      aria-hidden="true"
+    >
+      <CategoryIcon icon={icon} className={cn("h-3.5 w-3.5", iconClassName)} />
+    </span>
+  );
+}
+
 export function CategoryBadge({
   name,
   color,
@@ -38,7 +64,7 @@ export function CategoryBadge({
   const accent = color ?? "var(--muted-foreground)";
   return (
     <span
-      className="inline-flex shrink-0 items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide"
+      className="text-2xs inline-flex shrink-0 items-center gap-1 rounded-full px-2 py-0.5 font-semibold tracking-wide uppercase"
       style={{
         backgroundColor: color ? `${color}1F` : "var(--muted)",
         color: accent,
@@ -46,7 +72,7 @@ export function CategoryBadge({
       title={name}
     >
       <CategoryIcon icon={icon} fallback={name} className="h-3 w-3" />
-      <span className="max-w-[110px] truncate">{name}</span>
+      <span className="max-w-27.5 truncate">{name}</span>
     </span>
   );
 }
@@ -54,7 +80,7 @@ export function CategoryBadge({
 export function ReviewPill({ label }: { label: string }) {
   return (
     <span
-      className="inline-flex shrink-0 items-center gap-1 rounded-full border px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide"
+      className="text-2xs inline-flex shrink-0 items-center gap-1 rounded-full border px-2 py-0.5 font-semibold tracking-wide uppercase"
       style={{
         backgroundColor: "hsl(28 65% 55% / 0.10)",
         borderColor: "hsl(28 65% 55% / 0.35)",

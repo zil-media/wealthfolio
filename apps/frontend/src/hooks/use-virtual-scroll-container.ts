@@ -1,10 +1,18 @@
 import { useCallback, useLayoutEffect, useState } from "react";
+import { observeElementOffset } from "@tanstack/react-virtual";
+
+/** Seed a newly mounted activity list before the virtualizer's initial scrollTo. */
+export const observeCurrentScrollOffset: typeof observeElementOffset = (instance, onChange) => {
+  onChange(instance.scrollElement?.scrollTop ?? 0, false);
+  return observeElementOffset(instance, onChange);
+};
 
 /**
  * Markers for the scroll port a virtualized list measures against.
  *
- * `PageScrollContainer` marks itself, the swipeable pager marks each pane, and
- * a list that scrolls inside its own box marks that box.
+ * `PageScrollContainer` marks itself, `SwipablePage` marks its desktop content,
+ * the swipeable pager marks each phone pane, and a list that scrolls inside its
+ * own box marks that box.
  *
  * Resolving the port by walking up for a scrollable `overflow` alone would pick
  * the wrong element: below 1024px `globals.css` sets `overflow-x` on every
@@ -81,7 +89,7 @@ export function useVirtualScrollContainer(): VirtualScrollContainer {
   // setters return `prev` unless the value really changed, and neither value is
   // affected by the re-render it would cause — the virtualizer resizes its own
   // container, which never moves the list's top edge or reparents it.
-  // eslint-disable-next-line react-hooks/exhaustive-deps
+  // oxlint-disable-next-line react/exhaustive-deps
   useLayoutEffect(() => {
     if (!list) return;
 

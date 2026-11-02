@@ -77,9 +77,9 @@ export const HoldingsMobileFilterSheet = ({
     <Sheet open={open} onOpenChange={onOpenChange}>
       <SheetContent
         side="bottom"
-        className="flex h-[85vh] flex-col rounded-t-xl pb-[max(env(safe-area-inset-bottom),0.75rem)]"
+        className="flex h-[85vh] flex-col rounded-t-xl pb-[max(var(--inset-bottom),0.75rem)]"
       >
-        <SheetHeader className="text-left">
+        <SheetHeader className="text-start">
           <SheetTitle>{t("holdings:display_options")}</SheetTitle>
         </SheetHeader>
         <ScrollArea className="flex-1 py-4">
@@ -87,7 +87,7 @@ export const HoldingsMobileFilterSheet = ({
             {/* View Settings */}
             <div className="grid grid-cols-1 gap-6">
               <div className="space-y-3">
-                <h4 className="text-muted-foreground text-xs font-medium uppercase tracking-wider">
+                <h4 className="text-muted-foreground text-xs font-medium tracking-wider uppercase">
                   {t("holdings:sort_by")}
                 </h4>
                 <AnimatedToggleGroup<"symbol" | "marketValue">
@@ -103,7 +103,7 @@ export const HoldingsMobileFilterSheet = ({
               </div>
 
               <div className="space-y-3">
-                <h4 className="text-muted-foreground text-xs font-medium uppercase tracking-wider">
+                <h4 className="text-muted-foreground text-xs font-medium tracking-wider uppercase">
                   {t("common:performance")}
                 </h4>
                 <AnimatedToggleGroup<PerformanceMode>
@@ -125,7 +125,7 @@ export const HoldingsMobileFilterSheet = ({
             {/* Position visibility */}
             {setVisibilityFilters && showClosedPositions && (
               <div className="space-y-3">
-                <h4 className="text-muted-foreground text-xs font-medium uppercase tracking-wider">
+                <h4 className="text-muted-foreground text-xs font-medium tracking-wider uppercase">
                   {t("common:status")}
                 </h4>
                 <div className="overflow-hidden rounded-lg border">
@@ -137,7 +137,7 @@ export const HoldingsMobileFilterSheet = ({
                         type="button"
                         aria-pressed={isSelected}
                         className={cn(
-                          "flex w-full items-center justify-between p-3 text-left text-sm transition-colors",
+                          "flex w-full items-center justify-between p-3 text-start text-sm transition-colors",
                           index > 0 && "border-t",
                           isSelected ? "bg-accent/50 font-medium" : "hover:bg-muted/50",
                         )}
@@ -157,7 +157,7 @@ export const HoldingsMobileFilterSheet = ({
             {/* Category Filter Section */}
             {setCategoryFilter && (
               <div className="space-y-3">
-                <h4 className="text-muted-foreground text-xs font-medium uppercase tracking-wider">
+                <h4 className="text-muted-foreground text-xs font-medium tracking-wider uppercase">
                   {t("holdings:category")}
                 </h4>
                 <div className="overflow-hidden rounded-lg border">
@@ -194,7 +194,7 @@ export const HoldingsMobileFilterSheet = ({
             {/* Account Filter Section */}
             {showAccountScope && (
               <div className="space-y-3">
-                <h4 className="text-muted-foreground text-xs font-medium uppercase tracking-wider">
+                <h4 className="text-muted-foreground text-xs font-medium tracking-wider uppercase">
                   {t("holdings:account")}
                 </h4>
                 <div className="overflow-hidden rounded-lg border">
@@ -274,7 +274,7 @@ export const HoldingsMobileFilterSheet = ({
             {/* Asset Type Filter Section */}
             {((typeOptions?.length ?? 0) > 0 || selectedTypes.length > 0) && (
               <div className="space-y-3">
-                <h4 className="text-muted-foreground text-xs font-medium uppercase tracking-wider">
+                <h4 className="text-muted-foreground text-xs font-medium tracking-wider uppercase">
                   {t("holdings:asset_type")}
                 </h4>
                 <div className="overflow-hidden rounded-lg border">
@@ -319,9 +319,7 @@ export const HoldingsMobileFilterSheet = ({
           </div>
         </ScrollArea>
         <SheetFooter className="mt-auto">
-          <SheetClose asChild>
-            <Button className="w-full">{t("holdings:done")}</Button>
-          </SheetClose>
+          <SheetClose render={<Button className="w-full" />}>{t("holdings:done")}</SheetClose>
         </SheetFooter>
       </SheetContent>
     </Sheet>

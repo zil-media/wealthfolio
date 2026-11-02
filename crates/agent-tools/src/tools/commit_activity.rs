@@ -26,6 +26,7 @@ use wealthfolio_core::assets::{parse_symbol_with_exchange_suffix, Asset, AssetKi
 use crate::env::AgentEnvironment;
 use crate::scope::AgentScope;
 use crate::tool::{AgentTool, AgentToolAccess, AgentToolError, AgentToolResult};
+use crate::tools::activity_updates::parse_currency;
 use crate::tools::record_activity::ActivityDraft;
 
 /// Max drafts per `commit_activity_drafts` call. Mirrors the `record_activities`
@@ -292,14 +293,14 @@ fn draft_to_new_activity(
                 .as_deref()
                 .filter(|s| !s.is_empty())
                 .map(str::to_string),
-            exchange_mic: None,
+            exchange_mic: draft.exchange_mic.clone(),
             kind: draft.asset_kind.clone(),
             name: draft.asset_name.clone(),
             quote_mode: Some(draft.pricing_mode.clone()),
-            quote_ccy: None,
-            instrument_type: None,
-            provider_id: None,
-            provider_symbol: None,
+            quote_ccy: draft.quote_ccy.clone(),
+            instrument_type: draft.instrument_type.clone(),
+            provider_id: draft.provider_id.clone(),
+            provider_symbol: draft.provider_symbol.clone(),
         }),
     };
 
@@ -307,10 +308,20 @@ fn draft_to_new_activity(
         match value {
             None => Ok(None),
             Some(v) => Decimal::from_f64(v).map(Some).ok_or_else(|| {
-                AgentToolError::InvalidInput(format!("Invalid numeric value for {field}: {v}"))
+                AgentToolError::InvalidInput(format!("Invalid numeric value for {field}"))
             }),
         }
     };
+
+    let currency = parse_currency(&Some(draft.currency.clone()))
+        .map_err(AgentToolError::InvalidInput)?
+        .ok_or_else(|| AgentToolError::InvalidInput("Draft is missing a currency".to_string()))?;
+    let fx_rate = to_decimal(draft.fx_rate, "fxRate")?;
+    if fx_rate.is_some_and(|rate| rate <= Decimal::ZERO) {
+        return Err(AgentToolError::InvalidInput(
+            "FX rate must be a positive number".to_string(),
+        ));
+    }
 
     Ok(NewActivity {
         id: None,
@@ -321,13 +332,13 @@ fn draft_to_new_activity(
         activity_date: draft.activity_date.clone(),
         quantity: to_decimal(draft.quantity, "quantity")?,
         unit_price: to_decimal(draft.unit_price, "unitPrice")?,
-        currency: draft.currency.clone(),
+        currency,
         fee: to_decimal(draft.fee, "fee")?,
         tax: to_decimal(draft.tax, "tax")?,
         amount: to_decimal(draft.amount, "amount")?,
         status: None,
         notes: draft.notes.clone(),
-        fx_rate: None,
+        fx_rate,
         metadata: None,
         // Committed drafts are previously reviewed (see module docs), so a
         // custom trade total is attested rather than queued for review again.
@@ -587,16 +598,22 @@ fn activity_draft_schema() -> serde_json::Value {
         "type": "object",
         "properties": {
             "activityType": { "type": "string" },
-            "activityDate": { "type": "string", "description": "ISO 8601 date." },
+            "activityDate": { "type": "string", "description": "YYYY-MM-DD, or an RFC 3339 timestamp. A bare date is stored on that day in the configured timezone." },
             "symbol": { "type": "string" },
             "assetId": { "type": "string" },
             "assetName": { "type": "string" },
+            "exchangeMic": { "type": "string" },
+            "quoteCcy": { "type": "string" },
+            "instrumentType": { "type": "string" },
+            "providerId": { "type": "string" },
+            "providerSymbol": { "type": "string" },
             "quantity": { "type": "number" },
             "unitPrice": { "type": "number" },
             "amount": { "type": "number" },
             "fee": { "type": "number" },
             "tax": { "type": "number" },
             "currency": { "type": "string" },
+            "fxRate": { "type": "number", "description": "Rate converting currency into the account currency. Omit to use the market rate." },
             "accountId": { "type": "string" },
             "accountName": { "type": "string" },
             "subtype": { "type": "string" },
@@ -631,12 +648,18 @@ mod tests {
             symbol: Some("AAPL".to_string()),
             asset_id: Some("SEC:AAPL:XNAS".to_string()),
             asset_name: Some("Apple Inc.".to_string()),
+            exchange_mic: Some("XNAS".to_string()),
+            quote_ccy: Some("USD".to_string()),
+            instrument_type: Some("EQUITY".to_string()),
+            provider_id: Some("YAHOO".to_string()),
+            provider_symbol: Some("AAPL".to_string()),
             quantity: Some(10.0),
             unit_price: Some(150.25),
             amount: Some(1502.5),
             fee: Some(1.0),
             tax: None,
             currency: "USD".to_string(),
+            fx_rate: None,
             account_id: Some("acct-1".to_string()),
             account_name: Some("Brokerage".to_string()),
             subtype: None,
@@ -818,8 +841,87 @@ mod tests {
         let asset = new.asset.expect("security draft should carry an asset");
         assert!(asset.id.is_none());
         assert_eq!(asset.symbol.as_deref(), Some("AAPL"));
+        assert_eq!(asset.exchange_mic.as_deref(), Some("XNAS"));
+        assert_eq!(asset.quote_ccy.as_deref(), Some("USD"));
+        assert_eq!(asset.instrument_type.as_deref(), Some("EQUITY"));
+        assert_eq!(asset.provider_id.as_deref(), Some("YAHOO"));
+        assert_eq!(asset.provider_symbol.as_deref(), Some("AAPL"));
         // Never minted on commit — the service assigns it.
         assert!(new.id.is_none());
+    }
+
+    #[test]
+    fn rejected_values_stay_out_of_the_error() {
+        // The error reaches the audit log, which keeps no draft values.
+        let mut draft = security_draft();
+        draft.fx_rate = Some(9.87e30);
+        let error = draft_to_new_activity(&draft, &create_plan(), None).unwrap_err().to_string();
+        assert!(error.contains("fxRate"), "{error}");
+        assert!(!error.contains("987"), "{error}");
+    }
+
+    #[test]
+    fn preserves_unknown_suffix_for_core_activity_resolution() {
+        let mut draft = security_draft();
+        draft.symbol = Some("ABC.ZZ".to_string());
+        draft.asset_id = None;
+        draft.asset_name = Some("Unknown venue security".to_string());
+        draft.exchange_mic = None;
+        draft.provider_id = None;
+        draft.provider_symbol = None;
+
+        let new = draft_to_new_activity(&draft, &create_plan(), None).unwrap();
+        let asset = new.asset.expect("security draft should carry an asset");
+
+        assert_eq!(asset.symbol.as_deref(), Some("ABC.ZZ"));
+        assert_eq!(asset.exchange_mic, None);
+        assert_eq!(asset.provider_id, None);
+        assert_eq!(asset.provider_symbol, None);
+    }
+
+    #[test]
+    fn preserves_provider_confirmed_canonical_identity() {
+        let mut draft = security_draft();
+        draft.symbol = Some("ABC".to_string());
+        draft.asset_id = None;
+        draft.asset_name = Some("Provider-confirmed security".to_string());
+        draft.exchange_mic = Some("XNAS".to_string());
+        draft.provider_id = Some("YAHOO".to_string());
+        draft.provider_symbol = Some("ABC.ZZ".to_string());
+
+        let new = draft_to_new_activity(&draft, &create_plan(), None).unwrap();
+        let asset = new.asset.expect("confirmed draft should carry an asset");
+
+        assert_eq!(asset.symbol.as_deref(), Some("ABC"));
+        assert_eq!(asset.exchange_mic.as_deref(), Some("XNAS"));
+        assert_eq!(asset.quote_ccy.as_deref(), Some("USD"));
+        assert_eq!(asset.instrument_type.as_deref(), Some("EQUITY"));
+        assert_eq!(asset.provider_id.as_deref(), Some("YAHOO"));
+        assert_eq!(asset.provider_symbol.as_deref(), Some("ABC.ZZ"));
+    }
+
+    #[test]
+    fn keeps_draft_fx_rate() {
+        let mut draft = security_draft();
+        draft.fx_rate = Some(1.35);
+        let new = draft_to_new_activity(&draft, &create_plan(), None).unwrap();
+        assert_eq!(new.fx_rate, Some(Decimal::new(135, 2)));
+
+        draft.fx_rate = Some(0.0);
+        assert!(matches!(
+            draft_to_new_activity(&draft, &create_plan(), None),
+            Err(AgentToolError::InvalidInput(_))
+        ));
+    }
+
+    #[test]
+    fn invalid_currency_is_rejected() {
+        let mut draft = security_draft();
+        draft.currency = "us dollars".to_string();
+        assert!(matches!(
+            draft_to_new_activity(&draft, &create_plan(), None),
+            Err(AgentToolError::InvalidInput(_))
+        ));
     }
 
     #[test]

@@ -219,7 +219,8 @@
       "descriptionDated": "I dati dell'altro dispositivo (copiati il {{date}}) sostituiranno quelli di questo dispositivo.",
       "replace": "Sostituisci dati",
       "backupLabel": "Esegui prima il backup di questo profilo",
-      "backupAndReplace": "Esegui backup e sostituisci"
+      "backupAndReplace": "Esegui backup e sostituisci",
+      "descriptionEmpty": "L’altro dispositivo ha un portafoglio vuoto. Continuando, il portafoglio su questo dispositivo verrà sostituito da quello vuoto."
     },
     "backingUp": {
       "title": "Backup di questo profilo in corso",
@@ -268,7 +269,20 @@
       "show": "Mostra avanzamento"
     }
   },
-  "errors": {},
+  "errors": {
+    "portfolioRepair": "Un portafoglio contiene un collegamento a un conto eliminato. Apri Impostazioni > Portafogli, modifica il portafoglio e salva.",
+    "fallback": "Si è verificato un problema. Riprova.",
+    "restoreRequired": "La sincronizzazione deve essere ripristinata da questo dispositivo prima di collegarne un altro.",
+    "invalidCode": "Codice non valido. Controlla e riprova.",
+    "expired": "Sessione scaduta. Ricomincia.",
+    "cancelled": "Abbinamento annullato.",
+    "network": "Errore di rete. Controlla la connessione.",
+    "timeout": "Tempo di connessione scaduto.",
+    "notFound": "Sessione non trovata o scaduta.",
+    "security": "Verifica di sicurezza non riuscita.",
+    "technical": "Impossibile completare la sincronizzazione. Riprova. Se il problema persiste, controlla i registri dell’app.",
+    "namedPortfolioRepair": "Il portafoglio «{{name}}» contiene un collegamento a un conto eliminato. Apri Impostazioni > Portafogli, modifica il portafoglio e salva."
+  },
   "wizard": {
     "progressLabel": "Avanzamento della configurazione",
     "steps": {

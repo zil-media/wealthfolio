@@ -1,18 +1,20 @@
 use super::SettingsRepositoryTrait;
 use crate::errors::{DatabaseError, Error, Result};
+use crate::fx::currency::get_normalization_rule;
 use crate::fx::FxServiceTrait;
-use crate::settings::{Settings, SettingsUpdate};
+use crate::settings::{Settings, SettingsUpdate, GAIN_COLORS};
 use crate::utils::time_utils::canonicalize_timezone;
 use async_trait::async_trait;
 use log::{debug, error};
+use std::collections::BTreeMap;
 use std::sync::Arc;
 
 const SUPPORTED_FORMATTING_REGIONS: &[&str] = &[
-    "system", "CA", "US", "GB", "FR", "DE", "CH", "ES", "MX", "BR", "PT", "CN", "TW", "JP", "KR",
-    "IT",
+    "system", "CA", "US", "GB", "IN", "FR", "DE", "AT", "CH", "ES", "MX", "BR", "PT", "CN", "TW",
+    "JP", "KR", "IT", "RO", "BG",
 ];
 const SUPPORTED_UI_LANGUAGES: &[&str] = &[
-    "en", "fr", "de", "es", "pt", "zh", "zh-Hant", "ja", "ko", "it",
+    "en", "fr", "de", "es", "pt", "zh", "zh-Hant", "ja", "ko", "it", "ar",
 ];
 
 /// Traditional Chinese is written in Taiwan, Hong Kong and Macau. Match the
@@ -101,6 +103,99 @@ fn validate_formatting_region(region: &str) -> Result<()> {
     }
 }
 
+fn validate_gain_colors(gain_colors: &str) -> Result<()> {
+    if GAIN_COLORS.contains(&gain_colors) {
+        Ok(())
+    } else {
+        Err(Error::InvalidConfigValue(format!(
+            "Unsupported gain and loss colours: {gain_colors}"
+        )))
+    }
+}
+
+/// Names the frontend defines, such as theme IDs (its definition file names) and
+/// text sizes: lowercase words joined by hyphens. The frontend shows its default
+/// for a name it doesn't know, so a name saved by a newer version survives an
+/// older one.
+fn is_frontend_name(name: &str) -> bool {
+    name.len() <= 48
+        && name.starts_with(|c: char| c.is_ascii_lowercase())
+        && name.split('-').all(|word| {
+            !word.is_empty()
+                && word
+                    .bytes()
+                    .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit())
+        })
+}
+
+fn validate_theme_id(theme_id: &str) -> Result<()> {
+    if is_frontend_name(theme_id) {
+        Ok(())
+    } else {
+        Err(Error::InvalidConfigValue(format!(
+            "Invalid theme ID: {theme_id}"
+        )))
+    }
+}
+
+fn validate_text_size(text_size: &str) -> Result<()> {
+    if is_frontend_name(text_size) {
+        Ok(())
+    } else {
+        Err(Error::InvalidConfigValue(format!(
+            "Invalid text size: {text_size}"
+        )))
+    }
+}
+
+/// Quote units such as GBX follow their major currency's override, so they
+/// cannot have one of their own.
+fn is_currency_code(code: &str) -> bool {
+    code.len() == 3
+        && code.bytes().all(|byte| byte.is_ascii_uppercase())
+        && get_normalization_rule(code).is_none()
+}
+
+/// A quote unit such as GBp is priced in its major currency, so it cannot be the
+/// base either.
+fn validate_base_currency(code: &str) -> Result<()> {
+    if is_currency_code(code) {
+        Ok(())
+    } else {
+        Err(Error::InvalidConfigValue(format!(
+            "Unsupported base currency: {code}"
+        )))
+    }
+}
+
+/// A currency override names a concrete region; following the system locale is
+/// what `formatting_region` is for.
+fn is_currency_formatting_region(region: &str) -> bool {
+    region != "system" && SUPPORTED_FORMATTING_REGIONS.contains(&region)
+}
+
+fn normalize_currency_formatting_regions(regions: &mut BTreeMap<String, String>) {
+    regions.retain(|currency, region| {
+        is_currency_code(currency) && is_currency_formatting_region(region)
+    });
+}
+
+fn validate_currency_formatting_regions(regions: &BTreeMap<String, String>) -> Result<()> {
+    for (currency, region) in regions {
+        if !is_currency_code(currency) {
+            return Err(Error::InvalidConfigValue(format!(
+                "Unsupported currency code: {currency}"
+            )));
+        }
+        if !is_currency_formatting_region(region) {
+            return Err(Error::InvalidConfigValue(format!(
+                "Unsupported formatting region for {currency}: {region}"
+            )));
+        }
+    }
+    Ok(())
+}
+
 // Define the trait for SettingsService
 #[async_trait]
 pub trait SettingsServiceTrait: Send + Sync {
@@ -109,8 +204,6 @@ pub trait SettingsServiceTrait: Send + Sync {
     async fn update_settings(&self, new_settings: &SettingsUpdate) -> Result<()>;
 
     fn get_base_currency(&self) -> Result<Option<String>>;
-
-    async fn update_base_currency(&self, new_base_currency: &str) -> Result<()>;
 
     fn is_auto_update_check_enabled(&self) -> Result<bool>;
 
@@ -143,6 +236,7 @@ impl SettingsServiceTrait for SettingsService {
         let mut settings = self.settings_repository.get_settings()?;
         settings.formatting_region =
             normalize_formatting_region(&settings.language, &settings.formatting_region);
+        normalize_currency_formatting_regions(&mut settings.currency_formatting_regions);
         settings.language = normalize_ui_language(&settings.language);
         Ok(settings)
     }
@@ -151,22 +245,40 @@ impl SettingsServiceTrait for SettingsService {
         let current_base_currency = self.get_base_currency()?;
         let mut normalized_settings = new_settings.clone();
 
-        if let Some(ref new_base_currency_val) = normalized_settings.base_currency {
-            if current_base_currency.as_deref() != Some(new_base_currency_val.as_str()) {
-                self.update_base_currency(new_base_currency_val.as_str())
-                    .await?;
-            }
-        }
-
         if let Some(ref timezone_raw) = normalized_settings.timezone {
             normalized_settings.timezone = Some(canonicalize_timezone(timezone_raw)?);
         }
 
+        if let Some(ref theme_id) = normalized_settings.theme_id {
+            validate_theme_id(theme_id)?;
+        }
+        if let Some(ref text_size) = normalized_settings.text_size {
+            validate_text_size(text_size)?;
+        }
+        if let Some(ref gain_colors) = normalized_settings.gain_colors {
+            validate_gain_colors(gain_colors)?;
+        }
         if let Some(ref region) = normalized_settings.formatting_region {
             validate_formatting_region(region)?;
         }
+        if let Some(ref regions) = normalized_settings.currency_formatting_regions {
+            validate_currency_formatting_regions(regions)?;
+        }
         if let Some(ref language) = normalized_settings.language {
             normalized_settings.language = Some(validate_ui_language(language)?);
+        }
+        if let Some(ref base_currency) = normalized_settings.base_currency {
+            validate_base_currency(base_currency)?;
+        }
+
+        // Validate the whole update first: a rejected update must not change the
+        // base currency, which the repository writes in the same transaction as
+        // the other settings.
+        if let Some(ref new_base_currency_val) = normalized_settings.base_currency {
+            if current_base_currency.as_deref() != Some(new_base_currency_val.as_str()) {
+                self.register_base_currency_pairs(new_base_currency_val.as_str())
+                    .await?;
+            }
         }
 
         self.settings_repository
@@ -181,36 +293,6 @@ impl SettingsServiceTrait for SettingsService {
             Err(Error::Database(DatabaseError::NotFound(_))) => Ok(None),
             Err(e) => Err(e),
         }
-    }
-
-    async fn update_base_currency(&self, new_base_currency: &str) -> Result<()> {
-        let all_currencies = self
-            .settings_repository
-            .get_distinct_currencies_excluding_base(new_base_currency)?;
-
-        debug!(
-            "Registering currency pairs for currencies: {:?}",
-            all_currencies
-        );
-
-        for currency_code in all_currencies {
-            let registration_result = self
-                .fx_service
-                .register_currency_pair(currency_code.as_str(), new_base_currency)
-                .await;
-
-            if let Err(e) = registration_result {
-                error!(
-                    "Failed to register currency pair {}{}: {}. Skipping.",
-                    new_base_currency, currency_code, e
-                );
-            }
-        }
-
-        self.settings_repository
-            .update_setting("base_currency", new_base_currency)
-            .await?;
-        Ok(())
     }
 
     fn is_auto_update_check_enabled(&self) -> Result<bool> {
@@ -255,14 +337,127 @@ impl SettingsService {
             fx_service,
         }
     }
+
+    async fn register_base_currency_pairs(&self, new_base_currency: &str) -> Result<()> {
+        let all_currencies = self
+            .settings_repository
+            .get_distinct_currencies_excluding_base(new_base_currency)?;
+
+        debug!(
+            "Registering currency pairs for currencies: {:?}",
+            all_currencies
+        );
+
+        for currency_code in all_currencies {
+            let registration_result = self
+                .fx_service
+                .register_currency_pair(currency_code.as_str(), new_base_currency)
+                .await;
+
+            if let Err(e) = registration_result {
+                error!(
+                    "Failed to register currency pair {}{}: {}. Skipping.",
+                    new_base_currency, currency_code, e
+                );
+            }
+        }
+        Ok(())
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::{
-        normalize_formatting_region, normalize_ui_language, validate_formatting_region,
-        validate_ui_language,
+        normalize_currency_formatting_regions, normalize_formatting_region, normalize_ui_language,
+        validate_currency_formatting_regions, validate_formatting_region, validate_gain_colors,
+        validate_text_size, validate_theme_id, validate_ui_language,
     };
+    use crate::settings::Settings;
+    use std::collections::BTreeMap;
+
+    fn regions(entries: &[(&str, &str)]) -> BTreeMap<String, String> {
+        entries
+            .iter()
+            .map(|(currency, region)| (currency.to_string(), region.to_string()))
+            .collect()
+    }
+
+    #[test]
+    fn accepts_theme_file_names_and_rejects_anything_else() {
+        for id in ["classic", "ember", "high-contrast", "theme2", "a-1"] {
+            assert!(validate_theme_id(id).is_ok(), "{id}");
+        }
+        let too_long = "a".repeat(49);
+        for id in [
+            "",
+            "Classic",
+            "1st",
+            "-ember",
+            "ember-",
+            "two--hyphens",
+            "under_score",
+            "quote\"",
+            too_long.as_str(),
+        ] {
+            assert!(validate_theme_id(id).is_err(), "{id}");
+        }
+    }
+
+    #[test]
+    fn accepts_text_size_names_and_rejects_anything_else() {
+        for size in ["small", "default", "large", "extra-large"] {
+            assert!(validate_text_size(size).is_ok(), "{size}");
+        }
+        for size in ["", "Large", "130%", "1.3", "extra_large", "-large"] {
+            assert!(validate_text_size(size).is_err(), "{size}");
+        }
+    }
+
+    #[test]
+    fn accepts_the_three_gain_and_loss_colours_only() {
+        for value in ["green-up", "red-up", "red-up-blue-down"] {
+            assert!(validate_gain_colors(value).is_ok(), "{value}");
+        }
+        for value in ["", "Red-up", "blue-up", "red-up-green-down", "red-up "] {
+            assert!(validate_gain_colors(value).is_err(), "{value}");
+        }
+    }
+
+    #[test]
+    fn text_size_stays_unset_until_picked() {
+        let value = serde_json::to_value(Settings::default()).unwrap();
+        assert!(
+            value.get("textSize").is_none(),
+            "an unpicked size is left out"
+        );
+        let settings: Settings = serde_json::from_value(value).unwrap();
+        assert_eq!(settings.text_size, None);
+    }
+
+    #[test]
+    fn settings_saved_before_gain_colors_read_as_green_up() {
+        let mut value = serde_json::to_value(Settings::default()).unwrap();
+        value.as_object_mut().unwrap().remove("gainColors");
+        let settings: Settings = serde_json::from_value(value).unwrap();
+        assert_eq!(settings.gain_colors, "green-up");
+    }
+
+    #[test]
+    fn settings_without_a_theme_read_as_signature() {
+        let mut value = serde_json::to_value(Settings::default()).unwrap();
+        value.as_object_mut().unwrap().remove("themeId");
+        value["theme"] = serde_json::json!("system");
+        let settings: Settings = serde_json::from_value(value).unwrap();
+        assert_eq!(settings.theme_id, "signature");
+        assert_eq!(settings.theme, "system");
+    }
+
+    #[test]
+    fn new_profiles_start_on_signature_with_its_font() {
+        let settings = Settings::default();
+        assert_eq!(settings.theme_id, "signature");
+        assert_eq!(settings.font, "font-sans");
+    }
 
     #[test]
     fn preserves_explicit_system_formatting_preference() {
@@ -277,6 +472,7 @@ mod tests {
         assert_eq!(normalize_ui_language("fr_CA"), "fr");
         assert_eq!(normalize_ui_language("ja-JP"), "ja");
         assert_eq!(normalize_ui_language("ko_KR"), "ko");
+        assert_eq!(normalize_ui_language("ar-SA"), "ar");
     }
 
     #[test]
@@ -345,6 +541,7 @@ mod tests {
         assert_eq!(normalize_formatting_region("en", "de-DE"), "DE");
         // Swiss German shares its language with Germany but formats differently.
         assert_eq!(normalize_formatting_region("de", "de-CH"), "CH");
+        assert_eq!(normalize_formatting_region("en", "en-IN"), "IN");
     }
 
     #[test]
@@ -360,6 +557,51 @@ mod tests {
         assert!(validate_formatting_region("TW").is_ok());
         assert!(validate_formatting_region("IT").is_ok());
         assert!(validate_formatting_region("CH").is_ok());
+        assert!(validate_formatting_region("IN").is_ok());
+        assert!(validate_formatting_region("AT").is_ok());
+        assert!(validate_formatting_region("RO").is_ok());
+        assert!(validate_formatting_region("BG").is_ok());
         assert!(validate_formatting_region("de-DE").is_err());
+    }
+
+    #[test]
+    fn accepts_currency_formatting_regions_for_supported_regions() {
+        assert!(validate_currency_formatting_regions(&regions(&[])).is_ok());
+        assert!(
+            validate_currency_formatting_regions(&regions(&[("INR", "IN"), ("USD", "US")])).is_ok()
+        );
+    }
+
+    #[test]
+    fn rejects_invalid_currency_formatting_region_updates() {
+        for entries in [
+            [("inr", "IN")],
+            [("GBp", "GB")],
+            [("RUPEE", "IN")],
+            [("GBX", "DE")],
+            [("ZAC", "GB")],
+            [("INR", "system")],
+            [("INR", "en-IN")],
+            [("INR", "ZZ")],
+        ] {
+            assert!(
+                validate_currency_formatting_regions(&regions(&entries)).is_err(),
+                "{entries:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn drops_invalid_persisted_currency_formatting_regions() {
+        let mut persisted = regions(&[
+            ("INR", "IN"),
+            ("USD", "US"),
+            ("usd", "US"),
+            ("GBX", "DE"),
+            ("EUR", "system"),
+            ("JPY", "unknown"),
+        ]);
+        normalize_currency_formatting_regions(&mut persisted);
+        assert_eq!(persisted, regions(&[("INR", "IN"), ("USD", "US")]));
     }
 }

@@ -1,5 +1,5 @@
 // Activity Commands
-import { ImportType } from "@/lib/types";
+import { ImportType, QuoteMode } from "@/lib/types";
 import type {
   Activity,
   ActivityBulkMutationRequest,
@@ -8,6 +8,7 @@ import type {
   ActivityDetails,
   ActivitySearchResponse,
   ActivityUpdate,
+  ActivitySplitEffect,
   ActivityImport,
   ImportAssetCandidate,
   ImportAssetPreviewItem,
@@ -24,6 +25,16 @@ import type {
 
 import { invoke, logger } from "./platform";
 
+// `search_activities` sends the asset's quote mode as `assetPricingMode`.
+type ActivityDetailsResponse = ActivityDetails & { assetPricingMode?: string | null };
+
+function withAssetQuoteMode(activity: ActivityDetailsResponse): ActivityDetails {
+  const mode = activity.assetPricingMode;
+  return mode === QuoteMode.MANUAL || mode === QuoteMode.MARKET
+    ? { ...activity, assetQuoteMode: mode }
+    : activity;
+}
+
 interface ActivityFilters {
   accountIds?: string | string[];
   activityTypes?: string | string[];
@@ -38,6 +49,11 @@ interface ActivityFilters {
 interface ActivitySort {
   id: string;
   desc?: boolean;
+}
+
+interface ActivitySearchOptions {
+  /** Ask for the cash balance after each row (one cash or credit-card account). */
+  includeCashBalances?: boolean;
 }
 
 function normalizeStringArray(input?: string | string[]): string[] | undefined {
@@ -81,6 +97,7 @@ export const searchActivities = async (
   filters: ActivityFilters,
   searchKeyword: string,
   sort?: ActivitySort,
+  options?: ActivitySearchOptions,
 ): Promise<ActivitySearchResponse> => {
   const accountIdFilter = normalizeStringArray(filters?.accountIds);
   const activityTypeFilter = normalizeStringArray(filters?.activityTypes);
@@ -96,7 +113,9 @@ export const searchActivities = async (
   const dateTo = filters?.dateTo;
 
   try {
-    return await invoke<ActivitySearchResponse>("search_activities", {
+    const response = await invoke<
+      Omit<ActivitySearchResponse, "data"> & { data: ActivityDetailsResponse[] }
+    >("search_activities", {
       page,
       pageSize,
       accountIdFilter,
@@ -108,7 +127,9 @@ export const searchActivities = async (
       dateTo,
       instrumentTypeFilter,
       activityIdFilter,
+      ...(options?.includeCashBalances ? { includeCashBalances: true } : {}),
     });
+    return { ...response, data: response.data.map(withAssetQuoteMode) };
   } catch (err) {
     logger.error("Error fetching activities.");
     throw err;
@@ -125,6 +146,32 @@ export const createActivity = async (activity: ActivityCreate): Promise<Activity
     throw err;
   }
 };
+
+export const reviewActivitiesSplitEffects = (
+  activities: ActivityUpdate[],
+): Promise<ActivitySplitEffect[][]> =>
+  invoke("review_activity_split_effects", {
+    activities: activities.map(serializeActivityMetadata),
+  });
+
+function serializeInternalTransferPair(
+  request: InternalTransferPairRequest,
+): InternalTransferPairRequest {
+  return {
+    ...request,
+    activityDate:
+      request.activityDate instanceof Date
+        ? request.activityDate.toISOString()
+        : request.activityDate,
+  };
+}
+
+export const reviewInternalTransferPairSplitEffects = (
+  request: InternalTransferPairRequest,
+): Promise<ActivitySplitEffect[]> =>
+  invoke("review_internal_transfer_pair_split_effects", {
+    request: serializeInternalTransferPair(request),
+  });
 
 export const updateActivity = async (activity: ActivityUpdate): Promise<Activity> => {
   try {
@@ -191,13 +238,7 @@ export const findTransferMatchCandidates = async (
 export const saveInternalTransferPair = async (
   request: InternalTransferPairRequest,
 ): Promise<InternalTransferPairResponse> => {
-  const payload: InternalTransferPairRequest = {
-    ...request,
-    activityDate:
-      request.activityDate instanceof Date
-        ? request.activityDate.toISOString()
-        : request.activityDate,
-  };
+  const payload = serializeInternalTransferPair(request);
   try {
     return await invoke<InternalTransferPairResponse>("save_internal_transfer_pair", {
       request: payload,

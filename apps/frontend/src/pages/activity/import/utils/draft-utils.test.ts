@@ -154,6 +154,32 @@ describe("expense reversal boundary reconciliation", () => {
   });
 });
 
+describe("createDraftActivities skipped rows", () => {
+  it("leaves out rows skipped in mapping and keeps the other rows' indexes", () => {
+    const rows = [
+      ["2024-03-15", "WITHDRAWAL", "100.00", "USD"],
+      ["2024-03-16", "WITHDRAWAL", "200.00", "USD"],
+      ["2024-03-17", "WITHDRAWAL", "300.00", "USD"],
+    ];
+
+    const drafts = createDraftActivities(
+      rows,
+      headers,
+      baseMapping,
+      parseConfig,
+      "account-1",
+      undefined,
+      undefined,
+      { skippedRowIndexes: [1] },
+    );
+
+    expect(drafts.map((draft) => [draft.rowIndex, draft.amount])).toEqual([
+      [0, "100.00"],
+      [2, "300.00"],
+    ]);
+  });
+});
+
 describe("createDraftActivities explicit activity mapping", () => {
   it("uses the resolved asset currency for security rows when the CSV has no currency column", () => {
     const [draft] = createDraftActivities(
@@ -707,6 +733,24 @@ describe("createDraftActivities explicit activity mapping", () => {
     ).toBeUndefined();
   });
 
+  it("imports an untyped cash credit without assigning refund or external-flow semantics", () => {
+    const [draft] = createDraftActivities(
+      [["2024-03-15", "CREDIT", "100.00", "USD"]],
+      headers,
+      { ...baseMapping, activityMappings: { [ActivityType.CREDIT]: ["CREDIT"] } },
+      parseConfig,
+      "account-1",
+      undefined,
+      new Map([["account-1", AccountType.CASH]]),
+    );
+    expect(draft.activityType).toBe(ActivityType.CREDIT);
+    expect(draft.subtype).toBeUndefined();
+    const imported = draftToActivityImport(draft);
+    expect(imported.activityType).toBe(ActivityType.CREDIT);
+    expect(imported.subtype).toBeUndefined();
+    expect(imported.isExternal).toBeUndefined();
+  });
+
   it("infers external boundaries from unambiguous cash-account reversal labels", () => {
     const labels = ["MERCHANT REFUND", "CASH BACK", "REIMBURSEMENT"];
     const drafts = createDraftActivities(
@@ -1124,7 +1168,7 @@ describe("createDraftActivities explicit activity mapping", () => {
 
     expect(draft.status).toBe("error");
     expect(draft.errors.activityType).toContain(
-      "Credit card imports only support charges, payments, refunds, fees, and interest",
+      "Credit card imports only support charges, payments, transfers out, refunds, fees, and interest",
     );
   });
 

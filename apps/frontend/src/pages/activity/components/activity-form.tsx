@@ -60,6 +60,7 @@ export function ActivityForm({
   const isEditing = !!activity?.id;
   const storedType: PickerActivityType | undefined = mapActivityTypeToPicker(
     activity?.activityType,
+    activity?.subtype,
   );
 
   // Not every persisted type has an editor. Sync stores a needs-review row as
@@ -128,7 +129,7 @@ export function ActivityForm({
     <Sheet open={open} onOpenChange={handleOpenChange}>
       <SheetContent
         data-testid="activity-form-dialog"
-        className="flex w-full flex-col overflow-hidden sm:max-w-[625px]"
+        className="flex w-full flex-col overflow-hidden sm:max-w-[39.0625rem]"
       >
         <SheetHeader>
           <SheetTitle>

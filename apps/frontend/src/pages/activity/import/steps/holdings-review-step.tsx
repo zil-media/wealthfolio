@@ -228,7 +228,7 @@ export function HoldingsReviewStep() {
       cancelled = true;
       dispatch(setIsValidating(false));
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+    // oxlint-disable-next-line react/exhaustive-deps
   }, [accountId, validationSnapshots, checkRetryRevision, dateColumn.needsExplicitFormat]);
 
   // Handle data changes from the grid (quantity, avgCost, currency edits)
@@ -330,7 +330,7 @@ export function HoldingsReviewStep() {
                 className="mt-2 h-7"
                 onClick={() => setCheckRetryRevision((revision) => revision + 1)}
               >
-                <Icons.RefreshCw className="mr-2 h-3.5 w-3.5" />
+                <Icons.RefreshCw className="me-2 h-3.5 w-3.5" />
                 {t("activity:import.validationAlert.retry")}
               </Button>
             </ImportAlert>

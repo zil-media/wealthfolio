@@ -65,7 +65,7 @@ export function BenchmarkCompareBar({
         );
         return status === "unavailable" ? (
           <Tooltip key={benchmark.id}>
-            <TooltipTrigger asChild>{chip}</TooltipTrigger>
+            <TooltipTrigger render={chip} />
             <TooltipContent className="max-w-xs text-xs">
               {reason ?? t("common:benchmark_compare.no_data")}
             </TooltipContent>

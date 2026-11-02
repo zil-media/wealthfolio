@@ -12,7 +12,7 @@ import { notifyUnauthorized } from "@/lib/auth-token";
 // ============================================================================
 
 export const extractAddonZip = async (zipData: Uint8Array): Promise<ExtractedAddon> => {
-  return await invoke<ExtractedAddon>("extract_addon_zip", { zipData: Array.from(zipData) });
+  return await invoke<ExtractedAddon>("extract_addon_zip", { zipData });
 };
 
 export const installAddonZip = async (
@@ -21,7 +21,7 @@ export const installAddonZip = async (
   approvedNetworkHosts?: string[],
 ): Promise<AddonManifest> => {
   return await invoke<AddonManifest>("install_addon_zip", {
-    zipData: Array.from(zipData),
+    zipData,
     enableAfterInstall,
     approvedNetworkHosts,
   });
@@ -203,3 +203,9 @@ export const setAddonStorageItem = async (
 export const deleteAddonStorageItem = async (addonId: string, key: string): Promise<void> => {
   return invoke<void>("delete_addon_storage_item", { addonId, key });
 };
+
+// The web server has no addon dev mode, so dev addons have nothing to register.
+export const registerDevAddonManifest = (_manifest: AddonManifest): Promise<void> =>
+  Promise.resolve();
+
+export const unregisterDevAddonManifest = (_addonId: string): Promise<void> => Promise.resolve();

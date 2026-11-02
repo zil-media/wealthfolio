@@ -1,5 +1,8 @@
+import { getCategoryLabel } from "@/lib/taxonomy-labels";
+
+import { isActivityEditCancelled, useActivitySplitReview } from "./activity-split-review-provider";
 import { useEffect, useMemo, useState } from "react";
-import { useForm } from "react-hook-form";
+import { useForm, type Resolver } from "react-hook-form";
 import { useTranslation } from "react-i18next";
 import type { TFunction } from "i18next";
 import { zodResolver } from "@hookform/resolvers/zod";
@@ -7,6 +10,7 @@ import * as z from "zod";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 
+import { useEffectOnChange } from "@/hooks/use-effect-on-change";
 import { createActivity, updateActivity } from "@/adapters";
 import { useAccounts } from "@/hooks/use-accounts";
 import { useIsMobileViewport } from "@/hooks/use-platform";
@@ -14,7 +18,14 @@ import { useTaxonomy } from "@/hooks/use-taxonomies";
 import { QueryKeys } from "@/lib/query-keys";
 import { cn } from "@/lib/utils";
 import { invalidateSpendingCaches } from "../lib/invalidation";
-import type { Account, Activity, ActivityCreate, ActivityUpdate } from "@/lib/types";
+import type {
+  Account,
+  Activity,
+  ActivityCreate,
+  ActivityUpdate,
+  TaxonomyCategory,
+} from "@/lib/types";
+import { invalidTypeError, requiredError } from "@/lib/zod-errors";
 
 import {
   Button,
@@ -41,6 +52,7 @@ import {
   SheetHeader,
   SheetTitle,
   Textarea,
+  Spinner,
 } from "@wealthfolio/ui";
 
 import {
@@ -59,9 +71,10 @@ import { useEventTypes, useSpendingEvents } from "../hooks/use-spending-events";
 import { useSettings } from "@/hooks/use-settings";
 import { AdvancedOptionsSection } from "@/pages/activity/components/forms/fields/advanced-options-section";
 import { useSpendingSettings } from "../hooks/use-spending-settings";
+import { CategoryIconTile } from "./category-chips";
 import { QuickCategorizePopover } from "./quick-categorize-popover";
 import { QuickEventPopover } from "./quick-event-popover";
-import type { CashFlowBucket } from "../types/cash-activity";
+import type { ActivitySplit, CashFlowBucket } from "../types/cash-activity";
 import {
   cashActivityFlowMetadata,
   resolveCashActivitySubtype,
@@ -85,14 +98,14 @@ function buildFormSchema(t: TFunction) {
       "INTEREST",
       "CREDIT",
     ]),
-    activityDate: z.date({ required_error: t("spending:cashForm.pickDate") }),
+    activityDate: z.date({ error: requiredError(t("spending:cashForm.pickDate")) }),
     amount: z.coerce.number().min(0, { message: t("spending:cashForm.amountNonNegative") }),
     notes: z.string().optional(),
     // Advanced options. Currency defaults to the account's, so the common case
     // never sees these; a foreign charge on a domestic card needs both.
     currency: z.string().optional(),
     fxRate: z.coerce
-      .number({ invalid_type_error: t("activity:form.err_fxrate_number") })
+      .number({ error: invalidTypeError(t("activity:form.err_fxrate_number")) })
       .positive({ message: t("activity:form.err_fxrate_positive") })
       .optional(),
     /** "<taxonomyId>:<categoryId>" or "" */
@@ -165,6 +178,7 @@ interface CashActivityFormProps {
   onOpenChange: (open: boolean) => void;
   activity?: Activity & {
     cashFlowBucket?: CashFlowBucket;
+    splits?: ActivitySplit[];
     categoryAssignmentId?: string;
     categoryTaxonomyId?: string;
     categoryId?: string;
@@ -180,6 +194,7 @@ export function CashActivityForm({
   onTransferClick,
 }: CashActivityFormProps) {
   const { t } = useTranslation();
+  const reviewEdits = useActivitySplitReview();
   const formSchema = useMemo(() => buildFormSchema(t), [t]);
   const isEditing = !!activity?.id;
   const isMobile = useIsMobileViewport();
@@ -207,16 +222,12 @@ export function CashActivityForm({
   const savings = useTaxonomy(SAVINGS_TAXONOMY);
 
   const allCategoriesById = useMemo(() => {
-    const map = new Map<string, { name: string; color: string | null; parentId: string | null }>();
-    (spending.data?.categories ?? []).forEach((c) =>
-      map.set(c.id, { name: c.name, color: c.color, parentId: c.parentId ?? null }),
-    );
-    (income.data?.categories ?? []).forEach((c) =>
-      map.set(c.id, { name: c.name, color: c.color, parentId: c.parentId ?? null }),
-    );
-    (savings.data?.categories ?? []).forEach((c) =>
-      map.set(c.id, { name: c.name, color: c.color, parentId: c.parentId ?? null }),
-    );
+    const map = new Map<string, TaxonomyCategory>();
+    [
+      ...(spending.data?.categories ?? []),
+      ...(income.data?.categories ?? []),
+      ...(savings.data?.categories ?? []),
+    ].forEach((c) => map.set(c.id, c));
     return map;
   }, [spending.data?.categories, income.data?.categories, savings.data?.categories]);
 
@@ -234,7 +245,7 @@ export function CashActivityForm({
   const [eventId, setEventId] = useState<string | null>(activity?.eventId ?? null);
 
   const form = useForm<FormValues>({
-    resolver: zodResolver(formSchema),
+    resolver: zodResolver(formSchema) as Resolver<FormValues>,
     defaultValues: {
       accountId: activity?.accountId ?? "",
       activityType: (activity?.activityType as FormValues["activityType"]) ?? "WITHDRAWAL",
@@ -250,7 +261,7 @@ export function CashActivityForm({
     },
   });
 
-  useEffect(() => {
+  useEffectOnChange(() => {
     if (open) {
       form.reset({
         accountId: activity?.accountId ?? spendingAccounts[0]?.id ?? "",
@@ -292,16 +303,26 @@ export function CashActivityForm({
       activityTypeOptions.map((type) => ({
         type,
         label: getCashActivityLabel(
+          t,
           type,
           selectedAccount?.accountType,
-          type === "CREDIT" && !isCreditCardAccountType(selectedAccount?.accountType)
-            ? "REIMBURSEMENT"
-            : undefined,
+          resolveCashActivitySubtype({
+            activityType: type,
+            accountType: selectedAccount?.accountType,
+            existingActivityType: activity?.activityType,
+            existingSubtype: activity?.subtype,
+          }),
         ),
         description: getMobileTypeDescription(type, t),
         Icon: getMobileTypeIcon(type),
       })),
-    [activityTypeOptions, selectedAccount?.accountType, t],
+    [
+      activityTypeOptions,
+      selectedAccount?.accountType,
+      activity?.activityType,
+      activity?.subtype,
+      t,
+    ],
   );
   const isIncomeType = isCashActivityIncome(
     watchType,
@@ -371,7 +392,8 @@ export function CashActivityForm({
           comment: values.notes ?? null,
           metadata: cashActivityFlowMetadata(values.activityType, subtype, activity?.metadata),
         };
-        saved = await updateActivity(update);
+        const [reviewed] = await reviewEdits([update]);
+        saved = await updateActivity(reviewed);
       } else {
         const create: ActivityCreate = {
           accountId: values.accountId,
@@ -422,6 +444,7 @@ export function CashActivityForm({
       onOpenChange(false);
     },
     onError: (e: unknown) => {
+      if (isActivityEditCancelled(e)) return;
       toast.error(t("spending:cashForm.saveFailed", { message: (e as Error).message ?? e }));
     },
   });
@@ -446,7 +469,7 @@ export function CashActivityForm({
   return (
     <Sheet open={open} onOpenChange={onOpenChange}>
       <SheetContent
-        side={isMobile ? "bottom" : "right"}
+        side={isMobile ? "bottom" : "inline-end"}
         className={cn(
           isMobile
             ? "rounded-t-4xl mx-1 flex h-[90vh] flex-col p-0"
@@ -503,7 +526,14 @@ export function CashActivityForm({
                       render={({ field }) => (
                         <FormItem>
                           <FormLabel>{t("common:account")}</FormLabel>
-                          <Select onValueChange={field.onChange} value={field.value}>
+                          <Select
+                            items={spendingAccounts.map((acc) => ({
+                              value: acc.id,
+                              label: `${acc.name} (${acc.currency})`,
+                            }))}
+                            onValueChange={field.onChange}
+                            value={field.value}
+                          >
                             <FormControl>
                               <SelectTrigger>
                                 <SelectValue placeholder={t("spending:cashForm.selectAccount")} />
@@ -528,7 +558,7 @@ export function CashActivityForm({
                         name="activityType"
                         render={({ field }) => (
                           <FormItem>
-                            <FormLabel className="text-lg font-semibold">
+                            <FormLabel className="text-lg leading-none font-semibold">
                               {t("spending:cashForm.selectType")}
                             </FormLabel>
                             <FormControl>
@@ -546,7 +576,7 @@ export function CashActivityForm({
                                         className={cn(
                                           "flex cursor-pointer items-start gap-3 rounded-lg border p-4 transition-all",
                                           "hover:bg-muted/50",
-                                          "peer-data-[state=checked]:border-primary peer-data-[state=checked]:bg-primary/5",
+                                          "peer-data-checked:border-primary peer-data-checked:bg-primary/5",
                                           "active:scale-[0.98]",
                                         )}
                                       >
@@ -579,23 +609,23 @@ export function CashActivityForm({
                           render={({ field }) => (
                             <FormItem>
                               <FormLabel>{t("common:type")}</FormLabel>
-                              <Select onValueChange={field.onChange} value={field.value}>
+                              <Select
+                                items={mobileTypeOptions.map(({ type, label }) => ({
+                                  value: type,
+                                  label,
+                                }))}
+                                onValueChange={field.onChange}
+                                value={field.value}
+                              >
                                 <FormControl>
                                   <SelectTrigger>
                                     <SelectValue />
                                   </SelectTrigger>
                                 </FormControl>
                                 <SelectContent>
-                                  {activityTypeOptions.map((t) => (
-                                    <SelectItem key={t} value={t}>
-                                      {getCashActivityLabel(
-                                        t,
-                                        selectedAccount?.accountType,
-                                        t === "CREDIT" &&
-                                          !isCreditCardAccountType(selectedAccount?.accountType)
-                                          ? "REIMBURSEMENT"
-                                          : undefined,
-                                      )}
+                                  {mobileTypeOptions.map(({ type, label }) => (
+                                    <SelectItem key={type} value={type}>
+                                      {label}
                                     </SelectItem>
                                   ))}
                                 </SelectContent>
@@ -632,7 +662,7 @@ export function CashActivityForm({
                       <button
                         type="button"
                         className={cn(
-                          "flex w-full items-start gap-3 rounded-lg border p-4 text-left transition-all",
+                          "flex w-full items-start gap-3 rounded-lg border p-4 text-start transition-all",
                           "hover:bg-muted/50 active:scale-[0.98]",
                           "disabled:cursor-not-allowed disabled:opacity-50",
                         )}
@@ -704,14 +734,36 @@ export function CashActivityForm({
                         const currentParent = currentCat?.parentId
                           ? allCategoriesById.get(currentCat.parentId)
                           : null;
+                        const currentCatLabel = currentCat
+                          ? getCategoryLabel(
+                              t,
+                              currentCat.taxonomyId,
+                              currentCat.id,
+                              currentCat.name,
+                            )
+                          : "";
+                        const currentParentLabel = currentParent
+                          ? getCategoryLabel(
+                              t,
+                              currentParent.taxonomyId,
+                              currentParent.id,
+                              currentParent.name,
+                            )
+                          : "";
                         return (
                           <FormItem>
                             <FormLabel>
                               {isNeutralBucket ? t("spending:filters.category") : categoryLabel}
                             </FormLabel>
-                            {isNeutralBucket ? (
+                            {(activity?.splits?.length ?? 0) > 0 ? (
+                              <p className="text-muted-foreground rounded-md border px-3 py-2 text-sm">
+                                {t("spending:split.categoryProtected")}
+                              </p>
+                            ) : isNeutralBucket ? (
                               <div className="border-input bg-muted/40 text-muted-foreground h-input-height flex items-center rounded-md border px-3 py-2 text-sm">
-                                {t("spending:cashForm.neutralTransfer")}
+                                {watchType === "TRANSFER_IN" || watchType === "TRANSFER_OUT"
+                                  ? t("spending:cashForm.neutralTransfer")
+                                  : t("spending:transactions.neutral")}
                               </div>
                             ) : (
                               <QuickCategorizePopover
@@ -723,27 +775,26 @@ export function CashActivityForm({
                                   <FormControl>
                                     <button
                                       type="button"
-                                      className="border-input bg-input-bg dark:bg-input/30 hover:bg-accent/30 ring-offset-background focus:ring-ring h-input-height flex w-full items-center justify-between rounded-md border px-3 py-2 text-sm transition-colors focus:outline-none focus:ring-2 focus:ring-offset-2"
+                                      className="border-input bg-input-bg dark:bg-input/30 hover:bg-accent/30 ring-offset-background focus:ring-ring h-input-height flex w-full items-center justify-between rounded-md border px-3 py-2 text-sm transition-colors focus:ring-2 focus:ring-offset-2 focus:outline-none"
                                       aria-label={
                                         currentCat
                                           ? t("spending:transactions.changeCategory", {
-                                              name: currentCat.name,
+                                              name: currentCatLabel,
                                             })
                                           : t("spending:cashForm.pickCategory")
                                       }
                                     >
                                       {currentCat ? (
                                         <span className="flex min-w-0 items-center gap-2">
-                                          {currentCat.color && (
-                                            <span
-                                              className="h-2.5 w-2.5 shrink-0 rounded-full"
-                                              style={{ backgroundColor: currentCat.color }}
-                                              aria-hidden="true"
-                                            />
-                                          )}
+                                          <CategoryIconTile
+                                            icon={currentCat.icon ?? null}
+                                            color={currentCat.color ?? null}
+                                            className="h-5 w-5"
+                                            iconClassName="h-3 w-3"
+                                          />
                                           <span className="truncate">
-                                            {currentParent ? `${currentParent.name} / ` : ""}
-                                            {currentCat.name}
+                                            {currentParent ? `${currentParentLabel} / ` : ""}
+                                            {currentCatLabel}
                                           </span>
                                         </span>
                                       ) : (
@@ -752,7 +803,7 @@ export function CashActivityForm({
                                         </span>
                                       )}
                                       <Icons.ChevronDown
-                                        className="ml-2 h-4 w-4 shrink-0 opacity-50"
+                                        className="ms-2 h-4 w-4 shrink-0 opacity-50"
                                         aria-hidden="true"
                                       />
                                     </button>
@@ -776,7 +827,7 @@ export function CashActivityForm({
                         trigger={
                           <button
                             type="button"
-                            className="border-input bg-input-bg dark:bg-input/30 hover:bg-accent/30 ring-offset-background focus:ring-ring h-input-height flex w-full items-center justify-between rounded-md border px-3 py-2 text-sm transition-colors focus:outline-none focus:ring-2 focus:ring-offset-2"
+                            className="border-input bg-input-bg dark:bg-input/30 hover:bg-accent/30 ring-offset-background focus:ring-ring h-input-height flex w-full items-center justify-between rounded-md border px-3 py-2 text-sm transition-colors focus:ring-2 focus:ring-offset-2 focus:outline-none"
                             aria-label={
                               eventId && eventsById.get(eventId)
                                 ? t("spending:transactions.changeEvent", {
@@ -809,7 +860,7 @@ export function CashActivityForm({
                               );
                             })()}
                             <Icons.ChevronDown
-                              className="ml-2 h-4 w-4 shrink-0 opacity-50"
+                              className="ms-2 h-4 w-4 shrink-0 opacity-50"
                               aria-hidden="true"
                             />
                           </button>
@@ -866,31 +917,35 @@ export function CashActivityForm({
                       className="flex-1"
                       disabled={saveMutation.isPending}
                     >
-                      <Icons.ArrowLeft className="mr-2 h-4 w-4" />
+                      <Icons.ArrowLeft className="me-2 h-4 w-4 rtl:rotate-180" />
                       {t("common:back")}
                     </Button>
                   )}
 
+                  {/* Separate keys: reusing one element would turn the pressed Next into a
+                      submit button before the click's default action runs, which submits. */}
                   {currentStep < 2 && !isEditing ? (
                     <Button
+                      key="next"
                       type="button"
                       onClick={handleMobileNext}
                       className="flex-1 font-medium"
                       disabled={!watchAccountId}
                     >
                       {t("common:next")}
-                      <Icons.ArrowRight className="ml-2 h-4 w-4" />
+                      <Icons.ArrowRight className="ms-2 h-4 w-4 rtl:rotate-180" />
                     </Button>
                   ) : (
                     <Button
+                      key="submit"
                       type="submit"
                       className="flex-1 font-medium"
                       disabled={saveMutation.isPending}
                     >
                       {saveMutation.isPending ? (
-                        <Icons.Spinner className="mr-2 h-4 w-4 animate-spin" />
+                        <Spinner className="me-2 h-4 w-4" />
                       ) : (
-                        <Icons.Check className="mr-2 h-4 w-4" />
+                        <Icons.Check className="me-2 h-4 w-4" />
                       )}
                       {isEditing
                         ? t("spending:cashForm.updateTransaction")
@@ -912,7 +967,7 @@ export function CashActivityForm({
                 <Button type="submit" disabled={saveMutation.isPending}>
                   {saveMutation.isPending ? (
                     <>
-                      <Icons.Spinner className="mr-2 h-4 w-4 animate-spin" />
+                      <Spinner className="me-2 h-4 w-4" />
                       {t("spending:common.saving")}
                     </>
                   ) : isEditing ? (

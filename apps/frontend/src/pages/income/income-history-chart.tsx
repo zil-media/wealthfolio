@@ -15,7 +15,13 @@ import {
   ChartTooltip,
   ChartTooltipContent,
 } from "@wealthfolio/ui/components/ui/chart";
-import { EmptyPlaceholder } from "@wealthfolio/ui/components/ui/empty-placeholder";
+import {
+  Empty,
+  EmptyHeader,
+  EmptyMedia,
+  EmptyTitle,
+  EmptyDescription,
+} from "@wealthfolio/ui/components/ui/empty";
 import { Icons } from "@wealthfolio/ui/components/ui/icons";
 import React, { useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
@@ -163,7 +169,7 @@ export const IncomeHistoryChart: React.FC<IncomeHistoryChartProps> = ({
     axisLine: false,
     ticks: xTicks,
     interval: 0 as const,
-    tick: { fontSize: isMobile ? 11 : 12 },
+    tick: { fontSize: isMobile ? "0.6875rem" : "0.75rem" },
     tickFormatter: (value: string) => {
       return dateFormatting.formatCalendarDate(`${value}-01`, {
         calendar: "gregory",
@@ -194,11 +200,12 @@ export const IncomeHistoryChart: React.FC<IncomeHistoryChartProps> = ({
   const yAxisProps = {
     tickLine: false,
     axisLine: false,
-    tick: { fontSize: isMobile ? 10 : 12 },
+    tick: { fontSize: isMobile ? "0.6875rem" : "0.75rem" },
     width: isMobile ? 45 : 60,
     ticks: yTicks,
     domain: [0, yTicks[yTicks.length - 1] || 0] as [number, number],
-    tickFormatter: (value: number) => formatCompactAmount(value, currency, false),
+    tickFormatter: (value: number) =>
+      isBalanceHidden ? "••" : formatCompactAmount(value, currency, false),
   };
 
   const tooltipLabelFormatter = (label: unknown) => {
@@ -244,16 +251,19 @@ export const IncomeHistoryChart: React.FC<IncomeHistoryChartProps> = ({
       </CardHeader>
       <CardContent className="flex flex-1 flex-col px-4 pt-0 md:px-6">
         {chartData.length === 0 ? (
-          <EmptyPlaceholder
-            className="mx-auto flex h-[250px] max-w-[420px] items-center justify-center md:h-[300px]"
-            icon={<Icons.Activity className="h-8 w-8 md:h-10 md:w-10" />}
-            title={t("income:no_income_history")}
-            description={t("income:no_income_history_desc")}
-          />
+          <Empty className="mx-auto flex h-62.5 max-w-105 items-center justify-center md:h-75">
+            <EmptyHeader>
+              <EmptyMedia variant="icon">
+                {<Icons.Activity className="size-8 md:size-10" />}
+              </EmptyMedia>
+              <EmptyTitle>{t("income:no_income_history")}</EmptyTitle>
+              <EmptyDescription>{t("income:no_income_history_desc")}</EmptyDescription>
+            </EmptyHeader>
+          </Empty>
         ) : effectiveViewMode === "byAccount" ? (
           <ChartContainer
             config={accountChartConfig}
-            className={cn("h-full min-h-[280px] w-full flex-1 md:min-h-[380px]")}
+            className={cn("min-h-70 md:min-h-95 h-full w-full flex-1")}
             data-no-swipe-drag
           >
             <BarChart
@@ -272,7 +282,7 @@ export const IncomeHistoryChart: React.FC<IncomeHistoryChartProps> = ({
               <ChartTooltip
                 content={
                   <ChartTooltipContent
-                    className="min-w-[150px] md:min-w-[180px]"
+                    className="min-w-37.5 md:min-w-45"
                     formatter={(value, name, entry) => {
                       const formattedValue = isBalanceHidden
                         ? "••••"
@@ -281,7 +291,7 @@ export const IncomeHistoryChart: React.FC<IncomeHistoryChartProps> = ({
                       return (
                         <>
                           <div
-                            className="border-border bg-(--color-bg) h-2.5 w-2.5 shrink-0 rounded-[2px]"
+                            className="border-border h-2.5 w-2.5 shrink-0 rounded-[2px] bg-(--color-bg)"
                             style={
                               {
                                 "--color-bg": entry.color,
@@ -334,7 +344,7 @@ export const IncomeHistoryChart: React.FC<IncomeHistoryChartProps> = ({
                 color: "var(--chart-stone)",
               },
             }}
-            className={cn("h-full min-h-[280px] w-full flex-1 md:min-h-[380px]")}
+            className={cn("min-h-70 md:min-h-95 h-full w-full flex-1")}
             data-no-swipe-drag
           >
             <ComposedChart
@@ -358,13 +368,15 @@ export const IncomeHistoryChart: React.FC<IncomeHistoryChartProps> = ({
                 width={isMobile ? 0 : 48}
                 ticks={rightTicks}
                 domain={[0, rightTicks[rightTicks.length - 1] || 0]}
-                tick={{ fontSize: 12, fill: "var(--chart-2)" }}
-                tickFormatter={(value: number) => formatCompactAmount(value, currency, false)}
+                tick={{ fontSize: "0.75rem", fill: "var(--chart-2)" }}
+                tickFormatter={(value: number) =>
+                  isBalanceHidden ? "••" : formatCompactAmount(value, currency, false)
+                }
               />
               <ChartTooltip
                 content={
                   <ChartTooltipContent
-                    className="min-w-[150px] md:min-w-[180px]"
+                    className="min-w-37.5 md:min-w-45"
                     formatter={(value, name, entry) => {
                       const formattedValue = isBalanceHidden
                         ? "••••"
@@ -372,7 +384,7 @@ export const IncomeHistoryChart: React.FC<IncomeHistoryChartProps> = ({
                       return (
                         <>
                           <div
-                            className="border-border bg-(--color-bg) h-2.5 w-2.5 shrink-0 rounded-[2px]"
+                            className="border-border h-2.5 w-2.5 shrink-0 rounded-[2px] bg-(--color-bg)"
                             style={
                               {
                                 "--color-bg": entry.color,

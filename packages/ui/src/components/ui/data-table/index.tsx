@@ -1,3 +1,4 @@
+import { useTranslation } from "react-i18next";
 import {
   ColumnDef,
   ColumnFiltersState,
@@ -14,6 +15,8 @@ import {
 } from "@tanstack/react-table";
 import * as React from "react";
 
+import { cn } from "../../../lib/utils";
+import { Card } from "../card";
 import { Icons } from "../icons";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "../table";
 import { usePersistentState } from "../../../hooks/use-persistent-state";
@@ -42,6 +45,8 @@ interface DataTableProps<TData, TValue> {
   toolbarFilters?: React.ReactNode;
   toolbarActions?: React.ReactNode;
   pinRowsToTop?: (row: TData) => boolean;
+  /** Draw the table on a Card. Pass false for a table already inside a card or dialog. */
+  card?: boolean;
 }
 
 /**
@@ -84,7 +89,10 @@ export function DataTable<TData, TValue>({
   toolbarFilters,
   toolbarActions,
   pinRowsToTop,
+  card = true,
 }: DataTableProps<TData, TValue>) {
+  const { t } = useTranslation();
+  const Frame = card ? Card : "div";
   const [rowSelection, setRowSelection] = React.useState({});
   const [storedColumnVisibility, setColumnVisibility] = storageKey
     ? usePersistentState<VisibilityState>(
@@ -178,9 +186,40 @@ export function DataTable<TData, TValue>({
           actions={toolbarActions}
         />
       </div>
-      <div className={`min-h-0 flex-1 rounded-md border ${scrollable ? "overflow-auto" : ""}`}>
-        <Table>
-          <TableHeader className="bg-muted/50 sticky top-0 z-10">
+      {/* Sticky cells pin to the nearest scroll container. On pages that scroll as a
+          whole nothing bounds this box, so it grew to the table's height and the header
+          moved with it. Capping it to the viewport makes it the scroller (9rem leaves
+          room for the Holdings page's tabs and toolbar, so the table fits the window
+          there), and letting the Table's own overflow wrapper spill into it keeps
+          sideways scrolling here too.
+          `isolate` stops WebKitGTK painting the sticky header over this scrollbar, and
+          top scroll padding as tall as the header cells (h-12) plus the 4px a button's
+          focus outline reaches out stops keyboard focus scrolling a control, or its
+          outline, in under the header.
+          Otherwise overflow-clip rounds the header row into the frame without making the
+          frame a scroll container, so a sticky header still follows the page. */}
+      <Frame
+        className={cn(
+          "min-h-0 flex-1",
+          !card && "rounded-md border",
+          scrollable ? "scroll-pt-13 isolate max-h-[calc(100dvh-9rem)] overflow-auto" : "overflow-clip",
+        )}
+      >
+        <Table containerClassName={scrollable ? "overflow-visible" : undefined}>
+          {/* Rows pass under a pinned header: give it an opaque surface (the card's, or
+              the look of bg-muted/50 on the page), and draw its bottom line on the
+              cells, since the collapsed row border scrolls away with the table. */}
+          <TableHeader
+            className={cn(
+              "sticky top-0 z-10",
+              card
+                ? "bg-card"
+                : scrollable
+                  ? "bg-[color-mix(in_srgb,var(--muted)_50%,var(--background))]"
+                  : "bg-muted/50",
+              scrollable && "[&_th]:shadow-[inset_0_-1px_0_var(--border)] [&_tr]:border-b-0",
+            )}
+          >
             {table.getHeaderGroups().map((headerGroup) => (
               <TableRow key={headerGroup.id}>
                 {headerGroup.headers.map((header) => {
@@ -207,14 +246,14 @@ export function DataTable<TData, TValue>({
                 <TableCell colSpan={columns.length} className="h-24 text-center">
                   <div className="flex flex-col items-center justify-center">
                     <Icons.FileText className="text-muted-foreground mb-2 h-10 w-10" />
-                    <p className="text-muted-foreground text-sm">No results found.</p>
+                    <p className="text-muted-foreground text-sm">{t("common:no_results_found", "No results found.")}</p>
                   </div>
                 </TableCell>
               </TableRow>
             )}
           </TableBody>
         </Table>
-      </div>
+      </Frame>
     </div>
   );
 }

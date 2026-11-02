@@ -1,3 +1,7 @@
+import {
+  formatDraftErrors,
+  type LocalDraftErrorMessages,
+} from "../utils/draft-validation-messages";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import type { TFunction } from "i18next";
@@ -78,6 +82,7 @@ function getStatusTitle(
   duplicateOfLineNumber?: number,
   errors?: Record<string, string[]>,
   warnings?: Record<string, string[]>,
+  localErrorMessages?: LocalDraftErrorMessages,
 ): string | undefined {
   if (status === "valid") return undefined;
   if (status === "skipped" && skipReason) return skipReason;
@@ -87,7 +92,9 @@ function getStatusTitle(
   if (duplicateOfId) return t("activity:import.status.duplicateExisting");
   if (errors) {
     const errorDetails = Object.entries(errors)
-      .flatMap(([field, msgs]) => msgs.map((msg) => `${field}: ${msg}`))
+      .flatMap(([field, msgs]) =>
+        formatDraftErrors(t, msgs, localErrorMessages?.[field]).map((msg) => `${field}: ${msg}`),
+      )
       .join("\n");
     if (errorDetails) {
       return errorDetails;
@@ -108,10 +115,10 @@ function getStatusTitle(
 
 const STATUS_DOT_COLOR: Record<DraftActivityStatus, string> = {
   valid: "",
-  error: "bg-red-500",
-  warning: "bg-yellow-500",
-  duplicate: "bg-blue-500",
-  skipped: "bg-gray-400",
+  error: "bg-destructive",
+  warning: "bg-warning",
+  duplicate: "bg-info",
+  skipped: "bg-muted-foreground",
 };
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -178,9 +185,8 @@ function useImportReviewColumns({
         header: ({ table }) => (
           <Checkbox
             disabled={!table.getRowModel().rows.some((row) => row.getCanSelect())}
-            checked={
-              table.getIsAllRowsSelected() || (table.getIsSomeRowsSelected() && "indeterminate")
-            }
+            checked={table.getIsAllRowsSelected()}
+            indeterminate={table.getIsSomeRowsSelected()}
             onCheckedChange={(checked) => table.toggleAllRowsSelected(Boolean(checked))}
             aria-label={t("activity:import.columns.selectAllRows")}
           />
@@ -213,6 +219,7 @@ function useImportReviewColumns({
             duplicateOfLineNumber,
             errors,
             warnings,
+            localErrorMessages,
             rowIndex,
             forceImport,
           } = row.original;
@@ -227,8 +234,9 @@ function useImportReviewColumns({
                 duplicateOfLineNumber,
                 errors,
                 warnings,
+                localErrorMessages,
               );
-          const dotColor = isForcedDuplicate ? "bg-amber-500" : STATUS_DOT_COLOR[status];
+          const dotColor = isForcedDuplicate ? "bg-warning" : STATUS_DOT_COLOR[status];
           const dot = dotColor ? (
             <span className={`inline-block h-2 w-2 shrink-0 rounded-full ${dotColor}`} />
           ) : null;
@@ -236,15 +244,15 @@ function useImportReviewColumns({
             <div className="flex items-center gap-1.5">
               <span className="text-muted-foreground shrink-0 text-xs">{rowIndex + 1}</span>
               {dot && title ? (
-                <TooltipProvider delayDuration={200}>
+                <TooltipProvider delay={200}>
                   <Tooltip>
-                    <TooltipTrigger asChild>{dot}</TooltipTrigger>
+                    <TooltipTrigger render={dot} />
                     <TooltipContent
-                      side="right"
+                      side="inline-end"
                       className={
                         status === "error"
-                          ? "bg-destructive text-destructive-foreground border-destructive max-w-xs whitespace-pre-wrap text-xs"
-                          : "max-w-xs whitespace-pre-wrap text-xs"
+                          ? "max-w-xs text-xs whitespace-pre-wrap"
+                          : "max-w-xs text-xs whitespace-pre-wrap"
                       }
                     >
                       {title}
@@ -315,7 +323,7 @@ function useImportReviewColumns({
         meta: {
           cell: {
             variant: "select",
-            // eslint-disable-next-line @typescript-eslint/no-explicit-any
+            // oxlint-disable-next-line typescript/no-explicit-any
             options: getSubtypeOptions as any,
             allowEmpty: true,
             emptyLabel: t("activity:import.columns.none"),
@@ -370,7 +378,10 @@ function useImportReviewColumns({
         meta: {
           cell: {
             variant: "select",
-            options: [...INSTRUMENT_TYPE_OPTIONS],
+            options: INSTRUMENT_TYPE_OPTIONS.map((opt) => ({
+              value: opt.value,
+              label: t(`asset:createSecurity.instrumentType.${opt.value.toLowerCase()}`),
+            })),
             allowEmpty: true,
             emptyLabel: t("activity:import.columns.auto"),
           },
@@ -493,6 +504,7 @@ export function ImportReviewGrid({
   gridHeight,
   importProfile = DEFAULT_ACTIVITY_IMPORT_PROFILE,
 }: ImportReviewGridProps) {
+  const { t } = useTranslation();
   const { settings } = useSettingsContext();
   const fallbackCurrency = settings?.baseCurrency ?? "USD";
   const nonSelectableRowIndexSet = useMemo(
@@ -548,7 +560,10 @@ export function ImportReviewGrid({
     // Convert vertical scroll to horizontal when Shift is pressed
     if (e.shiftKey && e.deltaY !== 0) {
       e.preventDefault();
-      target.scrollLeft += e.deltaY;
+      // Scrolling down moves toward the end of the row, which is leftward
+      // (negative scrollLeft) in right-to-left.
+      const towardEnd = getComputedStyle(target).direction === "rtl" ? -1 : 1;
+      target.scrollLeft += towardEnd * e.deltaY;
     }
   }, []);
 
@@ -731,6 +746,8 @@ export function ImportReviewGrid({
   // drafts even when the DataGrid's internal propsRef lags by one layout-effect.
   const draftsRef = useRef(drafts);
   draftsRef.current = drafts;
+  const translationRef = useRef(t);
+  translationRef.current = t;
 
   // Cell state callback for error/warning highlighting with messages
   const getCellState = useCallback(
@@ -747,7 +764,14 @@ export function ImportReviewGrid({
       // Check for errors first (higher priority)
       const errors = draft.errors?.[columnId];
       if (errors?.length) {
-        return { type: "error", messages: errors };
+        return {
+          type: "error",
+          messages: formatDraftErrors(
+            translationRef.current,
+            errors,
+            draft.localErrorMessages?.[columnId],
+          ),
+        };
       }
 
       // Then check for warnings
@@ -761,9 +785,13 @@ export function ImportReviewGrid({
     [],
   );
 
+  // Memoized grid rows compare original object identity, not translated columns/meta.
+  // Refresh view copies on language changes without changing draft state or grid selection.
+  const displayDrafts = useMemo(() => drafts.map((draft) => ({ ...draft })), [drafts, t]);
+
   // Initialize data grid
   const dataGrid = useDataGrid<DraftActivity>({
-    data: drafts,
+    data: displayDrafts,
     columns,
     getRowId: (row) => String(row.rowIndex),
     enableRowSelection: (row) => !nonSelectableRowIndexSet.has(row.original.rowIndex),

@@ -1,30 +1,13 @@
-import { Dialog, DialogDescription, DialogOverlay, DialogPortal, DialogTitle } from "./dialog";
-import { Icons } from "./icons";
+import { useTranslation } from "react-i18next";
+import { Dialog, DialogContent, DialogDescription, DialogTitle } from "./dialog";
+import { Spinner } from "./spinner";
 import { cn } from "../../lib/utils";
-import * as DialogPrimitive from "@radix-ui/react-dialog";
 import { motion } from "motion/react";
-import React, { useEffect, useState } from "react";
+import { useEffect, useState } from "react";
 
-// Custom DialogContent without close button
-const DialogContentWithoutClose = React.forwardRef<
-  React.ElementRef<typeof DialogPrimitive.Content>,
-  React.ComponentPropsWithoutRef<typeof DialogPrimitive.Content>
->(({ className, children, ...props }, ref) => (
-  <DialogPortal>
-    <DialogOverlay />
-    <DialogPrimitive.Content
-      ref={ref}
-      className={cn(
-        "bg-background data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0 data-[state=closed]:zoom-out-95 data-[state=open]:zoom-in-95 data-[state=closed]:slide-out-to-left-1/2 data-[state=closed]:slide-out-to-top-[48%] data-[state=open]:slide-in-from-left-1/2 data-[state=open]:slide-in-from-top-[48%] fixed left-[50%] top-[50%] z-50 grid w-full max-w-lg translate-x-[-50%] translate-y-[-50%] gap-4 border p-6 shadow-lg duration-200 sm:rounded-lg",
-        className,
-      )}
-      {...props}
-    >
-      {children}
-    </DialogPrimitive.Content>
-  </DialogPortal>
-));
-DialogContentWithoutClose.displayName = "DialogContentWithoutClose";
+// A dialog on every screen size, phones included, as before: progress is a
+// small card, not a bottom sheet.
+const neverMobile = () => false;
 
 export interface ProgressIndicatorProps {
   isLoading?: boolean;
@@ -38,11 +21,17 @@ export interface ProgressIndicatorProps {
 export function ProgressIndicator({
   isLoading = true,
   open,
-  title = "Processing",
-  description = "Please wait while we process your request. This may take a few moments.",
-  message = "Processing...",
+  title: titleProp,
+  description: descriptionProp,
+  message: messageProp,
   className,
 }: ProgressIndicatorProps) {
+  const { t } = useTranslation();
+  const title = titleProp ?? t("ui:progress.title", "Processing");
+  const description =
+    descriptionProp ??
+    t("ui:progress.description", "Please wait while we process your request. This may take a few moments.");
+  const message = messageProp ?? t("ui:progress.message", "Processing...");
   const [elapsedTime, setElapsedTime] = useState(0);
 
   // Track elapsed time during import
@@ -84,7 +73,7 @@ export function ProgressIndicator({
               ease: "easeInOut",
             }}
           >
-            <Icons.Settings className="h-8 w-8 animate-spin text-orange-500" />
+            <Spinner className="text-primary size-8" />
           </motion.div>
           <motion.h3
             className="text-base font-medium"
@@ -117,9 +106,9 @@ export function ProgressIndicator({
         <div className="mt-6">
           <div className="relative h-2.5">
             {/* Beautiful gradient progress bar */}
-            <div className="bg-secondary/30 h-2.5 w-full overflow-hidden rounded-full">
+            <div className="bg-secondary/30 h-2.5 w-full overflow-hidden rounded-full rtl:-scale-x-100">
               <motion.div
-                className="bg-linear-to-r h-full rounded-full from-red-500 via-orange-500 to-yellow-500"
+                className="bg-primary h-full rounded-full"
                 initial={{ x: "-100%" }}
                 animate={{ x: "100%" }}
                 transition={{
@@ -139,18 +128,12 @@ export function ProgressIndicator({
   // If open prop is provided, render as a dialog
   if (open !== undefined) {
     return (
-      <Dialog open={open}>
-        <DialogContentWithoutClose className="border-none bg-transparent p-0 shadow-none sm:max-w-md">
+      <Dialog open={open} useIsMobile={neverMobile}>
+        <DialogContent showCloseButton={false} className="border-none bg-transparent p-0 shadow-none sm:max-w-md">
           <DialogTitle className="sr-only">{title}</DialogTitle>
           <DialogDescription className="sr-only">{description}</DialogDescription>
-          <motion.div
-            initial={{ scale: 0.9, opacity: 0 }}
-            animate={{ scale: 1, opacity: 1 }}
-            transition={{ duration: 0.3 }}
-          >
-            {progressContent}
-          </motion.div>
-        </DialogContentWithoutClose>
+          {progressContent}
+        </DialogContent>
       </Dialog>
     );
   }

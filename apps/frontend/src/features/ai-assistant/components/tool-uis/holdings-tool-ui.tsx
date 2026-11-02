@@ -201,7 +201,7 @@ function getColorScale(gain: number, maxGain: number, minGain: number): ColorSca
   if (isNaN(gain) || isNaN(maxGain) || isNaN(minGain)) {
     return {
       opacity: 0.5,
-      className: isGain ? "fill-success" : "fill-destructive",
+      className: isGain ? "fill-gain" : "fill-loss",
     };
   }
 
@@ -216,7 +216,7 @@ function getColorScale(gain: number, maxGain: number, minGain: number): ColorSca
 
   return {
     opacity,
-    className: isGain ? "fill-success" : "fill-destructive",
+    className: isGain ? "fill-gain" : "fill-loss",
   };
 }
 
@@ -341,7 +341,7 @@ const TreemapTooltip: FC<TreemapTooltipProps> = ({ active, payload, currency = "
           </div>
           <div className="flex items-center justify-between gap-4 text-xs">
             <span className="text-muted-foreground">{t("ai:holdings.today")}</span>
-            <span className={cn("font-medium", isPositive ? "text-success" : "text-destructive")}>
+            <span className={cn("font-medium", isPositive ? "text-gain" : "text-loss")}>
               {isPositive ? "+" : ""}
               {numberFormatting.formatPercent(gain)}
             </span>
@@ -493,16 +493,16 @@ function HoldingsContentImpl({ args, result, status }: HoldingsContentProps) {
           </div>
         </CardHeader>
         <CardContent className="px-0 pb-0">
-          <div className="max-h-[320px] overflow-y-auto">
+          <div className="max-h-80 overflow-y-auto">
             <Table>
               <TableHeader>
                 <TableRow className="hover:bg-transparent">
-                  <TableHead className="pl-4 text-xs">{t("ai:holdings.colSymbol")}</TableHead>
-                  <TableHead className="text-right text-xs">{t("ai:holdings.colValue")}</TableHead>
-                  <TableHead className="hidden text-right text-xs sm:table-cell">
+                  <TableHead className="ps-4 text-xs">{t("ai:holdings.colSymbol")}</TableHead>
+                  <TableHead className="text-end text-xs">{t("ai:holdings.colValue")}</TableHead>
+                  <TableHead className="hidden text-end text-xs sm:table-cell">
                     {t("ai:holdings.colWeight")}
                   </TableHead>
-                  <TableHead className="pr-4 text-right text-xs">
+                  <TableHead className="pe-4 text-end text-xs">
                     {t("ai:holdings.colGain")}
                   </TableHead>
                 </TableRow>
@@ -510,17 +510,17 @@ function HoldingsContentImpl({ args, result, status }: HoldingsContentProps) {
               <TableBody>
                 {Array.from({ length: 5 }).map((_, i) => (
                   <TableRow key={i} className="text-xs">
-                    <TableCell className="py-2 pl-4">
+                    <TableCell className="py-2 ps-4">
                       <Skeleton className="h-4 w-16" />
                     </TableCell>
-                    <TableCell className="py-2 text-right">
-                      <Skeleton className="ml-auto h-4 w-20" />
+                    <TableCell className="py-2 text-end">
+                      <Skeleton className="ms-auto h-4 w-20" />
                     </TableCell>
-                    <TableCell className="hidden py-2 text-right sm:table-cell">
-                      <Skeleton className="ml-auto h-4 w-12" />
+                    <TableCell className="hidden py-2 text-end sm:table-cell">
+                      <Skeleton className="ms-auto h-4 w-12" />
                     </TableCell>
-                    <TableCell className="py-2 pr-4 text-right">
-                      <Skeleton className="ml-auto h-4 w-14" />
+                    <TableCell className="py-2 pe-4 text-end">
+                      <Skeleton className="ms-auto h-4 w-14" />
                     </TableCell>
                   </TableRow>
                 ))}
@@ -566,7 +566,7 @@ function HoldingsContentImpl({ args, result, status }: HoldingsContentProps) {
 
   // Treemap view component
   const TreemapView = () => (
-    <div className="pb-2 pt-4">
+    <div className="pt-4 pb-2">
       <div className="flex flex-wrap items-start justify-between gap-2 px-4 pb-2">
         <div>
           <p className="text-sm font-medium">
@@ -575,13 +575,13 @@ function HoldingsContentImpl({ args, result, status }: HoldingsContentProps) {
           <p className="text-muted-foreground mt-1 text-xs">
             {t("ai:holdings.positions", { count: holdingsCount })} · {returnLabel}
             {accountLabel !== "Portfolio" && (
-              <Badge variant="outline" className="ml-2 text-xs uppercase">
+              <Badge variant="outline" className="ms-2 text-xs uppercase">
                 {accountLabel}
               </Badge>
             )}
           </p>
         </div>
-        <div className="text-right">
+        <div className="text-end">
           <span className="text-xl font-bold">{formatValue(totalValue)}</span>
           {!isBalanceHidden && (
             <p
@@ -590,8 +590,8 @@ function HoldingsContentImpl({ args, result, status }: HoldingsContentProps) {
                 portfolioChange == null
                   ? "text-muted-foreground"
                   : portfolioChange >= 0
-                    ? "text-success"
-                    : "text-destructive",
+                    ? "text-gain"
+                    : "text-loss",
               )}
             >
               {portfolioChange == null ? (
@@ -611,7 +611,7 @@ function HoldingsContentImpl({ args, result, status }: HoldingsContentProps) {
           )}
         </div>
       </div>
-      <div className="h-[240px] px-2">
+      <div className="h-60 px-2">
         <ResponsiveContainer width="100%" height="100%">
           <Treemap
             data={treemapData}
@@ -643,25 +643,22 @@ function HoldingsContentImpl({ args, result, status }: HoldingsContentProps) {
               <p className="text-muted-foreground mt-1 text-xs">
                 {t("ai:holdings.positions", { count: holdingsCount })}
                 {accountLabel !== "Portfolio" && (
-                  <Badge variant="outline" className="ml-2 text-xs uppercase">
+                  <Badge variant="outline" className="ms-2 text-xs uppercase">
                     {accountLabel}
                   </Badge>
                 )}
                 {parsed?.truncated && parsed.originalCount && (
-                  <Badge variant="secondary" className="ml-1 text-xs">
+                  <Badge variant="secondary" className="ms-1 text-xs">
                     {holdingsCount} / {parsed.originalCount}
                   </Badge>
                 )}
               </p>
             </div>
-            <div className="text-right">
+            <div className="text-end">
               <span className="text-xl font-bold">{formatValue(totalValue)}</span>
               {!isBalanceHidden && (
                 <p
-                  className={cn(
-                    "text-sm font-medium",
-                    gainAmount >= 0 ? "text-success" : "text-destructive",
-                  )}
+                  className={cn("text-sm font-medium", gainAmount >= 0 ? "text-gain" : "text-loss")}
                 >
                   {gainAmount > 0 ? "+" : ""}
                   {amountFormatting.formatAmount(gainAmount, currency)} (
@@ -679,16 +676,16 @@ function HoldingsContentImpl({ args, result, status }: HoldingsContentProps) {
             </div>
           </div>
         )}
-        <div className="max-h-[320px] overflow-y-auto">
+        <div className="max-h-80 overflow-y-auto">
           <Table>
             <TableHeader>
               <TableRow className="hover:bg-transparent">
-                <TableHead className="pl-4 text-xs">{t("ai:holdings.colSymbol")}</TableHead>
-                <TableHead className="text-right text-xs">{t("ai:holdings.colValue")}</TableHead>
-                <TableHead className="hidden text-right text-xs sm:table-cell">
+                <TableHead className="ps-4 text-xs">{t("ai:holdings.colSymbol")}</TableHead>
+                <TableHead className="text-end text-xs">{t("ai:holdings.colValue")}</TableHead>
+                <TableHead className="hidden text-end text-xs sm:table-cell">
                   {t("ai:holdings.colWeight")}
                 </TableHead>
-                <TableHead className="pr-4 text-right text-xs">
+                <TableHead className="pe-4 text-end text-xs">
                   {returnType === "daily"
                     ? t("ai:holdings.today")
                     : returnType === "return"
@@ -707,29 +704,29 @@ function HoldingsContentImpl({ args, result, status }: HoldingsContentProps) {
                       : (holding.totalGainPct ?? holding.unrealizedGainPct ?? null);
                 return (
                   <TableRow key={`${holding.account}-${holding.symbol}`} className="text-xs">
-                    <TableCell className="py-2 pl-4">
+                    <TableCell className="py-2 ps-4">
                       <div>
                         <div className="font-medium">{holding.symbol}</div>
                         {holding.name && (
-                          <div className="text-muted-foreground max-w-[120px] truncate text-[10px] sm:max-w-[200px]">
+                          <div className="text-muted-foreground text-2xs max-w-30 truncate sm:max-w-50">
                             {holding.name}
                           </div>
                         )}
                       </div>
                     </TableCell>
-                    <TableCell className="py-2 text-right font-medium tabular-nums">
+                    <TableCell className="py-2 text-end font-medium tabular-nums">
                       <div>{formatValue(holding.marketValueBase)}</div>
-                      <div className="text-muted-foreground text-[10px]">{holding.currency}</div>
+                      <div className="text-muted-foreground text-2xs">{holding.currency}</div>
                     </TableCell>
-                    <TableCell className="hidden py-2 text-right tabular-nums sm:table-cell">
+                    <TableCell className="hidden py-2 text-end tabular-nums sm:table-cell">
                       {(holding.weight * 100).toFixed(1)}%
                     </TableCell>
-                    <TableCell className="py-2 pr-4 text-right">
+                    <TableCell className="py-2 pe-4 text-end">
                       {tableGainPct != null ? (
                         <span
                           className={cn(
                             "tabular-nums",
-                            tableGainPct >= 0 ? "text-success" : "text-destructive",
+                            tableGainPct >= 0 ? "text-gain" : "text-loss",
                           )}
                         >
                           {tableGainPct > 0 ? "+" : ""}
@@ -798,7 +795,7 @@ function HoldingsContentImpl({ args, result, status }: HoldingsContentProps) {
       <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-0">
         {ReturnTypeToggle}
       </CardHeader>
-      <CardContent className="px-0 pb-0 pt-4">
+      <CardContent className="px-0 pt-4 pb-0">
         <TableView />
       </CardContent>
     </Card>

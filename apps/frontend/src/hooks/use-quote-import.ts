@@ -1,3 +1,4 @@
+import { useTranslation } from "react-i18next";
 import { checkQuotesImport, importManualQuotes } from "@/adapters";
 import { invalidatePerformanceCaches } from "@/lib/performance-cache";
 import { QueryKeys } from "@/lib/query-keys";
@@ -47,7 +48,23 @@ function normalizeQuoteImport(quote: QuoteImport): QuoteImport {
   };
 }
 
+// Tauri commands reject with the backend's message as a plain string.
+function errorMessage(err: unknown, fallback: string): string {
+  if (typeof err === "string" && err.trim()) return err;
+  if (
+    err &&
+    typeof err === "object" &&
+    "message" in err &&
+    typeof err.message === "string" &&
+    err.message.trim()
+  ) {
+    return err.message;
+  }
+  return fallback;
+}
+
 export function useQuoteImport(): QuoteImportState & QuoteImportActions {
+  const { t } = useTranslation();
   const queryClient = useQueryClient();
   const [file, setFile] = useState<File | null>(null);
   const [preview, setPreview] = useState<QuoteImportPreview | null>(null);
@@ -61,7 +78,7 @@ export function useQuoteImport(): QuoteImportState & QuoteImportActions {
 
   const validateFile = useCallback(async () => {
     if (!file) {
-      setError("No file selected");
+      setError(t("ui:quoteImport.noFile", "No file selected"));
       return false;
     }
 
@@ -98,30 +115,37 @@ export function useQuoteImport(): QuoteImportState & QuoteImportActions {
 
       return true;
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to validate CSV");
+      setError(errorMessage(err, t("ui:quoteImport.validateFailed", "Failed to validate CSV")));
       return false;
     } finally {
       setIsValidating(false);
     }
-  }, [file, isValidating]);
+  }, [file, isValidating, t]);
 
   const importQuotes = useCallback(async () => {
     if (!file) {
-      setError("No file selected");
+      setError(t("ui:quoteImport.noFile", "No file selected"));
       return false;
     }
 
     // Use validated quotes from validation step
     const allQuotes = validatedQuotesRef.current;
     if (allQuotes.length === 0) {
-      setError("No quotes to import. Please validate the file first.");
+      setError(
+        t("ui:quoteImport.validateFirst", "No quotes to import. Please validate the file first."),
+      );
       return false;
     }
 
     // Filter to only valid quotes (those with matched assets)
     const validQuotes = allQuotes.filter((q) => q.validationStatus === "valid");
     if (validQuotes.length === 0) {
-      setError("No valid quotes to import. All quotes have validation errors.");
+      setError(
+        t(
+          "ui:quoteImport.noValid",
+          "No valid quotes to import. All quotes have validation errors.",
+        ),
+      );
       return false;
     }
 
@@ -129,23 +153,21 @@ export function useQuoteImport(): QuoteImportState & QuoteImportActions {
     setImportProgress(0);
     setError(null);
 
+    // Simulate progress during import since Tauri command doesn't provide updates
+    const progressInterval = setInterval(() => {
+      setImportProgress((prev) => {
+        const newProgress = prev + Math.random() * 10;
+        return Math.min(newProgress, 90);
+      });
+    }, 200);
+
     try {
       setImportProgress(25);
-
-      // Simulate progress during import since Tauri command doesn't provide updates
-      const progressInterval = setInterval(() => {
-        setImportProgress((prev) => {
-          const newProgress = prev + Math.random() * 10;
-          return Math.min(newProgress, 90);
-        });
-      }, 200);
 
       const importResult = await importManualQuotes(prepareQuotesForImport(validQuotes));
       const normalizedResult = importResult.map(normalizeQuoteImport);
       queryClient.invalidateQueries({ queryKey: [QueryKeys.LATEST_QUOTES] });
       invalidatePerformanceCaches(queryClient);
-
-      clearInterval(progressInterval);
 
       setImportProgress(100);
 
@@ -161,13 +183,14 @@ export function useQuoteImport(): QuoteImportState & QuoteImportActions {
 
       return true;
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to import quotes");
+      setError(errorMessage(err, t("ui:quoteImport.importFailed", "Failed to import quotes")));
       return false;
     } finally {
+      clearInterval(progressInterval);
       setIsImporting(false);
       setImportProgress(0);
     }
-  }, [file, queryClient]);
+  }, [file, queryClient, t]);
 
   const reset = useCallback(() => {
     setFile(null);

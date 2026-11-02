@@ -14,7 +14,10 @@
     "noDevicesSyncing": "Noch keine Geräte werden synchronisiert",
     "noDevicesDescription": "Richten Sie die Gerätesynchronisierung in den Einstellungen ein, um Ihre Daten geräteübergreifend synchron zu halten.",
     "noActivity": "Noch keine Aktivität",
-    "noActivityDescription": "Aktualisierungen erscheinen hier, sobald Ihre Daten synchronisiert werden."
+    "noActivityDescription": "Aktualisierungen erscheinen hier, sobald Ihre Daten synchronisiert werden.",
+    "showMore_one": "{{count}} weitere anzeigen",
+    "showMore_other": "{{count}} weitere anzeigen",
+    "showLess": "Weniger anzeigen"
   },
   "emptyState": {
     "optional": "Optional",
@@ -24,16 +27,16 @@
     "learnMore": "Mehr über Connect erfahren",
     "features": {
       "brokerageSync": {
-        "title": "Broker-Synchronisierung",
-        "description": "Konten und Transaktionen täglich automatisch synchronisieren."
+        "title": "Verbundene Konten",
+        "description": "Transaktionen deiner Broker automatisch synchronisieren."
       },
       "deviceSync": {
-        "title": "Gerätesynchronisierung",
-        "description": "Geräteübergreifend mit Ende-zu-Ende-Verschlüsselung synchronisieren."
+        "title": "Gerätesync und Backup",
+        "description": "Ende-zu-Ende-verschlüsselte Synchronisierung und automatische Cloud-Backups."
       },
       "householdView": {
-        "title": "Haushaltsansicht",
-        "description": "Konten mit Familienmitgliedern teilen."
+        "title": "Familienportfolios",
+        "description": "Eine gemeinsame Übersicht über die Anlagen deiner Familie."
       }
     }
   },
@@ -71,7 +74,8 @@
     "noDataYet": "Noch keine Daten",
     "dataAsOf": "Daten vom {{date}}",
     "emptyTitle": "Noch keine Konten synchronisiert",
-    "emptyDescription": "Verbinden Sie einen Broker, um mit der Synchronisierung Ihrer Konten zu beginnen."
+    "emptyDescription": "Verbinden Sie einen Broker, um mit der Synchronisierung Ihrer Konten zu beginnen.",
+    "needsSetup": "Einrichtung erforderlich"
   },
   "connections": {
     "title": "Broker-Verbindungen",
@@ -88,7 +92,11 @@
     "accountsSyncing_one": "{{count}} Konto wird synchronisiert",
     "accountsSyncing_other": "{{count}} Konten werden synchronisiert",
     "partialSyncing_one": "{{syncing}} von {{total}} Konten werden synchronisiert · {{excluded}} Konto ausgeschlossen",
-    "partialSyncing_other": "{{syncing}} von {{total}} Konten werden synchronisiert · {{excluded}} Konten ausgeschlossen"
+    "partialSyncing_other": "{{syncing}} von {{total}} Konten werden synchronisiert · {{excluded}} Konten ausgeschlossen",
+    "accountCount_one": "{{count}} Konto",
+    "accountCount_other": "{{count}} Konten",
+    "excludedCount_one": "{{count}} ausgeschlossen",
+    "excludedCount_other": "{{count}} ausgeschlossen"
   },
   "sync": {
     "syncNow": "Jetzt synchronisieren",
@@ -182,20 +190,33 @@
   "attention": {
     "title": "Broker-Synchronisierung benötigt Aufmerksamkeit",
     "description_one": "{{count}} Konto benötigt einen erneuten Versuch oder eine Broker-Prüfung.",
-    "description_other": "{{count}} Konten benötigen einen erneuten Versuch oder eine Broker-Prüfung."
+    "description_other": "{{count}} Konten benötigen einen erneuten Versuch oder eine Broker-Prüfung.",
+    "heading": "Handlungsbedarf",
+    "connectionLost": "Verbindung unterbrochen",
+    "accountsNotSyncing_one": "{{count}} Konto wird nicht synchronisiert",
+    "accountsNotSyncing_other": "{{count}} Konten werden nicht synchronisiert",
+    "syncFailed": "Letzte Synchronisierung fehlgeschlagen"
   },
   "setup": {
     "newAccountsTitle": "Neue Konten müssen eingerichtet werden",
     "newAccountsDescription_one": "{{count}} Konto benötigt eine schnelle Einrichtung, bevor wir mit der Synchronisierung beginnen können.",
     "newAccountsDescription_other": "{{count}} Konten benötigen eine schnelle Einrichtung, bevor wir mit der Synchronisierung beginnen können.",
-    "reviewAccounts": "Konten prüfen"
+    "reviewAccounts": "Konten prüfen",
+    "setUp": "Einrichten"
   },
   "devices": {
     "thisDevice": "Dieses Gerät",
     "activeNow": "Jetzt aktiv",
     "lastSeen": "Zuletzt gesehen {{time}}",
     "online": "Online",
-    "never": "Nie"
+    "never": "Nie",
+    "showInactive_one": "{{count}} inaktives Gerät anzeigen",
+    "showInactive_other": "{{count}} inaktive Geräte anzeigen",
+    "hideInactive": "Inaktive Geräte ausblenden",
+    "platforms": {
+      "server": "Server",
+      "web": "Web"
+    }
   },
   "deviceStatus": {
     "syncError": "Synchronisierungsfehler",
@@ -299,5 +320,13 @@
     "description": "Du verbindest ein anderes Konto oder einen anderen Haushalt. Deine lokalen Portfoliodaten bleiben erhalten, aber bestehende Broker-Verknüpfungen und die Einrichtung der Gerätesynchronisierung werden entfernt. Das neue Konto kann diesem Profil Broker-Daten hinzufügen. Richte die Gerätesynchronisierung erneut ein, sobald du bereit bist. Verwende ein neues Profil, wenn du die Daten getrennt halten möchtest.",
     "cancel": "Abbrechen",
     "confirm": "Verbindung ändern"
+  },
+  "syncMessages": {
+    "runFailed": "Dieser Synchronisierungslauf konnte nicht abgeschlossen werden. Wiederholen Sie die Synchronisierung oder verwalten Sie Ihre Broker-Verbindung.",
+    "runNeedsReview": "Einige synchronisierte Einträge müssen geprüft werden, bevor die Synchronisierung fortgesetzt werden kann.",
+    "accountFailed": "Dieses Broker-Konto konnte nicht synchronisiert werden. Wiederholen Sie die Synchronisierung oder verwalten Sie Ihre Broker-Verbindung.",
+    "accountNeedsReview": "Einige Broker-Daten müssen geprüft werden. Wiederholen Sie die Synchronisierung oder verwalten Sie Ihre Broker-Verbindung.",
+    "holdingsSynced": "Bestände wurden synchronisiert, aber die Aktivitätssynchronisierung erfordert Aufmerksamkeit. Wiederholen Sie die Synchronisierung oder verwalten Sie Ihre Broker-Verbindung.",
+    "holdingsDeferred": "Die Bestandssynchronisierung erfordert Aufmerksamkeit. Wiederholen Sie die Synchronisierung oder verwalten Sie Ihre Broker-Verbindung."
   }
 }

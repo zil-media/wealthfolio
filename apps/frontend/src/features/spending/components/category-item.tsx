@@ -1,3 +1,4 @@
+import { getCategoryLabel } from "@/lib/taxonomy-labels";
 import { useState } from "react";
 import { useTranslation } from "react-i18next";
 
@@ -21,7 +22,7 @@ import type { TaxonomyCategory } from "@/lib/types";
 
 import { ActionPalette, type ActionPaletteGroup } from "@/components/action-palette";
 
-import { CategoryIcon } from "./category-chips";
+import { CategoryIconTile } from "./category-chips";
 
 export interface CategoryNode extends TaxonomyCategory {
   children?: CategoryNode[];
@@ -95,7 +96,7 @@ export function CategoryItem({
   ];
 
   return (
-    <div className={isSubcategory ? "ml-6 border-l pl-4" : ""}>
+    <div className={isSubcategory ? "ms-6 border-s ps-4" : ""}>
       <div className="flex items-center justify-between gap-2 py-2.5">
         <div
           className={`flex min-w-0 flex-1 items-center gap-2.5 ${isExcluded ? "opacity-60" : ""}`}
@@ -106,40 +107,35 @@ export function CategoryItem({
               size="sm"
               className="h-6 w-6 shrink-0 p-0"
               onClick={() => setIsExpanded(!isExpanded)}
+              aria-label={getCategoryLabel(t, category.taxonomyId, category.id, category.name)}
+              aria-expanded={isExpanded}
             >
               {isExpanded ? (
                 <Icons.ChevronDown className="h-4 w-4" />
               ) : (
-                <Icons.ChevronRight className="h-4 w-4" />
+                <Icons.ChevronRight className="h-4 w-4 rtl:rotate-180" />
               )}
             </Button>
           )}
           {!hasChildren && !isSubcategory && <div className="w-6 shrink-0" />}
-          <span
-            className={`flex shrink-0 items-center justify-center rounded-md ${
-              isSubcategory ? "h-6 w-6" : "h-7 w-7"
-            }`}
-            style={{
-              backgroundColor: category.color ? `${category.color}1F` : "var(--muted)",
-              color: category.color ?? "var(--muted-foreground)",
-            }}
-          >
-            <CategoryIcon
-              icon={category.icon ?? null}
-              fallback={category.name}
-              className={isSubcategory ? "h-3 w-3" : "h-3.5 w-3.5"}
-            />
-          </span>
+          <CategoryIconTile
+            icon={category.icon ?? null}
+            color={category.color ?? null}
+            className={isSubcategory ? undefined : "h-7 w-7"}
+            iconClassName={isSubcategory ? "h-3 w-3" : undefined}
+          />
           <span className={`min-w-0 truncate ${isSubcategory ? "text-sm" : "text-sm font-medium"}`}>
-            {category.name}
+            {getCategoryLabel(t, category.taxonomyId, category.id, category.name)}
           </span>
           {activityCount > 0 && (
             <TooltipProvider>
               <Tooltip>
-                <TooltipTrigger asChild>
-                  <span className="text-muted-foreground shrink-0 cursor-default text-xs">
-                    ({activityCount})
-                  </span>
+                <TooltipTrigger
+                  render={
+                    <span className="text-muted-foreground shrink-0 cursor-default text-xs" />
+                  }
+                >
+                  ({activityCount})
                 </TooltipTrigger>
                 <TooltipContent>
                   <p>{t("spending:category.transactionCount", { count: activityCount })}</p>
@@ -150,15 +146,17 @@ export function CategoryItem({
           {isExcluded && (
             <TooltipProvider>
               <Tooltip>
-                <TooltipTrigger asChild>
-                  <span className="text-muted-foreground flex shrink-0 items-center gap-1.5">
-                    <Icons.EyeOff className="h-3.5 w-3.5" />
-                    {parentExcluded && (
-                      <span className="hidden text-xs sm:inline">
-                        {t("spending:category.excludedWithParent", { name: parentName })}
-                      </span>
-                    )}
-                  </span>
+                <TooltipTrigger
+                  render={
+                    <span className="text-muted-foreground flex shrink-0 items-center gap-1.5" />
+                  }
+                >
+                  <Icons.EyeOff className="h-3.5 w-3.5" />
+                  {parentExcluded && (
+                    <span className="hidden text-xs sm:inline">
+                      {t("spending:category.excludedWithParent", { name: parentName })}
+                    </span>
+                  )}
                 </TooltipTrigger>
                 <TooltipContent>
                   <p>
@@ -206,7 +204,7 @@ export function CategoryItem({
         <ActionPalette
           open={paletteOpen}
           onOpenChange={setPaletteOpen}
-          title={category.name}
+          title={getCategoryLabel(t, category.taxonomyId, category.id, category.name)}
           groups={paletteGroups}
           align="end"
           trigger={
@@ -226,7 +224,9 @@ export function CategoryItem({
             <AlertDialogHeader>
               <AlertDialogTitle>{t("spending:category.deleteTitle")}</AlertDialogTitle>
               <AlertDialogDescription>
-                {t("spending:category.deleteConfirm", { name: category.name })}
+                {t("spending:category.deleteConfirm", {
+                  name: getCategoryLabel(t, category.taxonomyId, category.id, category.name),
+                })}
                 {hasChildren && (
                   <span className="text-destructive mt-2 block font-medium">
                     {t("spending:category.deleteSubcategoriesWarning")}
@@ -237,10 +237,7 @@ export function CategoryItem({
             </AlertDialogHeader>
             <AlertDialogFooter>
               <AlertDialogCancel>{t("common:cancel")}</AlertDialogCancel>
-              <AlertDialogAction
-                onClick={() => onDelete(category)}
-                className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
-              >
+              <AlertDialogAction onClick={() => onDelete(category)} variant="destructive">
                 {t("common:delete")}
               </AlertDialogAction>
             </AlertDialogFooter>
@@ -253,7 +250,7 @@ export function CategoryItem({
             <CategoryItem
               key={child.id}
               category={child}
-              // eslint-disable-next-line react/no-children-prop
+              // oxlint-disable-next-line react/no-children-prop
               children={child.children}
               onEdit={onEdit}
               onDelete={onDelete}
@@ -262,7 +259,7 @@ export function CategoryItem({
               activityCounts={activityCounts}
               excludedIds={excludedIds}
               parentExcluded={isExcluded}
-              parentName={category.name}
+              parentName={getCategoryLabel(t, category.taxonomyId, category.id, category.name)}
             />
           ))}
         </div>

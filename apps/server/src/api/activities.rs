@@ -3,16 +3,16 @@ use std::sync::Arc;
 
 use crate::{error::ApiResult, main_lib::AppState};
 use axum::{
-    extract::{Multipart, Path, Query},
+    extract::{DefaultBodyLimit, Multipart, Path, Query},
     routing::{delete, get, post},
     Json, Router,
 };
 use wealthfolio_core::activities::{
     import_type, Activity, ActivityBulkMutationRequest, ActivityBulkMutationResult, ActivityImport,
-    ActivitySearchResponse, ActivityUpdate, ImportActivitiesResult, ImportAssetCandidate,
-    ImportAssetPreviewItem, ImportMappingData, ImportTemplateData, InternalTransferPairRequest,
-    InternalTransferPairResponse, NewActivity, ParseConfig, ParsedCsvResult,
-    TransferMatchCandidate, TransferMatchCandidateRequest,
+    ActivitySearchResponse, ActivitySplitEffect, ActivityUpdate, ImportActivitiesResult,
+    ImportAssetCandidate, ImportAssetPreviewItem, ImportMappingData, ImportTemplateData,
+    InternalTransferPairRequest, InternalTransferPairResponse, NewActivity, ParseConfig,
+    ParsedCsvResult, TransferMatchCandidate, TransferMatchCandidateRequest,
 };
 use wealthfolio_core::utils::time_utils::{
     local_date_range_utc_bounds, parse_user_timezone_or_default,
@@ -57,6 +57,9 @@ struct ActivitySearchBody {
     instrument_type_filter: Option<StringOrVec>,
     #[serde(rename = "activityIdFilter")]
     activity_id_filter: Option<StringOrVec>,
+    /// Cash balance after each row, for one cash or credit-card account.
+    #[serde(rename = "includeCashBalances")]
+    include_cash_balances: Option<bool>,
 }
 
 async fn search_activities(
@@ -92,12 +95,16 @@ async fn search_activities(
     // Parse date filters
     let date_from_parsed = parse_date_optional(body.date_from, "dateFrom")?;
     let date_to_parsed = parse_date_optional(body.date_to, "dateTo")?;
-    let timezone = state.timezone.read().unwrap().clone();
+    let timezone = state
+        .timezone
+        .read()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+        .clone();
     let tz = parse_user_timezone_or_default(&timezone);
     let (date_from_utc, date_to_utc_exclusive) =
         local_date_range_utc_bounds(date_from_parsed, date_to_parsed, tz)?;
 
-    let resp = state.activity_service.search_activities_in_utc_range(
+    let mut resp = state.activity_service.search_activities_in_utc_range(
         body.page,
         body.page_size,
         account_ids,
@@ -110,6 +117,12 @@ async fn search_activities(
         instrument_types,
         activity_ids,
     )?;
+    if body.include_cash_balances.unwrap_or(false) {
+        state
+            .activity_service
+            .attach_cash_balances(&mut resp)
+            .await?;
+    }
     Ok(Json(resp))
 }
 
@@ -122,6 +135,29 @@ async fn create_activity(
 
     // Domain events handle asset enrichment and portfolio recalculation
     Ok(Json(created))
+}
+
+async fn review_activity_split_effects(
+    axum::Extension(state): axum::Extension<Arc<AppState>>,
+    Json(activities): Json<Vec<ActivityUpdate>>,
+) -> ApiResult<Json<Vec<Vec<ActivitySplitEffect>>>> {
+    Ok(Json(
+        state
+            .activity_service
+            .review_activity_split_effects_batch(activities)?,
+    ))
+}
+
+async fn review_internal_transfer_pair_split_effects(
+    axum::Extension(state): axum::Extension<Arc<AppState>>,
+    Json(request): Json<InternalTransferPairRequest>,
+) -> ApiResult<Json<Vec<ActivitySplitEffect>>> {
+    Ok(Json(
+        state
+            .activity_service
+            .review_internal_transfer_pair_split_effects(request)
+            .await?,
+    ))
 }
 
 async fn update_activity(
@@ -438,11 +474,23 @@ async fn parse_csv_endpoint(
     Ok(Json(result))
 }
 
+/// Imports send every row of a CSV in one request; axum's 2 MB default rejects
+/// a few thousand rows with 413 Payload Too Large.
+const IMPORT_BODY_LIMIT: usize = 64 * 1024 * 1024;
+
 pub fn router<S: Clone + Send + Sync + 'static>() -> Router<S> {
     Router::new()
         .route("/activities/search", post(search_activities))
         .route("/activities", post(create_activity).put(update_activity))
         .route("/activities/bulk", post(save_activities))
+        .route(
+            "/activities/split-effects",
+            post(review_activity_split_effects),
+        )
+        .route(
+            "/activities/transfer-pair/split-effects",
+            post(review_internal_transfer_pair_split_effects),
+        )
         .route("/activities/{id}", delete(delete_activity))
         .route(
             "/activities/{id}/transfer-pair",
@@ -458,13 +506,22 @@ pub fn router<S: Clone + Send + Sync + 'static>() -> Router<S> {
         )
         .route("/activities/link", post(link_transfer_activities))
         .route("/activities/unlink", post(unlink_transfer_activities))
-        .route("/activities/import/check", post(check_activities_import))
+        .route(
+            "/activities/import/check",
+            post(check_activities_import).layer(DefaultBodyLimit::max(IMPORT_BODY_LIMIT)),
+        )
         .route(
             "/activities/import/assets/preview",
             post(preview_import_assets),
         )
-        .route("/activities/import", post(import_activities))
-        .route("/activities/import/parse", post(parse_csv_endpoint))
+        .route(
+            "/activities/import",
+            post(import_activities).layer(DefaultBodyLimit::max(IMPORT_BODY_LIMIT)),
+        )
+        .route(
+            "/activities/import/parse",
+            post(parse_csv_endpoint).layer(DefaultBodyLimit::max(IMPORT_BODY_LIMIT)),
+        )
         .route(
             "/activities/import/mapping",
             get(get_account_import_mapping).post(save_account_import_mapping),

@@ -564,26 +564,28 @@ impl AssetRepositoryTrait for AssetRepository {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::db::{create_pool, get_connection, init, run_migrations, write_actor::spawn_writer};
+    use crate::db::{
+        create_pool, get_connection, init, run_migrations, write_actor::spawn_writer, TestDir,
+    };
     use crate::utils::SQLITE_MAX_PARAMS_CHUNK;
     use diesel::r2d2::ConnectionManager;
     use diesel::sql_query;
     use diesel::sql_types::Text;
     use std::sync::Arc;
-    use tempfile::tempdir;
 
-    fn setup_db() -> (Arc<Pool<ConnectionManager<SqliteConnection>>>, WriteHandle) {
+    fn setup_db() -> (
+        Arc<Pool<ConnectionManager<SqliteConnection>>>,
+        WriteHandle,
+        TestDir,
+    ) {
         std::env::set_var("CONNECT_API_URL", "http://test.local");
-        let app_data = tempdir()
-            .expect("tempdir")
-            .keep()
-            .to_string_lossy()
-            .to_string();
+        let dir = TestDir::new();
+        let app_data = dir.path().to_string_lossy().to_string();
         let db_path = init(&app_data).expect("init db");
         run_migrations(&db_path).expect("migrate db");
         let pool = create_pool(&db_path).expect("create pool");
         let writer = spawn_writer(pool.as_ref().clone()).expect("spawn writer");
-        (pool, writer)
+        (pool, writer, dir)
     }
 
     fn insert_asset(conn: &mut SqliteConnection, asset_id: &str) {
@@ -683,7 +685,7 @@ mod tests {
 
     #[tokio::test]
     async fn metadata_update_preserves_asset_identity() {
-        let (pool, writer) = setup_db();
+        let (pool, writer, _dir) = setup_db();
         let repo = AssetRepository::new(pool.clone(), writer);
         let mut conn = get_connection(&pool).expect("conn");
         insert_asset(&mut conn, "custom-display");
@@ -717,8 +719,55 @@ mod tests {
         );
     }
 
+    #[tokio::test]
+    async fn legacy_mic_profile_update_succeeds_when_canonical_twin_exists() {
+        let (pool, writer, _dir) = setup_db();
+        let repo = AssetRepository::new(pool.clone(), writer);
+        let mut conn = get_connection(&pool).expect("conn");
+        for (id, mic) in [("legacy", "CXE"), ("canonical", "BCXE")] {
+            sql_query(
+                "INSERT INTO assets (
+                    id, kind, name, display_code, is_active, quote_mode, quote_ccy,
+                    instrument_type, instrument_symbol, instrument_exchange_mic,
+                    created_at, updated_at
+                 ) VALUES (?, 'INVESTMENT', ?, 'VWRP', 1, 'MARKET', 'GBP',
+                    'EQUITY', 'VWRP', ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)",
+            )
+            .bind::<Text, _>(id)
+            .bind::<Text, _>(id)
+            .bind::<Text, _>(mic)
+            .execute(&mut conn)
+            .expect("insert colliding legacy/canonical pair");
+        }
+        drop(conn);
+
+        let updated = repo
+            .update_profile(
+                "legacy",
+                UpdateAssetProfile {
+                    name: Some("Renamed legacy".to_string()),
+                    display_code: Some("VWRP".to_string()),
+                    notes: "edited".to_string(),
+                    kind: None,
+                    quote_mode: None,
+                    quote_ccy: None,
+                    instrument_type: None,
+                    instrument_symbol: Some("VWRP".to_string()),
+                    instrument_exchange_mic: Some("CXE".to_string()),
+                    provider_config: None,
+                    metadata: None,
+                },
+            )
+            .await
+            .expect("preserving the guarded legacy MIC must remain editable");
+
+        assert_eq!(updated.name.as_deref(), Some("Renamed legacy"));
+        assert_eq!(updated.instrument_exchange_mic.as_deref(), Some("CXE"));
+        assert_eq!(updated.instrument_key.as_deref(), Some("EQUITY:VWRP@CXE"));
+    }
+
     async fn cleanup_legacy_metadata_for(metadata: serde_json::Value) -> Option<serde_json::Value> {
-        let (pool, writer) = setup_db();
+        let (pool, writer, _dir) = setup_db();
         let repo = AssetRepository::new(pool.clone(), writer);
         let mut conn = get_connection(&pool).expect("conn");
         insert_asset(&mut conn, "legacy-asset");
@@ -786,7 +835,7 @@ mod tests {
 
     #[tokio::test]
     async fn orphan_cleanup_preserves_non_archived_snapshot_history() {
-        let (pool, writer) = setup_db();
+        let (pool, writer, _dir) = setup_db();
         let repo = AssetRepository::new(pool.clone(), writer);
         let mut conn = get_connection(&pool).expect("conn");
 
@@ -835,7 +884,7 @@ mod tests {
 
     #[tokio::test]
     async fn reactivate_batch_handles_more_than_one_sqlite_chunk() {
-        let (pool, writer) = setup_db();
+        let (pool, writer, _dir) = setup_db();
         let repo = AssetRepository::new(pool.clone(), writer);
         let mut conn = get_connection(&pool).expect("conn");
         let asset_ids: Vec<String> = (0..(SQLITE_MAX_PARAMS_CHUNK * 2 + 1))
@@ -863,7 +912,7 @@ mod tests {
 
     #[tokio::test]
     async fn orphan_cleanup_handles_more_than_one_sqlite_chunk() {
-        let (pool, writer) = setup_db();
+        let (pool, writer, _dir) = setup_db();
         let repo = AssetRepository::new(pool.clone(), writer);
         let mut conn = get_connection(&pool).expect("conn");
         let asset_ids: Vec<String> = (0..(SQLITE_MAX_PARAMS_CHUNK * 2 + 1))

@@ -1,3 +1,4 @@
+import { getTaxonomyLabel } from "@/lib/taxonomy-labels";
 import { useMemo } from "react";
 import { useTranslation } from "react-i18next";
 import {
@@ -71,7 +72,7 @@ export function ClassificationSheet({
 
   return (
     <Sheet open={open} onOpenChange={onOpenChange}>
-      <SheetContent side="right" className="flex h-full w-full flex-col sm:max-w-lg">
+      <SheetContent side="inline-end" className="flex h-full w-full flex-col sm:max-w-lg">
         <SheetHeader className="shrink-0 pb-4">
           <div className="flex items-center gap-3">
             {assetSymbol && (
@@ -92,8 +93,8 @@ export function ClassificationSheet({
           </div>
         </SheetHeader>
 
-        <div className="min-h-0 flex-1 overflow-y-auto pr-1">
-          <div className="space-y-8 pb-8 pt-4">
+        <div className="min-h-0 flex-1 overflow-y-auto pe-1">
+          <div className="space-y-8 pt-4 pb-8">
             {/* Loading State */}
             {isLoading && <ClassificationSkeleton />}
 
@@ -104,7 +105,7 @@ export function ClassificationSheet({
                   key={taxonomy.id}
                   taxonomyId={taxonomy.id}
                   assetId={assetId}
-                  label={taxonomy.name}
+                  label={getTaxonomyLabel(t, taxonomy.id, taxonomy.name)}
                 />
               ))}
 
@@ -115,7 +116,7 @@ export function ClassificationSheet({
                   key={taxonomy.id}
                   taxonomyId={taxonomy.id}
                   assetId={assetId}
-                  label={taxonomy.name}
+                  label={getTaxonomyLabel(t, taxonomy.id, taxonomy.name)}
                 />
               ))}
 

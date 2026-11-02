@@ -19,7 +19,7 @@ import { downloadSampleCsv, downloadSampleHoldingsCsv } from "./utils/sample-csv
 // Activities Help Content
 // ─────────────────────────────────────────────────────────────────────────────
 
-function ActivitiesHelpContent() {
+function ActivitiesHelpContent({ transactionImport }: { transactionImport: boolean }) {
   const { t } = useTranslation();
   return (
     <div className="grid grid-cols-1 gap-6 lg:grid-cols-2">
@@ -60,27 +60,31 @@ function ActivitiesHelpContent() {
         <div>
           <p className="text-sm font-semibold">{t("activity:import.help.requiredFields")}</p>
           <p className="text-muted-foreground mt-1 text-xs">
-            {t("activity:import.help.activitiesRequiredFields")}
+            {transactionImport
+              ? t("activity:import.help.transactionsRequiredFields")
+              : t("activity:import.help.activitiesRequiredFields")}
           </p>
           <p className="mt-2 text-sm font-semibold">{t("activity:import.help.optionalFields")}</p>
           <p className="text-muted-foreground mt-1 text-xs">
-            {t("activity:import.help.activitiesOptionalFields")}
+            {transactionImport
+              ? t("activity:import.help.transactionsOptionalFields")
+              : t("activity:import.help.activitiesOptionalFields")}
           </p>
         </div>
 
         <div className="space-y-3">
-          <div className="border-blue-500 bg-blue-50 p-3 dark:bg-blue-900/50">
+          <div className="border-info bg-info-subtle p-3">
             <p className="text-sm">
-              <strong className="text-blue-700 dark:text-blue-300">
+              <strong className="text-info-subtle-foreground">
                 {t("activity:import.help.tipBold")}
               </strong>
               {t("activity:import.help.activitiesTip")}
             </p>
           </div>
 
-          <div className="border-green-500 bg-green-50 p-3 dark:bg-green-900/50">
+          <div className="border-success bg-success-subtle p-3">
             <p className="text-sm">
-              <strong className="text-green-700 dark:text-green-300">
+              <strong className="text-success-subtle-foreground">
                 {t("activity:import.help.amountBold")}
               </strong>
               {t("activity:import.help.activitiesAmount")}
@@ -114,7 +118,7 @@ function ActivitiesHelpContent() {
       <div className="space-y-4">
         <div>
           <p className="font-semibold">{t("activity:import.help.exampleFormat")}</p>
-          <pre className="bg-muted mt-2 select-all overflow-x-auto p-3 text-xs leading-relaxed">
+          <pre className="bg-muted mt-2 overflow-x-auto p-3 text-xs leading-relaxed select-all">
             <span className="text-muted-foreground">
               {t("activity:import.help.exampleStandard")}
             </span>
@@ -160,13 +164,13 @@ function ActivitiesHelpContent() {
               <li>INTEREST</li>
               <li>DEPOSIT</li>
               <li>WITHDRAWAL</li>
-              <li>TRANSFER_IN (Moves cash/assets in)</li>
-              <li>TRANSFER_OUT (Moves cash/assets out)</li>
+              <li>TRANSFER_IN ({t("common:notifications.moves_cash_assets_in")})</li>
+              <li>TRANSFER_OUT ({t("common:notifications.moves_cash_assets_out")})</li>
               <li>FEE</li>
               <li>TAX</li>
-              <li>SPLIT (Use Amount as the split ratio, e.g. 2 for 2:1)</li>
-              <li>CREDIT (Cash credits: refunds, rebates, bonuses)</li>
-              <li>ADJUSTMENT (Non-trade corrections)</li>
+              <li>SPLIT ({t("common:notifications.split_ratio_example")})</li>
+              <li>CREDIT ({t("common:notifications.cash_credits_refunds_rebates_bonuses")})</li>
+              <li>ADJUSTMENT ({t("common:notifications.non_trade_corrections")})</li>
             </ul>
           </pre>
         </div>
@@ -198,7 +202,7 @@ function HoldingsHelpContent() {
             <li>{t("activity:import.help.holdingsStep2")}</li>
             <li>
               {t("activity:import.help.holdingsStep3")}
-              <span className="text-muted-foreground ml-2 text-xs">
+              <span className="text-muted-foreground ms-2 text-xs">
                 {t("activity:import.help.holdingsStep3Fields")}
               </span>
             </li>
@@ -236,18 +240,18 @@ function HoldingsHelpContent() {
         </div>
 
         <div className="space-y-3">
-          <div className="border-blue-500 bg-blue-50 p-3 dark:bg-blue-900/50">
+          <div className="border-info bg-info-subtle p-3">
             <p className="text-sm">
-              <strong className="text-blue-700 dark:text-blue-300">
+              <strong className="text-info-subtle-foreground">
                 {t("activity:import.help.tipBold")}
               </strong>
               {t("activity:import.help.holdingsTip")}
             </p>
           </div>
 
-          <div className="border-green-500 bg-green-50 p-3 dark:bg-green-900/50">
+          <div className="border-success bg-success-subtle p-3">
             <p className="text-sm">
-              <strong className="text-green-700 dark:text-green-300">
+              <strong className="text-success-subtle-foreground">
                 {t("activity:import.help.cashBalancesBold")}
               </strong>{" "}
               {t("activity:import.help.holdingsCashBalancesUse")}{" "}
@@ -270,7 +274,7 @@ function HoldingsHelpContent() {
       <div className="space-y-4">
         <div>
           <p className="font-semibold">{t("activity:import.help.exampleFormat")}</p>
-          <pre className="bg-muted mt-2 select-all overflow-x-auto p-3 text-xs leading-relaxed">
+          <pre className="bg-muted mt-2 overflow-x-auto p-3 text-xs leading-relaxed select-all">
             <span className="text-muted-foreground">
               {t("activity:import.help.holdingsExampleSnapshot")}
             </span>
@@ -333,9 +337,13 @@ function HoldingsHelpContent() {
 
 interface ImportHelpPopoverProps {
   defaultTab?: "activities" | "holdings";
+  transactionImport?: boolean;
 }
 
-export function ImportHelpPopover({ defaultTab = "activities" }: ImportHelpPopoverProps) {
+export function ImportHelpPopover({
+  defaultTab = "activities",
+  transactionImport = false,
+}: ImportHelpPopoverProps) {
   const { isMobile } = usePlatform();
   const { t } = useTranslation();
 
@@ -346,7 +354,7 @@ export function ImportHelpPopover({ defaultTab = "activities" }: ImportHelpPopov
         <TabsTrigger value="holdings">{t("activity:import.help.tabHoldings")}</TabsTrigger>
       </TabsList>
       <TabsContent value="activities" className="m-0">
-        <ActivitiesHelpContent />
+        <ActivitiesHelpContent transactionImport={transactionImport} />
       </TabsContent>
       <TabsContent value="holdings" className="m-0">
         <HoldingsHelpContent />
@@ -357,16 +365,24 @@ export function ImportHelpPopover({ defaultTab = "activities" }: ImportHelpPopov
   if (isMobile) {
     return (
       <Sheet>
-        <SheetTrigger asChild>
-          <Button type="button" variant="ghost" size="icon" className="h-9 w-9">
-            <Icons.HelpCircle className="h-6 w-6" />
-          </Button>
+        <SheetTrigger
+          render={
+            <Button
+              type="button"
+              variant="ghost"
+              size="icon"
+              className="h-9 w-9"
+              aria-label={t("activity:import.help.mobileTitle")}
+            />
+          }
+        >
+          <Icons.HelpCircle className="h-6 w-6" />
         </SheetTrigger>
-        <SheetContent side="bottom" className="rounded-t-4xl mx-1 h-[85vh]">
+        <SheetContent side="bottom" className="mx-1 h-[85vh] rounded-t-4xl">
           <SheetHeader>
             <SheetTitle>{t("activity:import.help.mobileTitle")}</SheetTitle>
           </SheetHeader>
-          <ScrollArea className="h-[calc(85vh-4rem)] pr-4">{helpContent}</ScrollArea>
+          <ScrollArea className="h-[calc(85vh-4rem)] pe-4">{helpContent}</ScrollArea>
         </SheetContent>
       </Sheet>
     );
@@ -374,13 +390,13 @@ export function ImportHelpPopover({ defaultTab = "activities" }: ImportHelpPopov
 
   return (
     <Popover>
-      <PopoverTrigger asChild>
-        <Button type="button" variant="link" className="flex items-center">
-          <Icons.HelpCircle className="mr-1 h-5 w-5" />
-          {t("activity:import.help.button")}
-        </Button>
+      <PopoverTrigger
+        render={<Button type="button" variant="link" className="flex items-center" />}
+      >
+        <Icons.HelpCircle className="me-1 h-5 w-5" />
+        {t("activity:import.help.button")}
       </PopoverTrigger>
-      <PopoverContent className="m-4 max-h-[80vh] w-[900px] max-w-[calc(100vw-2rem)] overflow-y-auto p-6 text-sm">
+      <PopoverContent className="m-4 max-h-[80vh] w-225 max-w-[calc(100vw-2rem)] overflow-y-auto p-6 text-sm">
         {helpContent}
       </PopoverContent>
     </Popover>

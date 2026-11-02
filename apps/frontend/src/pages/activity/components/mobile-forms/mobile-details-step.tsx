@@ -20,7 +20,6 @@ import {
   Tooltip,
   TooltipContent,
   TooltipTrigger,
-  useNumberFormatting,
 } from "@wealthfolio/ui";
 import { AnimatedToggleGroup } from "@wealthfolio/ui/components/ui/animated-toggle-group";
 import { Checkbox } from "@wealthfolio/ui/components/ui/checkbox";
@@ -32,6 +31,12 @@ import { useEffect, useMemo, useState, type RefObject } from "react";
 import { useFormContext } from "react-hook-form";
 import { useTranslation } from "react-i18next";
 import { useAmountFormatting } from "@wealthfolio/ui";
+import {
+  getCalculationRate,
+  getTransferRate,
+  useInternalTransferCurrencies,
+} from "../../hooks/use-internal-transfer-currencies";
+import { InternalTransferCurrencyFields } from "../forms/fields/internal-transfer-currency-fields";
 import { useActivityCurrency } from "../../hooks/use-activity-currency";
 import {
   AdvancedOptionsSection,
@@ -90,20 +95,22 @@ function FmvPerUnitLabel() {
   const { t } = useTranslation();
   return (
     <div className="flex items-center gap-1.5">
-      <FormLabel className="text-base font-medium">
+      <FormLabel className="text-base leading-none font-medium">
         {t("activity:form.label_fmv_per_unit")}
       </FormLabel>
       <Tooltip>
-        <TooltipTrigger asChild>
-          <button
-            type="button"
-            className="text-muted-foreground/70 hover:text-foreground inline-flex rounded-full transition-colors"
-            aria-label={t("activity:form.more_info_about", {
-              label: t("activity:form.label_fmv_per_unit"),
-            })}
-          >
-            <Icons.Info className="h-3.5 w-3.5" />
-          </button>
+        <TooltipTrigger
+          render={
+            <button
+              type="button"
+              className="text-muted-foreground/70 hover:text-foreground inline-flex rounded-full transition-colors"
+              aria-label={t("activity:form.more_info_about", {
+                label: t("activity:form.label_fmv_per_unit"),
+              })}
+            />
+          }
+        >
+          <Icons.Info className="h-3.5 w-3.5" />
         </TooltipTrigger>
         <TooltipContent className="max-w-xs text-xs">
           {t("activity:form.help_fmv_per_unit")}
@@ -120,7 +127,6 @@ export function MobileDetailsStep({
   amountWasEdited,
 }: MobileDetailsStepProps) {
   const { t } = useTranslation();
-  const formatting = useNumberFormatting();
   const form = useFormContext<NewActivityFormValues>();
   const { control, getFieldState, getValues, watch, setValue, register } = form;
   const { settings } = useSettingsContext();
@@ -131,7 +137,7 @@ export function MobileDetailsStep({
   const quantity = watch("quantity");
   const unitPrice = watch("unitPrice");
   const sourceAmount = watch("sourceAmount" as any) as number | null | undefined;
-  const fxRate = watch("fxRate" as any) as number | null | undefined;
+  const transferRate = watch("transferRate" as any) as number | null | undefined;
   const sourceCurrency = watch("sourceCurrency" as any) as string | undefined;
   const destinationCurrency = watch("destinationCurrency" as any) as string | undefined;
 
@@ -220,6 +226,7 @@ export function MobileDetailsStep({
             fee: optFee,
             tax: optTax,
             contractMultiplier: isOption ? optMultiplier : undefined,
+            currency,
           })
         : undefined,
     [
@@ -233,6 +240,7 @@ export function MobileDetailsStep({
       optTax,
       isOption,
       optMultiplier,
+      currency,
     ],
   );
   const calculatedTradeAmount =
@@ -348,8 +356,11 @@ export function MobileDetailsStep({
     setValue("assetMetadata" as any, undefined);
   };
 
-  // Filter destination accounts to exclude source account (for internal transfers)
-  const toAccountOptions = filteredAccounts.filter((acc) => acc.value !== accountId);
+  const toAccountOptions = filteredAccounts.filter(
+    (acc) => transferMode === "cash" || acc.value !== accountId,
+  );
+  const isSameAccountCashTransfer =
+    needsInternalCashTransferAmounts && !!accountId && accountId === toAccountId;
 
   useActivityCurrency(form, filteredAccounts, {
     isEditing,
@@ -372,33 +383,11 @@ export function MobileDetailsStep({
     ? `${selectedAccount.label} (${selectedAccount.currency})`
     : t("activity:select_account_placeholder");
 
-  // Internal transfers also need a source currency when a preselected account is backfilled.
-  useEffect(() => {
-    if (!accountId) return;
-    const selected = filteredAccounts.find((account) => account.value === accountId);
-    if (!selected) return;
-
-    const currentCurrency = currency?.trim();
-    if (currentCurrency === selected.currency) return;
-
-    const shouldAutoSetCurrency = !currentCurrency && !getFieldState("currency").isDirty;
-    if (!shouldAutoSetCurrency) return;
-
-    if (!isExternal) {
-      setValue("sourceCurrency" as any, selected.currency, {
-        shouldDirty: false,
-        shouldValidate: false,
-      });
-    }
-  }, [accountId, currency, filteredAccounts, getFieldState, isExternal, setValue]);
-
-  useEffect(() => {
-    if (!destinationAccount?.currency) return;
-    setValue("destinationCurrency" as any, destinationAccount.currency, {
-      shouldDirty: false,
-      shouldValidate: false,
-    });
-  }, [destinationAccount?.currency, setValue]);
+  useInternalTransferCurrencies(form, filteredAccounts, {
+    enabled: needsInternalCashTransferAmounts,
+    isEditing,
+    sourceAccountField: "accountId",
+  });
 
   useEffect(() => {
     if (!needsInternalCashTransferAmounts || isCrossCurrencyInternalCash) return;
@@ -417,13 +406,18 @@ export function MobileDetailsStep({
   const roundTransferValue = (value: number, precision = 6) =>
     Number(Number(value).toFixed(precision));
 
-  const handleSourceAmountChange = (value: number | null | undefined) => {
+  const handleSourceAmountChange = (value: number | null | undefined, isUserEdit = true) => {
+    if (!isUserEdit) return;
+    const rate = getCalculationRate(
+      transferRate,
+      Number(getValues("sourceAmount" as any)),
+      Number(getValues("destinationAmount" as any)),
+    );
     setValue("sourceAmount" as any, value, { shouldDirty: true, shouldValidate: false });
     setValue("amount" as any, value, { shouldDirty: true, shouldValidate: false });
     if (!value || value <= 0) return;
     if (isCrossCurrencyInternalCash) {
-      const rate = Number(fxRate);
-      if (rate > 0) {
+      if (rate) {
         setValue("destinationAmount" as any, roundTransferValue(value * rate), {
           shouldDirty: true,
           shouldValidate: false,
@@ -437,20 +431,25 @@ export function MobileDetailsStep({
     }
   };
 
-  const handleDestinationAmountChange = (value: number | null | undefined) => {
+  const handleDestinationAmountChange = (value: number | null | undefined, isUserEdit = true) => {
+    if (!isUserEdit) return;
     setValue("destinationAmount" as any, value, { shouldDirty: true, shouldValidate: false });
     const sent = Number(sourceAmount);
     const received = Number(value);
     if (sent > 0 && received > 0) {
-      setValue("fxRate" as any, roundTransferValue(received / sent, 8), {
+      setValue("transferRate" as any, getTransferRate(sent, received), {
         shouldDirty: true,
         shouldValidate: false,
       });
     }
   };
 
-  const handleFxRateChange = (value: number | null | undefined) => {
-    setValue("fxRate" as any, value ?? undefined, { shouldDirty: true, shouldValidate: false });
+  const handleFxRateChange = (value: number | null | undefined, isUserEdit = true) => {
+    if (!isUserEdit) return;
+    setValue("transferRate" as any, value ?? undefined, {
+      shouldDirty: true,
+      shouldValidate: false,
+    });
     const sent = Number(sourceAmount);
     const rate = Number(value);
     if (sent > 0 && rate > 0) {
@@ -471,7 +470,12 @@ export function MobileDetailsStep({
     if (isEditing && !shouldDirty) return;
     const computedAmount = isBuyOrSell
       ? calculatedTradeAmount
-      : calculateIncomeFinalAmount(quantity, unitPrice, symbolInstrumentType);
+      : calculateIncomeFinalAmount({
+          quantity,
+          unitPrice,
+          instrumentType: symbolInstrumentType,
+          currency,
+        });
     if (computedAmount === undefined || Number(getValues("amount")) === computedAmount) return;
     setValue("amount" as any, computedAmount, {
       shouldDirty,
@@ -479,6 +483,7 @@ export function MobileDetailsStep({
     });
   }, [
     calculatedTradeAmount,
+    currency,
     symbolInstrumentType,
     getFieldState,
     getValues,
@@ -560,7 +565,7 @@ export function MobileDetailsStep({
       name="fee"
       render={({ field }) => (
         <FormItem>
-          <FormLabel className="text-base font-medium">
+          <FormLabel className="text-base leading-none font-medium">
             {t("activity:mobile_fee_optional")}
           </FormLabel>
           <FormControl>
@@ -577,7 +582,7 @@ export function MobileDetailsStep({
       name="tax"
       render={({ field }) => (
         <FormItem>
-          <FormLabel className="text-base font-medium">
+          <FormLabel className="text-base leading-none font-medium">
             {isIncomeActivity
               ? t("activity:mobile_form.withholding_tax_optional")
               : t("activity:mobile_form.tax_optional")}
@@ -698,7 +703,7 @@ export function MobileDetailsStep({
               name="accountId"
               render={({ field }) => (
                 <FormItem>
-                  <FormLabel className="text-base font-medium">
+                  <FormLabel className="text-base leading-none font-medium">
                     {isTransfer && isExternal
                       ? direction === "in"
                         ? t("activity:form.label_to_account")
@@ -709,17 +714,17 @@ export function MobileDetailsStep({
                   </FormLabel>
                   <FormControl>
                     <Button
-                      variant="outline"
+                      variant="field"
                       role="combobox"
                       size="lg"
-                      className="w-full justify-between rounded-md font-normal"
+                      className="w-full justify-between"
                       onClick={() => setAccountSheetOpen(true)}
                       type="button"
                     >
                       <span className={!field.value ? "text-muted-foreground" : ""}>
                         {displayAccountText}
                       </span>
-                      <Icons.ChevronDown className="ml-2 h-4 w-4 shrink-0 opacity-50" />
+                      <Icons.ChevronDown className="ms-2 h-4 w-4 shrink-0 opacity-50" />
                     </Button>
                   </FormControl>
                   <FormMessage />
@@ -739,22 +744,22 @@ export function MobileDetailsStep({
                     : t("activity:mobile_form.select_destination_account");
                   return (
                     <FormItem>
-                      <FormLabel className="text-base font-medium">
+                      <FormLabel className="text-base leading-none font-medium">
                         {t("activity:form.label_to_account")}
                       </FormLabel>
                       <FormControl>
                         <Button
-                          variant="outline"
+                          variant="field"
                           role="combobox"
                           size="lg"
-                          className="w-full justify-between rounded-md font-normal"
+                          className="w-full justify-between"
                           onClick={() => setToAccountSheetOpen(true)}
                           type="button"
                         >
                           <span className={!field.value ? "text-muted-foreground" : ""}>
                             {toDisplayText}
                           </span>
-                          <Icons.ChevronDown className="ml-2 h-4 w-4 shrink-0 opacity-50" />
+                          <Icons.ChevronDown className="ms-2 h-4 w-4 shrink-0 opacity-50" />
                         </Button>
                       </FormControl>
                       <FormMessage />
@@ -764,13 +769,15 @@ export function MobileDetailsStep({
               />
             )}
 
+            {isSameAccountCashTransfer && <InternalTransferCurrencyFields />}
+
             {/* Date */}
             <FormField
               control={control}
               name="activityDate"
               render={({ field }) => (
                 <FormItem className="flex flex-col">
-                  <FormLabel className="text-base font-medium">
+                  <FormLabel className="text-base leading-none font-medium">
                     {t("activity:mobile_date_time")}
                   </FormLabel>
                   <DatePickerInput
@@ -844,7 +851,9 @@ export function MobileDetailsStep({
                       name="quantity"
                       render={({ field }) => (
                         <FormItem>
-                          <FormLabel className="text-base font-medium">{quantityLabel}</FormLabel>
+                          <FormLabel className="text-base leading-none font-medium">
+                            {quantityLabel}
+                          </FormLabel>
                           <FormControl>
                             <QuantityInput {...field} />
                           </FormControl>
@@ -861,7 +870,9 @@ export function MobileDetailsStep({
                             {isFmvPriceLabel ? (
                               <FmvPerUnitLabel />
                             ) : (
-                              <FormLabel className="text-base font-medium">{priceLabel}</FormLabel>
+                              <FormLabel className="text-base leading-none font-medium">
+                                {priceLabel}
+                              </FormLabel>
                             )}
                             <FormControl>
                               <MoneyInput {...field} />
@@ -883,10 +894,11 @@ export function MobileDetailsStep({
                       </span>
                       <span>·</span>
                       <input
-                        type="number"
+                        type="text"
+                        inputMode="decimal"
                         {...register("contractMultiplier" as any, { valueAsNumber: true })}
                         readOnly={isEditing}
-                        className="hover:border-input focus:border-input focus:bg-background focus:ring-ring h-5 w-14 rounded border border-transparent bg-transparent px-1 text-center text-xs tabular-nums focus:outline-none focus:ring-1"
+                        className="hover:border-input focus:border-input focus:bg-background focus:ring-ring h-5 w-14 rounded border border-transparent bg-transparent px-1 text-center text-xs tabular-nums focus:ring-1 focus:outline-none"
                         aria-label={t("activity:form.contract_multiplier")}
                       />
                       <span>x</span>
@@ -900,7 +912,7 @@ export function MobileDetailsStep({
                 <div className="bg-muted/50 border-border rounded-lg border p-3">
                   <div className="flex items-center justify-between">
                     <div className="min-w-0 flex-1">
-                      <span className="text-muted-foreground text-xs font-medium uppercase tracking-wide">
+                      <span className="text-muted-foreground text-xs font-medium tracking-wide uppercase">
                         {isTradeDebit
                           ? t("activity:form.total_debit")
                           : t("activity:form.total_credit")}
@@ -923,12 +935,7 @@ export function MobileDetailsStep({
                       </p>
                     </div>
                     <span className="text-lg font-semibold tabular-nums">
-                      {formatting.formatDecimal(calculatedTradeAmount ?? 0, {
-                        style: currency ? "currency" : "decimal",
-                        currency: currency || undefined,
-                        minimumFractionDigits: 2,
-                        maximumFractionDigits: 2,
-                      })}
+                      {formatAmount(calculatedTradeAmount ?? 0, currency ?? "", Boolean(currency))}
                     </span>
                   </div>
                 </div>
@@ -941,7 +948,7 @@ export function MobileDetailsStep({
                   name="amount"
                   render={({ field }) => (
                     <FormItem>
-                      <FormLabel className="text-base font-medium">
+                      <FormLabel className="text-base leading-none font-medium">
                         {activityType === ActivityType.DIVIDEND
                           ? t("activity:field_dividend_amount")
                           : activityType === ActivityType.INTEREST
@@ -993,7 +1000,7 @@ export function MobileDetailsStep({
                         name={"sourceAmount" as any}
                         render={({ field }) => (
                           <FormItem>
-                            <FormLabel className="text-base font-medium">
+                            <FormLabel className="text-base leading-none font-medium">
                               {t("activity:form.label_sent", {
                                 currency: effectiveSourceCurrency,
                               })}
@@ -1014,7 +1021,7 @@ export function MobileDetailsStep({
                         name={"destinationAmount" as any}
                         render={({ field }) => (
                           <FormItem>
-                            <FormLabel className="text-base font-medium">
+                            <FormLabel className="text-base leading-none font-medium">
                               {t("activity:form.label_received", {
                                 currency: effectiveDestinationCurrency,
                               })}
@@ -1037,8 +1044,8 @@ export function MobileDetailsStep({
                       name={"sourceAmount" as any}
                       render={({ field }) => (
                         <FormItem>
-                          <FormLabel className="text-base font-medium">
-                            {t("activity:form.label_amount")}
+                          <FormLabel className="text-base leading-none font-medium">
+                            {t("activity:form.label_amount")} ({effectiveSourceCurrency})
                           </FormLabel>
                           <FormControl>
                             <MoneyInput
@@ -1056,12 +1063,12 @@ export function MobileDetailsStep({
                   {isCrossCurrencyInternalCash && (
                     <FormField
                       control={control}
-                      name={"fxRate" as any}
+                      name={"transferRate" as any}
                       render={({ field }) => (
                         <FormItem>
-                          <FormLabel className="text-base font-medium">
-                            {t("activity:form.label_fx_rate")}
-                            <span className="text-muted-foreground ml-2 text-xs font-normal">
+                          <FormLabel className="text-base leading-none font-medium">
+                            {t("activity:form.label_transfer_rate")}
+                            <span className="text-muted-foreground ms-2 text-xs font-normal">
                               1 {effectiveSourceCurrency} ={" "}
                               {Number(field.value) > 0 ? field.value : "?"}{" "}
                               {effectiveDestinationCurrency}
@@ -1072,7 +1079,7 @@ export function MobileDetailsStep({
                               {...field}
                               onValueChange={handleFxRateChange}
                               maxDecimalPlaces={8}
-                              aria-label={t("activity:form.label_fx_rate")}
+                              aria-label={t("activity:form.label_transfer_rate")}
                             />
                           </FormControl>
                           <FormMessage />
@@ -1090,7 +1097,7 @@ export function MobileDetailsStep({
                   name="amount"
                   render={({ field }) => (
                     <FormItem>
-                      <FormLabel className="text-base font-medium">
+                      <FormLabel className="text-base leading-none font-medium">
                         {t("activity:form.label_split_ratio")}
                       </FormLabel>
                       <FormControl>
@@ -1123,7 +1130,7 @@ export function MobileDetailsStep({
                   name="fee"
                   render={({ field }) => (
                     <FormItem>
-                      <FormLabel className="text-base font-medium">
+                      <FormLabel className="text-base leading-none font-medium">
                         {t("activity:field_fee_amount")}
                       </FormLabel>
                       <FormControl>
@@ -1153,19 +1160,22 @@ export function MobileDetailsStep({
             showCurrency={!isTransfer || isExternal}
             showFxRate={!isTransfer || isExternal}
           >
+            {needsInternalCashTransferAmounts && !isSameAccountCashTransfer && (
+              <InternalTransferCurrencyFields />
+            )}
             {/* Comment */}
             <FormField
               control={control}
               name="comment"
               render={({ field }) => (
                 <FormItem>
-                  <FormLabel className="text-base font-medium">
+                  <FormLabel className="text-base leading-none font-medium">
                     {t("activity:mobile_description_optional")}
                   </FormLabel>
                   <FormControl>
                     <Textarea
                       placeholder={t("activity:mobile_description_placeholder")}
-                      className="min-h-[100px] resize-none text-base sm:text-sm"
+                      className="min-h-25 resize-none text-base sm:text-sm"
                       {...field}
                       value={field.value ?? ""}
                     />
@@ -1220,7 +1230,7 @@ function MobileAccountSheet({ accounts, open, onOpenChange, onSelect }: MobileAc
 
   return (
     <Sheet open={open} onOpenChange={onOpenChange}>
-      <SheetContent side="bottom" className="rounded-t-4xl mx-1 h-[70vh] p-0">
+      <SheetContent side="bottom" className="mx-1 h-[70vh] rounded-t-4xl p-0">
         <SheetHeader className="border-border border-b px-6 py-4">
           <SheetTitle>{t("activity:select_account")}</SheetTitle>
           <SheetDescription>{t("activity:mobile_choose_account")}</SheetDescription>
@@ -1231,7 +1241,7 @@ function MobileAccountSheet({ accounts, open, onOpenChange, onSelect }: MobileAc
               <button
                 key={account.value}
                 onClick={() => handleAccountSelect(account)}
-                className="card-mobile hover:bg-accent active:bg-accent/80 focus:border-primary flex w-full items-center gap-3 border border-transparent text-left transition-colors focus:outline-none"
+                className="card-mobile hover:bg-accent active:bg-accent/80 focus:border-primary flex w-full items-center gap-3 border border-transparent text-start transition-colors focus:outline-none"
               >
                 <div className="bg-primary/10 flex h-12 w-12 flex-shrink-0 items-center justify-center rounded-full">
                   <Icons.Briefcase className="text-primary h-5 w-5" />
@@ -1240,7 +1250,7 @@ function MobileAccountSheet({ accounts, open, onOpenChange, onSelect }: MobileAc
                   <div className="text-foreground truncate font-medium">{account.label}</div>
                   <div className="text-muted-foreground mt-0.5 text-sm">{account.currency}</div>
                 </div>
-                <Icons.ChevronRight className="text-muted-foreground h-5 w-5 flex-shrink-0" />
+                <Icons.ChevronRight className="text-muted-foreground h-5 w-5 flex-shrink-0 rtl:rotate-180" />
               </button>
             ))}
           </div>

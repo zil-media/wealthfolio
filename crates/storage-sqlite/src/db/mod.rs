@@ -9,7 +9,7 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Duration;
 
-use diesel::connection::{Connection, SimpleConnection};
+use diesel::connection::{Connection, Instrumentation, InstrumentationEvent, SimpleConnection};
 use diesel::r2d2;
 use diesel::r2d2::{ConnectionManager, Pool, PooledConnection};
 use diesel::sqlite::SqliteConnection;
@@ -37,6 +37,7 @@ const SQLITE_MAGIC: &[u8; 16] = b"SQLite format 3\0";
 pub type DbPool = r2d2::Pool<ConnectionManager<SqliteConnection>>;
 pub type DbConnection = PooledConnection<ConnectionManager<SqliteConnection>>;
 
+pub mod cloud_backups;
 pub mod encryption;
 pub mod imports;
 pub mod maintenance;
@@ -170,7 +171,7 @@ impl DbAccess {
             .connection_timeout(Duration::from_secs(30))
             .connection_customizer(Box::new(ConnectionCustomizer {
                 key: self.key.clone(),
-                _owner: owner,
+                owner,
             }))
             .build(manager)
             .map_err(|e| DatabaseError::PoolCreationFailed(e.to_string()))?;
@@ -943,10 +944,44 @@ mod test_helpers {
     pub(crate) fn create_pool(db_path: &str) -> Result<Arc<DbPool>> {
         DbAccess::plaintext(db_path).create_pool()
     }
+
+    /// Temporary directory for a database opened through a pool.
+    ///
+    /// r2d2 opens connections on its own threads, and a test can end while one
+    /// is still opening. If SQLite's open lands after `TempDir` has unlinked
+    /// the database, it creates the file again, removing the directory fails
+    /// because it is not empty, and `TempDir` ignores the error. Removing it
+    /// again works: once the directory is gone, a late open cannot create the
+    /// file. Windows can't remove a database that is still open, so there the
+    /// directory stays behind, as with `TempDir`.
+    pub(crate) struct TestDir(PathBuf);
+
+    impl TestDir {
+        pub(crate) fn new() -> Self {
+            Self(tempfile::tempdir().expect("create temp dir").keep())
+        }
+
+        pub(crate) fn path(&self) -> &Path {
+            &self.0
+        }
+    }
+
+    impl Drop for TestDir {
+        fn drop(&mut self) {
+            for _ in 0..10 {
+                match fs::remove_dir_all(&self.0) {
+                    Err(e) if e.kind() == io::ErrorKind::DirectoryNotEmpty => {
+                        std::thread::sleep(Duration::from_millis(10));
+                    }
+                    _ => return,
+                }
+            }
+        }
+    }
 }
 
 #[cfg(test)]
-pub(crate) use test_helpers::{create_pool, init, run_migrations};
+pub(crate) use test_helpers::{create_pool, init, run_migrations, TestDir};
 
 pub fn get_db_path(input: &str) -> String {
     #[cfg(any(target_os = "android", target_os = "ios"))]
@@ -994,6 +1029,68 @@ mod migration_tests {
             .get_result::<CountRow>(conn)
             .unwrap()
             .count
+    }
+
+    #[test]
+    fn exchange_mic_migration_rekeys_legacy_assets_without_merging_twins() {
+        let mut conn = SqliteConnection::establish(":memory:").unwrap();
+        conn.batch_execute(
+            "CREATE TABLE assets (
+                id TEXT PRIMARY KEY,
+                instrument_type TEXT NOT NULL,
+                instrument_symbol TEXT NOT NULL,
+                instrument_exchange_mic TEXT,
+                instrument_key TEXT GENERATED ALWAYS AS (
+                    instrument_type || ':' || instrument_symbol || '@' || instrument_exchange_mic
+                ) STORED
+            );
+            CREATE UNIQUE INDEX idx_assets_instrument_key ON assets(instrument_key);
+            INSERT INTO assets (id, instrument_type, instrument_symbol, instrument_exchange_mic)
+            VALUES
+                ('cxe', 'EQUITY', 'VWRP', 'CXE'),
+                ('dxe', 'EQUITY', 'ETF', 'DXE'),
+                ('taipei', 'EQUITY', '1234', 'XTAI_OTC'),
+                ('aquis', 'EQUITY', 'AQS', 'XAQE'),
+                ('legacy_twin', 'EQUITY', 'DUAL', 'CXE'),
+                ('canonical_twin', 'EQUITY', 'DUAL', 'BCXE');",
+        )
+        .unwrap();
+
+        conn.batch_execute(include_str!(
+            "../../migrations/2026-09-27-000001_exchange_registry_iso_mics/up.sql"
+        ))
+        .unwrap();
+
+        for key in [
+            "EQUITY:VWRP@BCXE",
+            "EQUITY:ETF@CCXE",
+            "EQUITY:1234@ROCO",
+            "EQUITY:AQS@AQSE",
+            "EQUITY:DUAL@CXE",
+            "EQUITY:DUAL@BCXE",
+        ] {
+            assert_eq!(
+                count(
+                    &mut conn,
+                    &format!("SELECT COUNT(*) AS count FROM assets WHERE instrument_key = '{key}'")
+                ),
+                1,
+                "missing asset key {key}"
+            );
+        }
+
+        conn.batch_execute(include_str!(
+            "../../migrations/2026-09-27-000001_exchange_registry_iso_mics/down.sql"
+        ))
+        .unwrap();
+        assert_eq!(
+            count(
+                &mut conn,
+                "SELECT COUNT(*) AS count FROM assets WHERE instrument_key = 'EQUITY:VWRP@BCXE'"
+            ),
+            1,
+            "rollback must not rewrite valid canonical identities"
+        );
     }
 
     #[test]
@@ -1420,6 +1517,27 @@ mod migration_tests {
             "the VACUUM migration must be recorded as applied exactly once"
         );
     }
+
+    /// Diesel keys pending migrations by version (the directory name before
+    /// the first `_`), so two directories sharing a version silently skip one
+    /// of them on every database that has not applied it yet.
+    #[test]
+    fn embedded_migration_versions_are_unique() {
+        use diesel::migration::MigrationSource;
+        let migrations =
+            <EmbeddedMigrations as MigrationSource<diesel::sqlite::Sqlite>>::migrations(
+                &MIGRATIONS,
+            )
+            .unwrap();
+        let mut seen = std::collections::HashMap::new();
+        for migration in &migrations {
+            let name = migration.name().to_string();
+            let version = migration.name().version().to_string();
+            if let Some(previous) = seen.insert(version.clone(), name.clone()) {
+                panic!("migrations {previous} and {name} share version {version}");
+            }
+        }
+    }
 }
 
 #[cfg(test)]
@@ -1652,7 +1770,23 @@ pub fn get_connection(pool: &Pool<ConnectionManager<SqliteConnection>>) -> Resul
 #[derive(Debug)]
 struct ConnectionCustomizer {
     key: Option<Arc<DbEncryptionKey>>,
-    _owner: Option<Arc<DatabaseOwner>>,
+    owner: Option<Arc<DatabaseOwner>>,
+}
+
+/// Database ownership held by one pooled connection until it is closed.
+///
+/// r2d2 drops the customizer, and its ownership, before the pool's idle
+/// connections, and can do so on one of its own workers. diesel drops a
+/// connection's instrumentation only after closing its SQLite handle, so this
+/// releases ownership after the close, on whichever thread performs it.
+/// Without it, deletion, maintenance or process exit could proceed while a
+/// connection is still closing; at exit that races SQLCipher's cleanup.
+struct ConnectionOwnership {
+    _owner: Arc<DatabaseOwner>,
+}
+
+impl Instrumentation for ConnectionOwnership {
+    fn on_connection_event(&mut self, _event: InstrumentationEvent<'_>) {}
 }
 
 impl r2d2::CustomizeConnection<SqliteConnection, diesel::r2d2::Error> for ConnectionCustomizer {
@@ -1660,6 +1794,11 @@ impl r2d2::CustomizeConnection<SqliteConnection, diesel::r2d2::Error> for Connec
         &self,
         conn: &mut SqliteConnection,
     ) -> std::result::Result<(), diesel::r2d2::Error> {
+        if let Some(owner) = &self.owner {
+            conn.set_instrumentation(ConnectionOwnership {
+                _owner: Arc::clone(owner),
+            });
+        }
         // SQLCipher requires `PRAGMA key` before any other statement, so it
         // cannot join the batch below. This covers the write actor too: its
         // dedicated connection is drawn from this pool.
@@ -1866,3 +2005,6 @@ mod migration_backup_tests;
 
 #[cfg(test)]
 mod account_delete_cleanup_tests;
+
+#[cfg(test)]
+mod signature_default_theme_tests;

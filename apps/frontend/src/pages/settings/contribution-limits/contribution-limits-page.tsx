@@ -3,7 +3,18 @@ import { useAccounts } from "@/hooks/use-accounts";
 import { QueryKeys } from "@/lib/query-keys";
 import type { ContributionLimit } from "@/lib/types";
 import { useQuery } from "@tanstack/react-query";
-import { Button, EmptyPlaceholder, Icons, Separator, Skeleton } from "@wealthfolio/ui";
+import {
+  Button,
+  Icons,
+  Separator,
+  Skeleton,
+  Empty,
+  EmptyHeader,
+  EmptyMedia,
+  EmptyTitle,
+  EmptyDescription,
+  EmptyContent,
+} from "@wealthfolio/ui";
 import { useState } from "react";
 import { useTranslation } from "react-i18next";
 import { SettingsHeader } from "../settings-header";
@@ -57,7 +68,7 @@ const SettingsContributionLimitPage = () => {
     <>
       <div className="space-y-6">
         <SettingsHeader
-          heading={t("settings:limits_full_title")}
+          heading={t("settings:nav.items.contribution_limits")}
           text={t("settings:limits_description")}
           actionsInline
         >
@@ -71,7 +82,7 @@ const SettingsContributionLimitPage = () => {
               <Icons.Plus className="size-4" />
             </Button>
             <Button size="sm" className="hidden sm:inline-flex" onClick={() => handleAddLimit()}>
-              <Icons.Plus className="mr-2 size-4" />
+              <Icons.Plus className="me-2 size-4" />
               {t("settings:limits_add_button")}
             </Button>
           </>
@@ -94,19 +105,21 @@ const SettingsContributionLimitPage = () => {
               ))}
             </div>
           ) : (
-            <EmptyPlaceholder>
-              <EmptyPlaceholder.Icon name="CircleGauge" />
-              <EmptyPlaceholder.Title>
-                {t("settings:limits_empty_title", { year: currentYear })}
-              </EmptyPlaceholder.Title>
-              <EmptyPlaceholder.Description>
-                {t("settings:limits_empty_description")}
-              </EmptyPlaceholder.Description>
-              <Button onClick={() => handleAddLimit()}>
-                <Icons.Plus className="mr-2 h-4 w-4" />
-                {t("settings:limits_add_first")}
-              </Button>
-            </EmptyPlaceholder>
+            <Empty>
+              <EmptyHeader>
+                <EmptyMedia variant="icon">
+                  <Icons.CircleGauge />
+                </EmptyMedia>
+                <EmptyTitle>{t("settings:limits_empty_title", { year: currentYear })}</EmptyTitle>
+                <EmptyDescription>{t("settings:limits_empty_description")}</EmptyDescription>
+              </EmptyHeader>
+              <EmptyContent>
+                <Button onClick={() => handleAddLimit()}>
+                  <Icons.Plus className="me-2 h-4 w-4" />
+                  {t("settings:limits_add_first")}
+                </Button>
+              </EmptyContent>
+            </Empty>
           )}
 
           {previousYearsLimits.length > 0 && (
@@ -118,9 +131,7 @@ const SettingsContributionLimitPage = () => {
                   className="mx-4 shrink-0 rounded-full"
                   onClick={() => setShowPreviousYears(!showPreviousYears)}
                 >
-                  {showPreviousYears
-                    ? t("settings:limits_hide_previous")
-                    : t("settings:limits_show_previous")}{" "}
+                  {showPreviousYears ? t("common:hide") : t("settings:limits_show_previous")}{" "}
                   {t("settings:limits_previous_years")}
                 </Button>
                 <Separator className="flex-1" />

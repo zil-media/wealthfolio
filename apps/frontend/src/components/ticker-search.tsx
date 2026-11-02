@@ -56,6 +56,8 @@ interface SearchProps {
   existingOnly?: boolean;
   /** Test ID for e2e testing */
   "data-testid"?: string;
+  /** Accessible name for the trigger, e.g. to disambiguate multiple pickers in one form */
+  "aria-label"?: string;
 }
 
 interface SearchResultsProps {
@@ -157,7 +159,7 @@ const SearchResults = memo(
                   <div className="flex flex-col items-end">
                     <span className="text-muted-foreground text-xs">{exchangeDisplay}</span>
                     {ticker.currency && (
-                      <span className="text-muted-foreground text-[10px]">{ticker.currency}</span>
+                      <span className="text-muted-foreground text-2xs">{ticker.currency}</span>
                     )}
                   </div>
                   {isSelected && <Icons.Check className="size-4" />}
@@ -245,6 +247,7 @@ const TickerSearchInput = forwardRef<HTMLButtonElement, SearchProps>(
       hideCustomCreate,
       existingOnly,
       "data-testid": testId,
+      "aria-label": ariaLabel,
     },
     ref,
   ) => {
@@ -302,7 +305,8 @@ const TickerSearchInput = forwardRef<HTMLButtonElement, SearchProps>(
     });
     const inputRef = useRef<HTMLInputElement>(null);
     const triggerRef = useRef<HTMLButtonElement>(null);
-    const closeFocusIntentRef = useRef<null | "next" | "prev">(null);
+    // Tab in the search field closes the list and moves on from the trigger.
+    const [tabCloseDirection, setTabCloseDirection] = useState<null | "next" | "prev">(null);
     const composedTriggerRef = useComposedRefs(ref, triggerRef);
 
     // Create debounced search function
@@ -375,7 +379,7 @@ const TickerSearchInput = forwardRef<HTMLButtonElement, SearchProps>(
       const next = exchangeDisplay ? `${current} (${exchangeDisplay})` : current;
       setSelected((prev) => (prev === next ? prev : next));
       setSelectedTicker({ symbol: current, name: "", exchangeDisplay: exchangeDisplay || "" });
-      // eslint-disable-next-line react-hooks/exhaustive-deps
+      // oxlint-disable-next-line react/exhaustive-deps
     }, [defaultValue, selectedExchangeMic, selectedResult, value]);
 
     // Handle "Create custom asset" click
@@ -402,7 +406,7 @@ const TickerSearchInput = forwardRef<HTMLButtonElement, SearchProps>(
       if (defaultValue && defaultValue.length > 1) {
         setDebouncedQuery(defaultValue);
       }
-      // eslint-disable-next-line react-hooks/exhaustive-deps
+      // oxlint-disable-next-line react/exhaustive-deps
     }, []);
 
     // Use debounced query for API call
@@ -462,19 +466,10 @@ const TickerSearchInput = forwardRef<HTMLButtonElement, SearchProps>(
     );
 
     // Handle focus events
-    const handleOpenAutoFocus = useCallback(
-      (e: Event) => {
-        if (!autoFocusSearch) return;
-        e.preventDefault();
-        inputRef.current?.focus();
-      },
-      [autoFocusSearch],
-    );
-
     const handleInputKeyDown = useCallback(
       (e: React.KeyboardEvent<HTMLInputElement>) => {
         if (e.key !== "Tab") return;
-        closeFocusIntentRef.current = e.shiftKey ? "prev" : "next";
+        setTabCloseDirection(e.shiftKey ? "prev" : "next");
         e.preventDefault();
         if (isControlled) {
           onOpenChange?.(false);
@@ -485,107 +480,114 @@ const TickerSearchInput = forwardRef<HTMLButtonElement, SearchProps>(
       [isControlled, onOpenChange],
     );
 
-    const handleCloseAutoFocus = useCallback((e: Event) => {
-      const intent = closeFocusIntentRef.current;
-      closeFocusIntentRef.current = null;
-      if (!intent) return;
-
-      e.preventDefault();
-      const trigger = triggerRef.current;
-      if (!trigger) return;
-      requestAnimationFrame(() => {
-        focusRelativeTo(trigger, intent);
-      });
-    }, []);
+    const handleOpenChangeComplete = useCallback(
+      (isOpen: boolean) => {
+        if (isOpen || !tabCloseDirection) return;
+        setTabCloseDirection(null);
+        const trigger = triggerRef.current;
+        if (!trigger) return;
+        requestAnimationFrame(() => {
+          focusRelativeTo(trigger, tabCloseDirection);
+        });
+      },
+      [tabCloseDirection],
+    );
 
     return (
       <>
-        <Popover open={open} onOpenChange={handleOpenChange}>
-          <PopoverTrigger asChild>
-            <Button
-              id={id}
-              variant="outline"
-              role="combobox"
-              className={cn(
-                "min-h-input-height h-auto w-full justify-between rounded-md px-3 py-2",
-                open && "ring-ring ring-2",
-                className,
-              )}
-              ref={composedTriggerRef}
-              aria-expanded={open}
-              aria-haspopup="listbox"
-              data-testid={testId}
-            >
-              {selectedTicker ? (
-                <div className="flex w-full min-w-0 items-center gap-2">
-                  <div className="flex min-w-0 flex-1 flex-col gap-0.5">
-                    {/* Row 1: Symbol + Name (left) — Clear (right) */}
-                    <div className="flex min-w-0 items-center gap-1.5">
-                      <span className="shrink-0 text-sm font-semibold tracking-tight">
-                        {selectedTicker.symbol}
+        <Popover
+          open={open}
+          onOpenChange={handleOpenChange}
+          onOpenChangeComplete={handleOpenChangeComplete}
+        >
+          <PopoverTrigger
+            render={
+              <Button
+                id={id}
+                variant="field"
+                role="combobox"
+                className={cn(
+                  "min-h-input-height h-auto w-full justify-between px-3 py-2",
+                  open && "ring-ring ring-2",
+                  className,
+                )}
+                ref={composedTriggerRef}
+                aria-expanded={open}
+                aria-haspopup="listbox"
+                aria-label={ariaLabel}
+                data-testid={testId}
+              />
+            }
+          >
+            {selectedTicker ? (
+              <div className="flex w-full min-w-0 items-center gap-2">
+                <div className="flex min-w-0 flex-1 flex-col gap-0.5">
+                  {/* Row 1: Symbol + Name (left) — Clear (right) */}
+                  <div className="flex min-w-0 items-center gap-1.5">
+                    <span className="shrink-0 text-sm font-semibold tracking-tight">
+                      {selectedTicker.symbol}
+                    </span>
+                    {selectedTicker.name && (
+                      <span className="text-muted-foreground truncate text-sm">
+                        {selectedTicker.name}
                       </span>
-                      {selectedTicker.name && (
-                        <span className="text-muted-foreground truncate text-sm">
-                          {selectedTicker.name}
-                        </span>
-                      )}
-                    </div>
-                    {/* Row 2: Exchange (left) — Price + Currency (right) */}
-                    <div className="flex items-center justify-between gap-2 text-xs">
-                      {selectedTicker.exchangeDisplay ? (
-                        <span className="text-muted-foreground shrink-0 uppercase">
-                          {selectedTicker.exchangeDisplay}
-                        </span>
+                    )}
+                  </div>
+                  {/* Row 2: Exchange (left) — Price + Currency (right) */}
+                  <div className="flex items-center justify-between gap-2 text-xs">
+                    {selectedTicker.exchangeDisplay ? (
+                      <span className="text-muted-foreground shrink-0 uppercase">
+                        {selectedTicker.exchangeDisplay}
+                      </span>
+                    ) : (
+                      <span />
+                    )}
+                    <div className="flex shrink-0 items-center gap-1">
+                      {quoteInfo?.isLoading ? (
+                        <Skeleton className="h-3 w-12" />
                       ) : (
-                        <span />
-                      )}
-                      <div className="flex shrink-0 items-center gap-1">
-                        {quoteInfo?.isLoading ? (
-                          <Skeleton className="h-3 w-12" />
-                        ) : (
-                          quoteInfo?.price != null && (
-                            <span className="tabular-nums">
-                              {amountFormatting.formatPrice(
-                                quoteInfo.price,
-                                quoteInfo.currency ?? "USD",
-                                false,
-                              )}
-                            </span>
-                          )
-                        )}
-                        {quoteInfo?.currency && !quoteInfo.isLoading && (
-                          <span className="text-muted-foreground font-light">
-                            {quoteInfo.currency}
+                        quoteInfo?.price != null && (
+                          <span className="tabular-nums">
+                            {amountFormatting.formatPrice(
+                              quoteInfo.price,
+                              quoteInfo.currency ?? "USD",
+                              false,
+                            )}
                           </span>
-                        )}
-                      </div>
+                        )
+                      )}
+                      {quoteInfo?.currency && !quoteInfo.isLoading && (
+                        <span className="text-muted-foreground font-light">
+                          {quoteInfo.currency}
+                        </span>
+                      )}
                     </div>
                   </div>
-                  {onClear && (
-                    <span
-                      onMouseDown={handleClearMouseDown}
-                      onClick={handleClearClick}
-                      className="text-muted-foreground hover:text-foreground shrink-0 rounded-sm p-0.5"
-                    >
-                      <Icons.Close className="size-3.5" />
-                    </span>
-                  )}
                 </div>
-              ) : (
-                <>
-                  <span className="text-muted-foreground">{resolvedPlaceholder}</span>
-                  <Icons.Search className="ml-2 h-4 w-4 shrink-0 opacity-50" />
-                </>
-              )}
-            </Button>
+                {onClear && (
+                  <span
+                    onMouseDown={handleClearMouseDown}
+                    onClick={handleClearClick}
+                    className="text-muted-foreground hover:text-foreground shrink-0 rounded-sm p-0.5"
+                  >
+                    <Icons.Close className="size-3.5" />
+                  </span>
+                )}
+              </div>
+            ) : (
+              <>
+                <span className="text-muted-foreground">{resolvedPlaceholder}</span>
+                <Icons.Search className="ms-2 h-4 w-4 shrink-0 opacity-50" />
+              </>
+            )}
           </PopoverTrigger>
 
           <PopoverContent
             side="bottom"
             align="start"
-            className="w-(--radix-popover-trigger-width) h-auto min-w-[280px] p-0"
-            onOpenAutoFocus={handleOpenAutoFocus}
-            onCloseAutoFocus={handleCloseAutoFocus}
+            className="h-auto w-(--anchor-width) min-w-70 p-0"
+            initialFocus={autoFocusSearch ? inputRef : undefined}
+            finalFocus={tabCloseDirection === null}
             onWheel={(e) => e.stopPropagation()}
           >
             <Command shouldFilter={false} className="border-none">

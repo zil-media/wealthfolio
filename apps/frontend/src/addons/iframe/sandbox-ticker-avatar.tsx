@@ -10,7 +10,6 @@ interface SandboxTickerAvatarProps {
 
 declare global {
   // Private sandbox bridge installed by addon-sandbox-entry.tsx.
-  // eslint-disable-next-line no-var
   var __wealthfolioRequestTickerLogo:
     | ((
         symbol: string,
@@ -79,7 +78,7 @@ export const SandboxTickerAvatar = ({
         <span
           className={cn(
             "px-0.5 leading-none",
-            fallbackAvatarLabel.length >= 4 ? "text-[10px]" : "text-xs",
+            fallbackAvatarLabel.length >= 4 ? "text-2xs" : "text-xs",
           )}
           title={fullSymbol}
         >

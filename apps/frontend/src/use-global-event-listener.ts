@@ -1,6 +1,6 @@
 // useGlobalEventListener.ts
 import {
-  isDesktop,
+  isTauri,
   listenAssetClassificationsChanged,
   listenBrokerSyncComplete,
   listenBrokerSyncError,
@@ -9,6 +9,7 @@ import {
   listenMarketSyncError,
   listenMarketSyncStart,
   listenPortfolioUpdateComplete,
+  listenGoalSummariesUpdated,
   listenPortfolioUpdateError,
   listenPortfolioUpdateStart,
   logger,
@@ -19,8 +20,10 @@ import { useIsMobileViewport } from "@/hooks/use-platform";
 import { assetLogoRegistry } from "@/lib/asset-logo-registry";
 import {
   invalidateAfterAssetClassificationsChanged,
+  invalidateAfterGoalSummariesUpdated,
   shouldInvalidateAfterPortfolioUpdate,
   type AssetClassificationsChangedPayload,
+  type GoalSummariesUpdatedPayload,
 } from "@/lib/query-invalidation";
 import { useQueryClient } from "@tanstack/react-query";
 import { useEffect, useRef, useState } from "react";
@@ -55,12 +58,12 @@ function getSyncSkips(payload?: MarketSyncCompletePayload | null): [string, stri
 }
 
 const useGlobalEventListener = () => {
+  usePortfolioResumeCheck();
   const { t } = useTranslation();
   const queryClient = useQueryClient();
   const navigate = useNavigate();
   const [areListenersReady, setAreListenersReady] = useState(false);
-  const hasTriggeredInitialUpdate = useRef(false);
-  const isDesktopEnv = isDesktop;
+  const isTauriEnv = isTauri;
   const isMobileViewport = useIsMobileViewport();
   const syncContext = usePortfolioSyncOptional();
 
@@ -397,6 +400,12 @@ const useGlobalEventListener = () => {
           "asset-classifications-changed",
           listenAssetClassificationsChanged(handleAssetClassificationsChanged),
         ],
+        [
+          "goal-summaries-updated",
+          listenGoalSummariesUpdated<GoalSummariesUpdatedPayload>((event) => {
+            invalidateAfterGoalSummariesUpdated(queryClientRef.current, event.payload);
+          }),
+        ],
         ["database-restored", listenDatabaseRestored(handleDatabaseRestored)],
         ["broker-sync-complete", listenBrokerSyncComplete(handleBrokerSyncComplete)],
         ["broker-sync-error", listenBrokerSyncError(handleBrokerSyncError)],
@@ -433,17 +442,13 @@ const useGlobalEventListener = () => {
         Array.from(POST_LOGIN_REQUIRED_LISTENERS).every((name) => readyListeners.has(name)),
       );
 
-      // Trigger initial portfolio update after listeners are set up
-      if (!hasTriggeredInitialUpdate.current) {
-        hasTriggeredInitialUpdate.current = true;
-        logger.debug("Triggering initial portfolio update from frontend");
-
-        // Trigger portfolio update
-        updatePortfolio({ skipMarketSync: true }).catch((error) => {
-          logger.error("Failed to trigger initial portfolio update: " + String(error));
-        });
-        // Note: Update check is now handled by useCheckUpdateOnStartup query in UpdateDialog
-      }
+      // Listeners are live: request the start-up portfolio update (a rebuild of whatever is
+      // stale; the server's periodic job keeps market data current). Its progress
+      // arrives through the events registered above, so nothing is missed.
+      updatePortfolio({ skipMarketSync: true }).catch((error) => {
+        logger.error("Failed to request the portfolio update: " + String(error));
+      });
+      // Note: Update check is handled by useCheckUpdateOnStartup query in UpdateDialog
     };
 
     setupListeners().catch((error) => {
@@ -455,9 +460,34 @@ const useGlobalEventListener = () => {
       setAreListenersReady(false);
       cleanupFn?.();
     };
-  }, [isDesktopEnv]); // Only re-run if isDesktopEnv changes (which it won't)
+  }, [isTauriEnv]); // Only re-run if isTauriEnv changes (which it won't)
 
   return areListenersReady;
 };
+
+/** Hidden this long (a suspended phone, a laptop lid) means market data and
+ *  the day may have moved: ask the backend for a portfolio update on return. */
+const RESUME_CHECK_AFTER_MS = 5 * 60 * 1000;
+
+export function usePortfolioResumeCheck() {
+  useEffect(() => {
+    let hiddenAt: number | null = null;
+    const onVisibilityChange = () => {
+      if (document.visibilityState === "hidden") {
+        hiddenAt = Date.now();
+        return;
+      }
+      const hiddenFor = hiddenAt === null ? 0 : Date.now() - hiddenAt;
+      hiddenAt = null;
+      if (hiddenFor >= RESUME_CHECK_AFTER_MS) {
+        updatePortfolio().catch((error) => {
+          logger.error("Failed to request the portfolio update: " + String(error));
+        });
+      }
+    };
+    document.addEventListener("visibilitychange", onVisibilityChange);
+    return () => document.removeEventListener("visibilitychange", onVisibilityChange);
+  }, []);
+}
 
 export default useGlobalEventListener;

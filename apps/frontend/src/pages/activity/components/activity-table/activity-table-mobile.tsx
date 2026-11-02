@@ -1,4 +1,4 @@
-import { useCallback } from "react";
+import { useCallback, useMemo } from "react";
 
 import { TickerAvatar } from "@/components/ticker-avatar";
 import {
@@ -7,36 +7,55 @@ import {
   isAssetBackedIncomeActivity,
   isCashActivity,
   isCashTransfer,
+  isConversionRow,
   isFeeActivity,
   isIncomeActivity,
   isSecuritiesTransfer,
   isSplitActivity,
-  localizeActivityTypeName,
+  localizeActivityRowLabel,
 } from "@/lib/activity-utils";
 import { ActivityType } from "@/lib/constants";
 import { formatOptionSubtitle, parseOccSymbol } from "@/lib/occ-symbol";
 import { useSettingsContext } from "@/lib/settings-provider";
 import { ActivityDetails } from "@/lib/types";
-import { formatDateTime } from "@/lib/utils";
+import { formatDateTime, cn } from "@/lib/utils";
 import {
   AmountDisplay,
   Button,
-  EmptyPlaceholder,
   Icons,
   PriceDisplay,
   Separator,
-  useNumberFormatting,
+  useAmountFormatting,
   useDateFormatting,
+  buttonVariants,
+  Empty,
+  EmptyHeader,
+  EmptyMedia,
+  EmptyTitle,
+  EmptyDescription,
+  EmptyContent,
 } from "@wealthfolio/ui";
 import { Card } from "@wealthfolio/ui/components/ui/card";
 import { Link } from "react-router-dom";
+import { connectPagePath } from "@/features/wealthfolio-connect/lib/connect-url";
 import { useTranslation } from "react-i18next";
 import { useVirtualizer } from "@tanstack/react-virtual";
 import { InfiniteScrollTrigger } from "@/components/infinite-scroll-trigger";
 import { useBalancePrivacy } from "@/hooks/use-balance-privacy";
-import { useVirtualScrollContainer } from "@/hooks/use-virtual-scroll-container";
+import {
+  observeCurrentScrollOffset,
+  useVirtualScrollContainer,
+} from "@/hooks/use-virtual-scroll-container";
 import { ActivityOperations } from "../activity-operations";
 import { ActivityTypeBadge } from "../activity-type-badge";
+import { flattenDayGroups } from "@/lib/day-groups";
+import { groupActivitiesByDay } from "./activity-day-groups";
+import { ActivityDayHeading } from "./activity-day-header";
+import {
+  NEEDS_REVIEW_CARD_CLASS,
+  NeedsReviewMark,
+  NeedsReviewStripe,
+} from "@/components/needs-review";
 
 /**
  * Starting heights for virtualized cards. The detailed card grows with the
@@ -45,6 +64,7 @@ import { ActivityTypeBadge } from "../activity-type-badge";
  */
 const COMPACT_CARD_HEIGHT = 88;
 const DETAILED_CARD_HEIGHT = 300;
+const DAY_HEADING_HEIGHT = 24;
 /** `space-y-2`, moved into the virtualizer's layout maths. */
 const CARD_GAP = 8;
 /** Cards kept mounted past the viewport edge, so a fast flick stays painted. */
@@ -54,6 +74,11 @@ interface ActivityTableMobileProps {
   activities: ActivityDetails[];
   isLoading?: boolean;
   isCompactView: boolean;
+  /**
+   * Puts a heading above each day's cards. Only for a list the server returned
+   * in date order, where each day is one run of cards.
+   */
+  groupByDay?: boolean;
   handleEdit: (activity?: ActivityDetails) => void;
   handleDelete: (activity: ActivityDetails) => void;
   onDuplicate: (activity: ActivityDetails) => Promise<void>;
@@ -61,6 +86,8 @@ interface ActivityTableMobileProps {
   onUnlinkTransfer?: (activity: ActivityDetails) => void;
   filtersActive?: boolean;
   onAdd?: () => void;
+  /** Show a "Connect Account" button next to the add button when there are no activities. */
+  showConnectAccountLink?: boolean;
   onClearFilters?: () => void;
   onLoadMore?: () => void;
   hasNextPage?: boolean;
@@ -73,6 +100,7 @@ export const ActivityTableMobile = ({
   activities,
   isLoading = false,
   isCompactView,
+  groupByDay = false,
   handleEdit,
   handleDelete,
   onDuplicate,
@@ -80,6 +108,7 @@ export const ActivityTableMobile = ({
   onUnlinkTransfer,
   filtersActive = false,
   onAdd,
+  showConnectAccountLink = false,
   onClearFilters,
   onLoadMore,
   hasNextPage = false,
@@ -87,15 +116,31 @@ export const ActivityTableMobile = ({
   isFetchingNextPage = false,
   hasLoadMoreError = false,
 }: ActivityTableMobileProps) => {
-  const numberFormatting = useNumberFormatting();
+  const amountFormatting = useAmountFormatting();
   const dateFormatting = useDateFormatting();
   const { isBalanceHidden } = useBalancePrivacy();
   const { t } = useTranslation();
   const { settings } = useSettingsContext();
   const appTimezone = settings?.timezone?.trim() || undefined;
 
-  // The list scrolls inside its own box, so it sits at the top of it and the
-  // margin resolves to zero; the hook still supplies the element itself.
+  // Day headings interleave with the cards, so the virtualizer counts both.
+  const listItems = useMemo(() => {
+    if (!groupByDay) {
+      return activities.map((activity) => ({
+        kind: "row" as const,
+        key: activity.id,
+        item: activity,
+      }));
+    }
+    const groups = groupActivitiesByDay(
+      activities,
+      (activity) => activity,
+      (activity) => formatDateTime(activity.date, dateFormatting, appTimezone).date,
+    );
+    return flattenDayGroups(groups, (activity) => activity.id);
+  }, [activities, appTimezone, dateFormatting, groupByDay]);
+
+  // Embedded lists can share an already-scrolled page rather than their own box.
   const { listRef, scrollElement, scrollMargin } = useVirtualScrollContainer();
 
   /**
@@ -108,14 +153,22 @@ export const ActivityTableMobile = ({
    */
   const getItemKey = useCallback(
     (index: number) =>
-      `${isCompactView ? "compact" : "detailed"}:${activities[index]?.id ?? index}`,
-    [activities, isCompactView],
+      `${isCompactView ? "compact" : "detailed"}:${listItems[index]?.key ?? index}`,
+    [listItems, isCompactView],
   );
 
   const virtualizer = useVirtualizer({
-    count: activities.length,
+    count: listItems.length,
     getScrollElement: () => scrollElement,
-    estimateSize: () => (isCompactView ? COMPACT_CARD_HEIGHT : DETAILED_CARD_HEIGHT),
+    // Seed the offset before the virtualizer's initial scrollTo. Swipeable views
+    // mount neighboring lists while the shared page may already be scrolled.
+    observeElementOffset: observeCurrentScrollOffset,
+    estimateSize: (index) =>
+      listItems[index]?.kind === "header"
+        ? DAY_HEADING_HEIGHT
+        : isCompactView
+          ? COMPACT_CARD_HEIGHT
+          : DETAILED_CARD_HEIGHT,
     getItemKey,
     overscan: OVERSCAN,
     scrollMargin,
@@ -133,27 +186,44 @@ export const ActivityTableMobile = ({
 
   if (activities.length === 0) {
     return (
-      <EmptyPlaceholder>
-        <EmptyPlaceholder.Icon name="Activity" />
-        <EmptyPlaceholder.Title>{t("activity:table.no_activities")}</EmptyPlaceholder.Title>
-        <EmptyPlaceholder.Description>
-          {filtersActive
-            ? t("activity:table.no_activities_filtered")
-            : t("activity:table.no_activities_desc")}
-        </EmptyPlaceholder.Description>
-        {filtersActive ? (
-          onClearFilters ? (
-            <Button variant="outline" onClick={onClearFilters}>
-              {t("activity:table.clear_filters")}
-            </Button>
-          ) : null
-        ) : onAdd ? (
-          <Button onClick={onAdd}>
-            <Icons.Plus className="mr-2 h-4 w-4" aria-hidden="true" />
-            {t("activity:add_activity")}
-          </Button>
-        ) : null}
-      </EmptyPlaceholder>
+      <Empty>
+        <EmptyHeader>
+          <EmptyMedia variant="icon">
+            <Icons.Activity />
+          </EmptyMedia>
+          <EmptyTitle>{t("activity:table.no_activities")}</EmptyTitle>
+          <EmptyDescription>
+            {filtersActive
+              ? t("activity:table.no_activities_filtered")
+              : t("activity:table.no_activities_desc")}
+          </EmptyDescription>
+        </EmptyHeader>
+        <EmptyContent>
+          {filtersActive ? (
+            onClearFilters ? (
+              <Button variant="outline" onClick={onClearFilters}>
+                {t("activity:table.clear_filters")}
+              </Button>
+            ) : null
+          ) : onAdd ? (
+            <div className="flex flex-col items-center gap-3 sm:flex-row">
+              <Button onClick={onAdd}>
+                <Icons.Plus className="me-2 h-4 w-4" aria-hidden="true" />
+                {t("activity:add_activity")}
+              </Button>
+              {showConnectAccountLink && (
+                <Link
+                  to={connectPagePath("activities_empty")}
+                  className={buttonVariants({ variant: "outline" })}
+                >
+                  <Icons.CloudSync2 className="me-2 h-4 w-4" aria-hidden="true" />
+                  {t("activity:page.connect_account")}
+                </Link>
+              )}
+            </div>
+          ) : null}
+        </EmptyContent>
+      </Empty>
     );
   }
 
@@ -180,16 +250,38 @@ export const ActivityTableMobile = ({
         : symbol;
     const avatarSymbol = isCash ? "$CASH" : symbol;
     const optionSubtitle = parsedOption
-      ? formatOptionSubtitle(parsedOption, { ...numberFormatting, ...dateFormatting })
+      ? formatOptionSubtitle(parsedOption, activity.assetQuoteCcy ?? activity.currency, {
+          ...amountFormatting,
+          ...dateFormatting,
+        })
       : null;
     const formattedDate = formatDateTime(activity.date, dateFormatting, appTimezone);
+    // Under a day heading a card gives only the time; the heading has the date.
+    const headedTime = groupByDay
+      ? formatDateTime(activity.date, dateFormatting, appTimezone, { omitSeconds: true }).time
+      : null;
     const displayValue = calculateActivityValue(activity);
+    // The balance after this row; an end-of-day balance goes in its day's
+    // heading instead.
+    const cashBalance =
+      activity.cashBalance != null &&
+      activity.cashBalanceCurrency &&
+      activity.cashBalanceScope !== "DAY"
+        ? { balance: Number(activity.cashBalance), currency: activity.cashBalanceCurrency }
+        : undefined;
 
     // Compact View
     if (isCompactView) {
-      const activityTypeLabel = localizeActivityTypeName(t, activity.activityType);
+      const activityTypeLabel = localizeActivityRowLabel(t, activity);
       return (
-        <Card key={activity.id} className="p-3">
+        <Card
+          key={activity.id}
+          className={cn(
+            "p-3",
+            activity.needsReview && ["relative overflow-hidden", NEEDS_REVIEW_CARD_CLASS],
+          )}
+        >
+          {activity.needsReview && <NeedsReviewStripe />}
           <div className="flex items-center gap-3">
             {(() => {
               const inner = (
@@ -203,8 +295,13 @@ export const ActivityTableMobile = ({
                   />
                   <div className="min-w-0 flex-1">
                     <div className="flex items-baseline justify-between gap-2">
-                      <p className="truncate font-semibold">{displaySymbol}</p>
-                      {activity.activityType !== "SPLIT" && (
+                      <p className="flex min-w-0 items-center gap-1.5 font-semibold">
+                        {activity.needsReview && (
+                          <NeedsReviewMark label={t("activity:detail.needs_review")} />
+                        )}
+                        <span className="truncate">{displaySymbol}</span>
+                      </p>
+                      {activity.activityType !== "SPLIT" && !isConversionRow(activity) && (
                         <AmountDisplay
                           value={displayValue}
                           currency={activity.currency}
@@ -219,7 +316,7 @@ export const ActivityTableMobile = ({
                         : activityTypeLabel}
                     </p>
                     <div className="text-muted-foreground mt-0.5 flex items-center gap-1.5 text-xs">
-                      <span>{formattedDate.date}</span>
+                      <span>{headedTime ?? formattedDate.date}</span>
                       {!isCash &&
                         !(isIncomeActivity(activity.activityType) && !isAssetBackedIncome) &&
                         !isSplitActivity(activity.activityType) &&
@@ -235,6 +332,16 @@ export const ActivityTableMobile = ({
                             </span>
                           </>
                         )}
+                      {cashBalance && (
+                        <span className="ms-auto flex shrink-0 items-center gap-1">
+                          {t("activity:table_balance")}
+                          <AmountDisplay
+                            value={cashBalance.balance}
+                            currency={cashBalance.currency}
+                            isHidden={isBalanceHidden}
+                          />
+                        </span>
+                      )}
                     </div>
                   </div>
                 </>
@@ -266,7 +373,14 @@ export const ActivityTableMobile = ({
 
     // Detailed View
     return (
-      <Card key={activity.id} className="p-3">
+      <Card
+        key={activity.id}
+        className={cn(
+          "p-3",
+          activity.needsReview && ["relative overflow-hidden", NEEDS_REVIEW_CARD_CLASS],
+        )}
+      >
+        {activity.needsReview && <NeedsReviewStripe />}
         <div className="space-y-2">
           {/* Header: Symbol and Date */}
           <div className="flex items-start justify-between">
@@ -281,7 +395,12 @@ export const ActivityTableMobile = ({
                     className="h-10 w-10"
                   />
                   <div>
-                    <p className="font-semibold">{displaySymbol}</p>
+                    <p className="flex items-center gap-1.5 font-semibold">
+                      {activity.needsReview && (
+                        <NeedsReviewMark label={t("activity:detail.needs_review")} />
+                      )}
+                      {displaySymbol}
+                    </p>
                     <p className="text-muted-foreground text-xs">
                       {isCash ? activity.currency : (optionSubtitle ?? activity.assetName)}
                     </p>
@@ -317,10 +436,14 @@ export const ActivityTableMobile = ({
             {/* Date and Type */}
             <div className="flex items-center justify-between">
               <span className="text-muted-foreground">{t("activity:table_date")}</span>
-              <div className="text-right">
-                <p>{formattedDate.date}</p>
-                <p className="text-muted-foreground text-xs">{formattedDate.time}</p>
-              </div>
+              {headedTime ? (
+                <p className="text-end">{headedTime}</p>
+              ) : (
+                <div className="text-end">
+                  <p>{formattedDate.date}</p>
+                  <p className="text-muted-foreground text-xs">{formattedDate.time}</p>
+                </div>
+              )}
             </div>
 
             <div className="flex items-center justify-between">
@@ -364,7 +487,7 @@ export const ActivityTableMobile = ({
                       : t("activity:field_price")}
               </span>
               <span className="font-medium">
-                {activity.activityType === "FEE" ? (
+                {activity.activityType === "FEE" || isConversionRow(activity) ? (
                   "-"
                 ) : activity.activityType === "SPLIT" ? (
                   formatSplitRatio(Number(activity.amount))
@@ -413,7 +536,7 @@ export const ActivityTableMobile = ({
             )}
 
             {/* Total Value */}
-            {activity.activityType !== "SPLIT" && (
+            {activity.activityType !== "SPLIT" && !isConversionRow(activity) && (
               <div className="flex items-center justify-between border-t pt-1.5">
                 <span className="text-muted-foreground font-medium">
                   {t("activity:table.total_value")}
@@ -427,10 +550,22 @@ export const ActivityTableMobile = ({
               </div>
             )}
 
+            {cashBalance && (
+              <div className="flex items-center justify-between">
+                <span className="text-muted-foreground">{t("activity:table_balance")}</span>
+                <AmountDisplay
+                  value={cashBalance.balance}
+                  currency={cashBalance.currency}
+                  isHidden={isBalanceHidden}
+                  className="font-medium"
+                />
+              </div>
+            )}
+
             {/* Account */}
             <div className="flex items-center justify-between">
               <span className="text-muted-foreground">{t("activity:table_account")}</span>
-              <div className="text-right">
+              <div className="text-end">
                 <p>{activity.accountName}</p>
                 <p className="text-muted-foreground text-xs">{activity.accountCurrency}</p>
               </div>
@@ -452,17 +587,25 @@ export const ActivityTableMobile = ({
     >
       <div ref={listRef} className="relative w-full" style={{ height: virtualizer.getTotalSize() }}>
         {virtualizer.getVirtualItems().map((virtualItem) => {
-          const activity = activities[virtualItem.index];
-          if (!activity) return null;
+          const listItem = listItems[virtualItem.index];
+          if (!listItem) return null;
           return (
             <div
               key={virtualItem.key}
               data-index={virtualItem.index}
               ref={virtualizer.measureElement}
-              className="absolute left-0 top-0 w-full"
+              className="absolute start-0 top-0 w-full"
               style={{ transform: `translateY(${virtualItem.start - scrollMargin}px)` }}
             >
-              {renderCard(activity)}
+              {listItem.kind === "header" ? (
+                <ActivityDayHeading
+                  group={listItem.group}
+                  date={listItem.group.items[0].date}
+                  isPartial={hasNextPage && listItem.isLastGroup}
+                />
+              ) : (
+                renderCard(listItem.item)
+              )}
             </div>
           );
         })}
